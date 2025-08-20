@@ -1,0 +1,167 @@
+# GitLab CI/CD Pipeline for Fenix Packages
+# Builds and publishes Python packages to GitLab Package Registry
+# Only publishes when package version changes
+
+stages:
+  - check
+  - build
+  - test
+  - publish
+
+variables:
+  PIP_CACHE_DIR: "$CI_PROJECT_DIR/.cache/pip"
+  UV_CACHE_DIR: "$CI_PROJECT_DIR/.cache/uv"
+  PYTHON_VERSION: "3.11"
+
+cache:
+  paths:
+    - .cache/pip
+    - .cache/uv
+
+# Default job configuration
+default:
+  image: python:${PYTHON_VERSION}-slim
+  before_script:
+    - apt-get update && apt-get install -y git curl
+    - curl -LsSf https://astral.sh/uv/install.sh | sh
+    - export PATH="$HOME/.cargo/bin:$PATH"
+    - uv --version
+    - python --version
+
+# Detect which packages have changed
+detect-changes:
+  stage: check
+  script:
+    - |
+      echo "Detecting changed packages..."
+      chmod +x scripts/detect_changes.sh
+      CHANGED_PACKAGES=$(./scripts/detect_changes.sh)
+      
+      if [ -z "$CHANGED_PACKAGES" ]; then
+        echo "No packages have changed"
+        echo "[]" > changed_packages.json
+      else
+        echo "Changed packages: $CHANGED_PACKAGES"
+        echo "$CHANGED_PACKAGES" > changed_packages.json
+      fi
+  artifacts:
+    paths:
+      - changed_packages.json
+    expire_in: 1 hour
+  only:
+    - main
+    - merge_requests
+
+# Build job template
+.build-package:
+  stage: build
+  script:
+    - |
+      PACKAGE_NAME="${CI_JOB_NAME#build-}"
+      echo "Building package: $PACKAGE_NAME"
+      
+      # Check if this package has changed
+      if ! grep -q "\"$PACKAGE_NAME\"" changed_packages.json; then
+        echo "Package $PACKAGE_NAME has not changed, skipping build"
+        exit 0
+      fi
+      
+      chmod +x scripts/build_package.sh
+      ./scripts/build_package.sh "$PACKAGE_NAME"
+  artifacts:
+    paths:
+      - "*/dist/"
+    expire_in: 1 hour
+  needs:
+    - detect-changes
+
+# Test job template
+.test-package:
+  stage: test
+  script:
+    - |
+      PACKAGE_NAME="${CI_JOB_NAME#test-}"
+      echo "Testing package: $PACKAGE_NAME"
+      
+      # Check if this package has changed
+      if ! grep -q "\"$PACKAGE_NAME\"" changed_packages.json; then
+        echo "Package $PACKAGE_NAME has not changed, skipping tests"
+        exit 0
+      fi
+      
+      cd "$PACKAGE_NAME"
+      uv sync --extra dev
+      
+      # Run tests if they exist
+      if [ -d "tests" ]; then
+        uv run pytest tests/ -v
+      else
+        echo "No tests directory found, skipping tests"
+      fi
+      
+      # Run linting
+      uv run ruff check src/
+      uv run black --check src/
+  needs:
+    - detect-changes
+
+# Publish job template
+.publish-package:
+  stage: publish
+  script:
+    - |
+      PACKAGE_NAME="${CI_JOB_NAME#publish-}"
+      echo "Publishing package: $PACKAGE_NAME"
+      
+      # Check if this package has changed
+      if ! grep -q "\"$PACKAGE_NAME\"" changed_packages.json; then
+        echo "Package $PACKAGE_NAME has not changed, skipping publish"
+        exit 0
+      fi
+      
+      chmod +x scripts/publish_if_new.sh
+      ./scripts/publish_if_new.sh "$PACKAGE_NAME"
+  needs:
+    - detect-changes
+    - build-ff-storage
+    - test-ff-storage
+  only:
+    - main
+
+# Package-specific jobs
+# Add a set of build/test/publish jobs for each package
+
+# ff-storage package
+build-ff-storage:
+  extends: .build-package
+
+test-ff-storage:
+  extends: .test-package
+  needs:
+    - detect-changes
+    - build-ff-storage
+
+publish-ff-storage:
+  extends: .publish-package
+  needs:
+    - detect-changes
+    - build-ff-storage
+    - test-ff-storage
+
+# Add more packages here as they are created
+# Example for future package:
+# build-ff-tools:
+#   extends: .build-package
+# 
+# test-ff-tools:
+#   extends: .test-package
+#   needs:
+#     - detect-changes
+#     - build-ff-tools
+# 
+# publish-ff-tools:
+#   extends: .publish-package
+#   needs:
+#     - detect-changes
+#     - build-ff-tools
+#     - test-ff-tools

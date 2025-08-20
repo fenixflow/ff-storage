@@ -8,7 +8,7 @@ version = "0.1.0"
 description = "Fenixflow storage package for database and file operations"
 readme = "README.md"
 requires-python = ">=3.10"
-license = {text = "Proprietary"}
+license = "Proprietary"
 authors = [
     {name = "Fenixflow", email = "dev@fenixflow.com"}
 ]
