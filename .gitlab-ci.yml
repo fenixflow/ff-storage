@@ -24,7 +24,8 @@ default:
   before_script:
     - apt-get update && apt-get install -y git curl
     - curl -LsSf https://astral.sh/uv/install.sh | sh
-    - export PATH="$HOME/.cargo/bin:$PATH"
+    - source $HOME/.local/bin/env
+    - export PATH="/root/.local/bin:$PATH"
     - uv --version
     - python --version
 
