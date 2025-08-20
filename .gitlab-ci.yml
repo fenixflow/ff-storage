@@ -126,13 +126,27 @@ detect-changes:
       echo "Publishing package: $PACKAGE_NAME"
       
       # Check if this package has changed
-      if ! grep -q "\"$PACKAGE_NAME\"" changed_packages.json; then
-        echo "Package $PACKAGE_NAME has not changed, but checking if version exists in registry..."
-      else
-        echo "Package $PACKAGE_NAME has changed, checking version in registry..."
+      if [ ! -f changed_packages.json ]; then
+        echo "No change detection file found, skipping publish"
+        exit 0
       fi
       
-      # Always run publish_if_new.sh which will check if the version exists
+      if ! grep -q "\"$PACKAGE_NAME\"" changed_packages.json; then
+        echo "Package $PACKAGE_NAME has not changed, skipping publish"
+        exit 0
+      fi
+      
+      echo "Package $PACKAGE_NAME has changed, proceeding with publish..."
+      
+      # Check if dist directory exists from build stage
+      if [ ! -d "$PACKAGE_NAME/dist" ]; then
+        echo "Warning: dist directory not found for $PACKAGE_NAME"
+        echo "Build may have been skipped or failed. Attempting to build now..."
+        chmod +x scripts/build_package.sh
+        ./scripts/build_package.sh "$PACKAGE_NAME"
+      fi
+      
+      # Run publish_if_new.sh which will check if the version exists
       # and only publish if it's missing from the registry
       chmod +x scripts/publish_if_new.sh
       ./scripts/publish_if_new.sh "$PACKAGE_NAME"
