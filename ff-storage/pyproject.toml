@@ -1,0 +1,48 @@
+[build-system]
+requires = ["setuptools>=61", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ff-storage"
+version = "0.1.0"
+description = "Fenixflow storage package for database and file operations"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "Proprietary"}
+authors = [
+    {name = "Fenixflow", email = "dev@fenixflow.com"}
+]
+dependencies = [
+    "psycopg2-binary>=2.9",
+    "asyncpg>=0.29",
+    "pymysql>=1.1",
+    "mysql-connector-python>=8.0",
+    "boto3>=1.34",
+    "azure-storage-blob>=12.19",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4",
+    "pytest-asyncio>=0.21",
+    "black>=23.0",
+    "ruff>=0.1",
+]
+
+[project.urls]
+repository = "https://gitlab.com/fenixflow/fenix-packages"
+documentation = "https://gitlab.com/fenixflow/fenix-packages/-/tree/main/ff-storage"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.black]
+line-length = 100
+target-version = ["py310", "py311"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
