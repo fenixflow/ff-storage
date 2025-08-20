@@ -8,7 +8,7 @@ version = "0.1.0"
 description = "Fenixflow storage package for database and file operations"
 readme = "README.md"
 requires-python = ">=3.10"
-license = "Proprietary"
+license = {text = "Proprietary"}
 authors = [
     {name = "Fenixflow", email = "dev@fenixflow.com"}
 ]
@@ -46,3 +46,8 @@ target-version = ["py310", "py311"]
 [tool.ruff]
 line-length = 100
 target-version = "py310"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.4.1",
+]
