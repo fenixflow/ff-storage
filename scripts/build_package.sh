@@ -32,11 +32,20 @@ rm -rf dist/ build/ *.egg-info src/*.egg-info
 
 # Install build dependencies
 echo "Installing build dependencies..."
-uv pip install --upgrade build wheel setuptools
+# In CI, use pip directly; locally, use uv
+if [ -n "$CI" ]; then
+    pip install --upgrade build wheel setuptools
+else
+    uv pip install --upgrade build wheel setuptools
+fi
 
 # Build the package
 echo "Building distribution packages..."
-uv run python -m build
+if [ -n "$CI" ]; then
+    python -m build
+else
+    uv run python -m build
+fi
 
 # List built files
 echo "Built packages:"
@@ -44,6 +53,10 @@ ls -la dist/
 
 # Verify the wheel (optional, may not be available)
 echo "Verifying wheel..."
-uv pip install check-wheel-contents 2>/dev/null && uv run check-wheel-contents dist/*.whl || true
+if [ -n "$CI" ]; then
+    pip install check-wheel-contents 2>/dev/null && check-wheel-contents dist/*.whl || true
+else
+    uv pip install check-wheel-contents 2>/dev/null && uv run check-wheel-contents dist/*.whl || true
+fi
 
 echo "Build completed successfully for $PACKAGE_NAME"
