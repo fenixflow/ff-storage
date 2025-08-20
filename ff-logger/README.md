@@ -1,179 +1,226 @@
 # ff-logger
 
-A structured logging package for Fenixflow applications using structlog.
-
-## Features
-
-- **Scoped Loggers**: Isolated logger instances with their own context
-- **Multiple Backends**: Console, JSON, Database, and Null loggers
-- **Zero-Cost Null Logger**: No performance overhead when logging is disabled
-- **Structured Logging**: Key-value pairs for better log analysis
-- **Flexible Configuration**: Environment variables, config files, or code
-- **Thread-Safe**: Safe for concurrent use
-- **Type-Safe**: Full type hints for better IDE support
-
-## Installation
-
-```bash
-# Basic installation
-uv pip install ff-logger
-
-# With database support
-uv pip install "ff-logger[database]"
-
-# For development
-uv pip install "ff-logger[dev]"
-```
+A scoped, instance-based logging package for Fenixflow applications. Unlike traditional Python logging which uses a global configuration, ff-logger provides self-contained logger instances that can be passed around as objects, with support for context binding and multiple output formats.
 
 ## Quick Start
+
+### Installation
+
+```bash
+pip install ff-logger
+```
 
 ### Basic Usage
 
 ```python
 from ff_logger import ConsoleLogger
+import logging
 
-# Create a scoped logger
-logger = ConsoleLogger("my_service")
-
-# Log with structured data
-logger.info("user_login", user_id=123, ip="192.168.1.1")
-logger.error("database_error", error="Connection timeout", retry_count=3)
-
-# Bind context for all subsequent logs
-logger = logger.bind(request_id="abc-123", environment="production")
-logger.info("processing_request")  # Will include request_id and environment
-```
-
-### Different Logger Types
-
-```python
-# Console logger for development
-from ff_logger import ConsoleLogger
-logger = ConsoleLogger("dev")
-
-# JSON logger for production
-from ff_logger import JSONLogger
-logger = JSONLogger("prod")
-
-# Database logger for audit trails
-from ff_logger import DatabaseLogger
-logger = DatabaseLogger("audit", connection=db_conn)
-
-# Null logger to disable logging (zero-cost)
-from ff_logger import NullLogger
-logger = NullLogger("disabled")
-```
-
-### Configuration
-
-```python
-from ff_logger import configure_logging
-
-# Configure globally
-configure_logging(
-    level="INFO",
-    format="json",
-    add_timestamp=True,
-    add_hostname=True,
+# Create a logger instance with permanent context
+logger = ConsoleLogger(
+    name="my_app",
+    level=logging.INFO,
+    context={"service": "api", "environment": "production"}
 )
 
-# Or use environment variables
-# FF_LOG_LEVEL=INFO
-# FF_LOG_FORMAT=json
-# FF_LOG_ADD_TIMESTAMP=true
+# Log messages with the permanent context
+logger.info("Application started")
+# Output: [2025-08-20 10:00:00] INFO [my_app] Application started | service="api" environment="production"
+
+# Add runtime context with kwargs
+logger.info("Request processed", request_id="req-123", duration=45)
+# Output includes both permanent and runtime context
 ```
 
-### Advanced Features
+### Context Binding
+
+Create scoped loggers with additional permanent context:
 
 ```python
-from ff_logger import ScopedLogger
-
-# Create custom logger with processors
-logger = ScopedLogger(
-    "custom",
-    processors=[
-        add_timestamp,
-        add_hostname,
-        filter_secrets,
-        JSONRenderer(),
-    ]
+# Create a request-scoped logger
+request_logger = logger.bind(
+    request_id="req-456",
+    user_id=789,
+    ip="192.168.1.1"
 )
 
-# Async support
-async def process():
-    logger.info("async_operation", status="started")
-    await some_operation()
-    logger.info("async_operation", status="completed")
-
-# Exception logging with traceback
-try:
-    risky_operation()
-except Exception as e:
-    logger.exception("operation_failed", error=str(e))
+# All messages from request_logger include the bound context
+request_logger.info("Processing payment")
+request_logger.error("Payment failed", error_code="CARD_DECLINED")
 ```
 
 ## Logger Types
 
 ### ConsoleLogger
-- Outputs to stdout/stderr with colors
-- Human-readable format
-- Best for development
-
-### JSONLogger
-- Outputs structured JSON lines
-- Machine-parseable
-- Best for production/log aggregation
-
-### DatabaseLogger
-- Writes to database table
-- Supports PostgreSQL and MySQL
-- Best for audit trails
-
-### NullLogger
-- No-op implementation
-- Zero performance cost
-- Best for testing or disabling logs
-
-## Performance
-
-The NullLogger provides true zero-cost logging:
+Outputs colored, human-readable logs to console:
 
 ```python
-# With NullLogger, expensive operations are never executed
-logger.debug("data", result=expensive_function())  # expensive_function() not called!
+from ff_logger import ConsoleLogger
 
-# No if statements needed in your code
-# Just swap the logger implementation
+logger = ConsoleLogger(
+    name="app",
+    level=logging.INFO,
+    colors=True,  # Enable colored output
+    show_hostname=False  # Optional hostname in logs
+)
 ```
 
-## Development
+### JSONLogger
+Outputs structured JSON lines, perfect for log aggregation:
 
-```bash
-# Install with dev dependencies
-cd ff-logger
-uv sync --extra dev
+```python
+from ff_logger import JSONLogger
 
-# Run tests
-uv run pytest tests/
+logger = JSONLogger(
+    name="app",
+    level=logging.INFO,
+    show_hostname=True,
+    include_timestamp=True
+)
 
-# Format code
-uv run black src/
-uv run ruff check src/
-
-# Type checking
-uv run mypy src/
+logger.info("Event occurred", event_type="user_login", user_id=123)
+# Output: {"level":"INFO","logger":"app","message":"Event occurred","timestamp":"2025-08-20T10:00:00Z","event_type":"user_login","user_id":123,...}
 ```
 
-## Configuration Options
+### FileLogger
+Writes to files with rotation support:
 
-| Option | Environment Variable | Default | Description |
-|--------|---------------------|---------|-------------|
-| `level` | `FF_LOG_LEVEL` | `INFO` | Minimum log level |
-| `format` | `FF_LOG_FORMAT` | `console` | Output format (console/json) |
-| `add_timestamp` | `FF_LOG_ADD_TIMESTAMP` | `true` | Include timestamps |
-| `add_hostname` | `FF_LOG_ADD_HOSTNAME` | `false` | Include hostname |
-| `add_process_info` | `FF_LOG_ADD_PROCESS_INFO` | `false` | Include PID/thread |
+```python
+from ff_logger import FileLogger
+
+logger = FileLogger(
+    name="app",
+    filename="/var/log/app.log",
+    rotation_type="size",  # "size", "time", or "none"
+    max_bytes=10*1024*1024,  # 10MB
+    backup_count=5
+)
+```
+
+### NullLogger
+Zero-cost logger for testing or when logging is disabled:
+
+```python
+from ff_logger import NullLogger
+
+# No output, no formatting, no I/O
+logger = NullLogger(name="app")
+logger.info("This does nothing")  # No-op
+```
+
+### DatabaseLogger
+Writes logs to a database table (requires ff-storage):
+
+```python
+from ff_logger import DatabaseLogger
+from ff_storage.db.postgres import PostgresPool
+
+db = PostgresPool(...)
+logger = DatabaseLogger(
+    name="app",
+    db_connection=db,
+    table_name="logs",
+    schema="public"
+)
+```
+
+## Key Features
+
+### Instance-Based
+Each logger is a self-contained instance with its own configuration:
+
+```python
+def process_data(logger):
+    """Accept any logger instance."""
+    logger.info("Processing started")
+    # ... do work ...
+    logger.info("Processing complete")
+
+# Use with different loggers
+console = ConsoleLogger("console")
+json_log = JSONLogger("json")
+
+process_data(console)  # Outputs to console
+process_data(json_log)  # Outputs as JSON
+```
+
+### Context Preservation
+Permanent context fields appear in every log message:
+
+```python
+logger = ConsoleLogger(
+    name="worker",
+    context={
+        "worker_id": "w-1",
+        "datacenter": "us-east-1"
+    }
+)
+
+# Every log includes worker_id and datacenter
+logger.info("Task started")
+logger.error("Task failed")
+```
+
+### Zero Dependencies
+Built entirely on Python's standard `logging` module - no external dependencies required for core functionality.
+
+## Migration from Traditional Logging
+
+```python
+# Traditional Python logging (global)
+import logging
+logging.info("Message")
+
+# ff-logger (instance-based)
+from ff_logger import ConsoleLogger
+logger = ConsoleLogger("app")
+logger.info("Message")
+```
+
+## Advanced Usage
+
+### Custom Log Levels
+
+```python
+import logging
+
+# Create logger with custom level
+logger = ConsoleLogger(
+    name="debug_app",
+    level=logging.DEBUG  # Show all messages including debug
+)
+```
+
+### Exception Logging
+
+```python
+try:
+    risky_operation()
+except Exception:
+    logger.exception("Operation failed")
+    # Automatically includes full traceback
+```
+
+### Reserved Fields
+
+Some field names are reserved by Python's logging module. If you use them, they'll be automatically prefixed with `x_`:
+
+```python
+# "module" is reserved, becomes "x_module"
+logger.info("Message", module="auth")
+```
+
+## Testing
+
+Use `NullLogger` in tests for zero overhead:
+
+```python
+def test_my_function():
+    logger = NullLogger("test")
+    result = my_function(logger)  # No logging output
+    assert result == expected
+```
 
 ## License
 
-Proprietary - Fenixflow Internal Use Only
+Proprietary - Fenixflow

@@ -1,176 +1,249 @@
 """
-Database logger implementation for audit trails.
+Database logger implementation for ff-logger.
 """
 
+import logging
 import random
 import socket
 import string
 from datetime import datetime, timezone
 from typing import Any
 
-import structlog
-from structlog.types import Processor
-
 from .base import ScopedLogger
+from .utils import extract_extra_fields
 
 
-class DatabaseProcessor:
+class DatabaseHandler(logging.Handler):
     """
-    A structlog processor that writes log entries to a database.
+    A logging handler that inserts log messages into a database table.
+    Compatible with ff-storage database connections.
     """
 
-    def __init__(self, db_connection, schema: str = "logs", table: str = "logs"):
+    def __init__(
+        self,
+        db_connection,
+        table_name: str = "logs",
+        schema: str = "public",
+        level: int = logging.DEBUG,
+        ensure_table: bool = True,
+    ):
         """
-        Initialize database processor.
+        Initialize the database handler.
 
         Args:
-            db_connection: Database connection (must have execute method)
-            schema: Database schema name
-            table: Table name for logs
+            db_connection: Database connection (ff_storage compatible)
+            table_name: Name of the logs table (default: "logs")
+            schema: Database schema (default: "public")
+            level: Minimum log level
+            ensure_table: Whether to create table if it doesn't exist
         """
+        super().__init__(level=level)
         self.db_connection = db_connection
+        self.table_name = table_name
         self.schema = schema
-        self.table = table
         self.hostname = socket.gethostname()
-        self._ensure_table()
 
-    def _ensure_table(self) -> None:
-        """Ensure the logs table exists."""
-        # This is a simplified version - adapt based on your database
-        create_sql = f"""
-        CREATE TABLE IF NOT EXISTS {self.schema}.{self.table} (
-            log_key VARCHAR(20) PRIMARY KEY,
-            log_level VARCHAR(20),
-            log_message TEXT,
-            log_timestamp TIMESTAMP WITH TIME ZONE,
+        if ensure_table:
+            self._ensure_table()
+
+    def _ensure_table(self):
+        """
+        Ensure the logs table exists. Creates it if not present.
+        """
+        # This is PostgreSQL-specific SQL, but can be adapted
+        create_table_sql = f"""
+        CREATE TABLE IF NOT EXISTS {self.schema}.{self.table_name} (
+            id SERIAL PRIMARY KEY,
+            log_key VARCHAR(20) UNIQUE NOT NULL,
+            log_level VARCHAR(20) NOT NULL,
+            log_message TEXT NOT NULL,
+            log_timestamp TIMESTAMP WITH TIME ZONE NOT NULL,
             logger_name VARCHAR(255),
             module VARCHAR(255),
             function_name VARCHAR(255),
             line_number INTEGER,
             hostname VARCHAR(255),
-            context JSONB,
+            process_id INTEGER,
+            thread_id BIGINT,
+            extra_data JSONB,
+            exception_info TEXT,
             created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-        )
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_{self.table_name}_timestamp
+            ON {self.schema}.{self.table_name}(log_timestamp DESC);
+        CREATE INDEX IF NOT EXISTS idx_{self.table_name}_level
+            ON {self.schema}.{self.table_name}(log_level);
+        CREATE INDEX IF NOT EXISTS idx_{self.table_name}_logger
+            ON {self.schema}.{self.table_name}(logger_name);
         """
+
         try:
+            # Handle both direct execute and transaction-based connections
             if hasattr(self.db_connection, "execute"):
-                self.db_connection.execute(create_sql)
+                self.db_connection.execute(create_table_sql)
+            elif hasattr(self.db_connection, "write_query"):
+                # For ff_storage SQL connections
+                for stmt in create_table_sql.strip().split(";"):
+                    stmt = stmt.strip()
+                    if stmt:
+                        self.db_connection.write_query(stmt)
         except Exception as e:
-            # Table might already exist or schema issues
-            print(f"Warning: Could not create logs table: {e}")
+            # Log the error but don't fail initialization
+            print(f"Warning: Could not ensure logs table exists: {e}")
 
-    def __call__(self, logger, name, event_dict):
+    def emit(self, record: logging.LogRecord) -> None:
         """
-        Process a log entry and write to database.
+        Insert a log record into the database.
 
-        This is called by structlog for each log message.
+        Args:
+            record: The log record to insert
         """
         try:
-            # Generate unique key for this log entry
+            # Generate a unique key for this log entry
             log_key = "".join(random.choices(string.ascii_letters + string.digits, k=20))
 
-            # Extract standard fields
+            # Extract extra fields (context + kwargs)
+            extra_data = extract_extra_fields(record)
+
+            # Prepare the log entry
             log_entry = {
                 "log_key": log_key,
-                "log_level": event_dict.get("level", "INFO"),
-                "log_message": event_dict.get("event", ""),
-                "log_timestamp": datetime.now(timezone.utc),
-                "logger_name": event_dict.get("logger", ""),
-                "module": event_dict.get("module", ""),
-                "function_name": event_dict.get("func_name", ""),
-                "line_number": event_dict.get("lineno", 0),
+                "log_level": record.levelname,
+                "log_message": record.getMessage(),
+                "log_timestamp": datetime.fromtimestamp(record.created, tz=timezone.utc),
+                "logger_name": record.name,
+                "module": record.module,
+                "function_name": record.funcName,
+                "line_number": record.lineno,
                 "hostname": self.hostname,
+                "process_id": record.process,
+                "thread_id": record.thread,
             }
 
-            # Store remaining fields as context JSON
-            context_fields = {
-                k: v
-                for k, v in event_dict.items()
-                if k not in ["level", "event", "logger", "module", "func_name", "lineno"]
-            }
+            # Handle extra data as JSON
+            if extra_data:
+                # For PostgreSQL, we can use JSONB
+                # For MySQL, we'd use JSON type
+                import json
 
+                log_entry["extra_data"] = json.dumps(extra_data)
+            else:
+                log_entry["extra_data"] = None
+
+            # Handle exception info
+            if record.exc_info:
+                log_entry["exception_info"] = self.format(record)
+            else:
+                log_entry["exception_info"] = None
+
+            # Build the INSERT statement
             insert_sql = f"""
-            INSERT INTO {self.schema}.{self.table} (
+            INSERT INTO {self.schema}.{self.table_name} (
                 log_key, log_level, log_message, log_timestamp,
                 logger_name, module, function_name, line_number,
-                hostname, context
+                hostname, process_id, thread_id, extra_data, exception_info
             ) VALUES (
                 %(log_key)s, %(log_level)s, %(log_message)s, %(log_timestamp)s,
                 %(logger_name)s, %(module)s, %(function_name)s, %(line_number)s,
-                %(hostname)s, %(context)s::jsonb
+                %(hostname)s, %(process_id)s, %(thread_id)s,
+                %(extra_data)s::jsonb, %(exception_info)s
             )
             """
 
-            log_entry["context"] = str(context_fields)  # Convert to JSON string
-
+            # Execute the insert
             if hasattr(self.db_connection, "execute"):
                 self.db_connection.execute(insert_sql, log_entry)
+            elif hasattr(self.db_connection, "write_query"):
+                # For ff_storage SQL connections
+                self.db_connection.write_query(insert_sql, log_entry)
 
-        except Exception as e:
-            # Don't let database errors break the application
-            print(f"Failed to write log to database: {e}")
-
-        # Always return the event_dict to allow other processors to run
-        return event_dict
+        except Exception:
+            # If insertion fails, use the parent class error handler
+            self.handleError(record)
 
 
 class DatabaseLogger(ScopedLogger):
     """
-    A logger that writes to a database for audit trails.
-
-    Can optionally also output to console for debugging.
+    A scoped logger that writes to a database table.
+    Can optionally also write to console for debugging.
     """
 
     def __init__(
         self,
         name: str,
         db_connection,
-        schema: str = "logs",
-        table: str = "logs",
+        level: int = logging.DEBUG,
         context: dict[str, Any] | None = None,
-        also_print: bool = False,
+        table_name: str = "logs",
+        schema: str = "public",
+        ensure_table: bool = True,
+        also_console: bool = False,
     ):
         """
-        Initialize a database logger.
+        Initialize the database logger.
 
         Args:
-            name: Logger name/scope
-            db_connection: Database connection object
-            schema: Database schema for logs table
-            table: Table name for logs
-            context: Initial context dictionary
-            also_print: Whether to also print to console
+            name: Logger name
+            db_connection: Database connection (ff_storage compatible)
+            level: Logging level
+            context: Permanent context fields
+            table_name: Name of the logs table
+            schema: Database schema
+            ensure_table: Whether to create table if it doesn't exist
+            also_console: Whether to also log to console
         """
+        super().__init__(name, level, context)
+
+        # Add database handler
+        db_handler = DatabaseHandler(
+            db_connection=db_connection,
+            table_name=table_name,
+            schema=schema,
+            level=level,
+            ensure_table=ensure_table,
+        )
+        self.logger.addHandler(db_handler)
+
+        # Optionally add console handler for debugging
+        if also_console:
+            console_handler = logging.StreamHandler()
+            console_handler.setLevel(level)
+
+            # Use a simple formatter for console
+            formatter = logging.Formatter("[%(asctime)s] %(levelname)s [%(name)s] %(message)s")
+            console_handler.setFormatter(formatter)
+            self.logger.addHandler(console_handler)
+
+        # Store configuration for bind()
         self.db_connection = db_connection
+        self.table_name = table_name
         self.schema = schema
-        self.table = table
-        self.also_print = also_print
+        self.ensure_table = False  # Don't re-create on bind
+        self.also_console = also_console
 
-        super().__init__(name=name, context=context)
+    def bind(self, **kwargs) -> "DatabaseLogger":
+        """
+        Create a new logger instance with additional context.
 
-    def _get_default_processors(self) -> list[Processor]:
-        """Get database-specific processors."""
-        processors = [
-            structlog.stdlib.add_log_level,
-            structlog.processors.TimeStamper(fmt="iso"),
-            structlog.processors.CallsiteParameterAdder(
-                parameters=[
-                    structlog.processors.CallsiteParameter.FILENAME,
-                    structlog.processors.CallsiteParameter.FUNC_NAME,
-                    structlog.processors.CallsiteParameter.LINENO,
-                ]
-            ),
-            structlog.processors.format_exc_info,
-            structlog.processors.UnicodeDecoder(),
-            DatabaseProcessor(
-                db_connection=self.db_connection,
-                schema=self.schema,
-                table=self.table,
-            ),
-        ]
+        Args:
+            **kwargs: Additional context fields to bind
 
-        # Optionally add console output
-        if self.also_print:
-            processors.append(structlog.dev.ConsoleRenderer())
+        Returns:
+            A new DatabaseLogger instance with merged context
+        """
+        new_context = {**self.context, **kwargs}
 
-        return processors
+        # Create new instance with same configuration
+        new_logger = DatabaseLogger(
+            name=f"{self.name}.bound",
+            db_connection=self.db_connection,
+            level=self.level,
+            context=new_context,
+            table_name=self.table_name,
+            schema=self.schema,
+            ensure_table=self.ensure_table,
+            also_console=self.also_console,
+        )
+
+        return new_logger

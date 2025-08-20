@@ -1,72 +1,173 @@
 """
-Console logger implementation with colored output.
+Console logger with colored output for ff-logger.
 """
 
+import logging
 import socket
 import sys
+from logging import Formatter
 from typing import Any
 
-import structlog
-from structlog.types import Processor
-
 from .base import ScopedLogger
+from .utils import extract_extra_fields
+
+
+class ColoredFormatter(Formatter):
+    """
+    Colored formatter for console output.
+    Adds colors to log levels and formats extra fields nicely.
+    """
+
+    # ANSI color codes
+    COLORS = {
+        "DEBUG": "\033[94m",  # Blue
+        "INFO": "\033[92m",  # Green
+        "WARNING": "\033[93m",  # Yellow
+        "ERROR": "\033[91m",  # Red
+        "CRITICAL": "\033[91m\033[1m",  # Bold Red
+        "RESET": "\033[0m",  # Reset
+    }
+
+    def __init__(self, colors: bool = True, show_hostname: bool = False):
+        """
+        Initialize the colored formatter.
+
+        Args:
+            colors: Whether to use colors (default: True)
+            show_hostname: Whether to include hostname (default: False)
+        """
+        self.colors = colors
+        self.hostname = socket.gethostname() if show_hostname else None
+
+        # Build format string
+        fmt_parts = ["[%(asctime)s]"]
+        if self.hostname:
+            fmt_parts.append(f"{self.hostname}")
+        fmt_parts.append("%(levelname)s")
+        fmt_parts.append("[%(name)s]")
+        fmt_parts.append("%(message)s")
+
+        super().__init__(fmt=" ".join(fmt_parts), datefmt="%Y-%m-%d %H:%M:%S")
+
+    def format(self, record):
+        """
+        Format the log record with colors and extra fields.
+
+        Args:
+            record: The LogRecord to format
+
+        Returns:
+            Formatted log string
+        """
+        # Apply colors to level name if enabled
+        if self.colors and record.levelname in self.COLORS:
+            original_levelname = record.levelname
+            record.levelname = (
+                f"{self.COLORS[record.levelname]}{record.levelname}{self.COLORS['RESET']}"
+            )
+            result = super().format(record)
+            record.levelname = original_levelname  # Restore original
+        else:
+            result = super().format(record)
+
+        # Extract and format extra fields
+        extra_data = extract_extra_fields(record)
+
+        # Add file:line information
+        if hasattr(record, "filename") and hasattr(record, "lineno"):
+            extra_data["line"] = f"{record.filename}:{record.lineno}"
+
+        # Format extra fields if present
+        if extra_data:
+            # Format as key=value pairs on the same line
+            extra_parts = []
+            for key, value in extra_data.items():
+                if isinstance(value, str):
+                    formatted_value = f'"{value}"'
+                elif isinstance(value, bool):
+                    formatted_value = str(value).lower()
+                elif value is None:
+                    formatted_value = "null"
+                else:
+                    formatted_value = str(value)
+
+                if self.colors:
+                    # Color the key in cyan
+                    extra_parts.append(f"\033[36m{key}\033[0m={formatted_value}")
+                else:
+                    extra_parts.append(f"{key}={formatted_value}")
+
+            if extra_parts:
+                result = f"{result} | {' '.join(extra_parts)}"
+
+        return result
 
 
 class ConsoleLogger(ScopedLogger):
     """
-    A logger that outputs to console with colored, human-readable format.
-    Perfect for development and debugging.
+    A scoped logger that outputs to console with optional colored formatting.
+    Supports context binding and arbitrary kwargs.
     """
 
     def __init__(
         self,
         name: str,
+        level: int = logging.DEBUG,
         context: dict[str, Any] | None = None,
         colors: bool = True,
-        add_hostname: bool = False,
         stream=None,
+        show_hostname: bool = False,
     ):
         """
-        Initialize a console logger.
+        Initialize the console logger.
 
         Args:
-            name: Logger name/scope
-            context: Initial context dictionary
-            colors: Whether to use colored output
-            add_hostname: Whether to include hostname in logs
+            name: Logger name
+            level: Logging level
+            context: Permanent context fields
+            colors: Whether to use colored output (default: True)
             stream: Output stream (default: sys.stdout)
+            show_hostname: Whether to include hostname in logs (default: False)
         """
-        self.stream = stream or sys.stdout
+        super().__init__(name, level, context)
+
+        # Set up the stream handler
+        stream = stream or sys.stdout
+        handler = logging.StreamHandler(stream)
+        handler.setLevel(level)
+
+        # Set up the colored formatter
+        formatter = ColoredFormatter(colors=colors, show_hostname=show_hostname)
+        handler.setFormatter(formatter)
+
+        # Add handler to logger
+        self.logger.addHandler(handler)
+
+        # Store configuration for bind()
         self.colors = colors
-        self.add_hostname = add_hostname
+        self.stream = stream
+        self.show_hostname = show_hostname
 
-        # Add hostname to context if requested
-        if add_hostname and context is None:
-            context = {}
-        if add_hostname:
-            context["hostname"] = socket.gethostname()
+    def bind(self, **kwargs) -> "ConsoleLogger":
+        """
+        Create a new logger instance with additional context.
 
-        super().__init__(name=name, context=context)
+        Args:
+            **kwargs: Additional context fields to bind
 
-    def _get_default_processors(self) -> list[Processor]:
-        """Get console-specific processors."""
-        processors = [
-            structlog.stdlib.add_log_level,
-            structlog.processors.TimeStamper(fmt="iso"),
-            structlog.processors.StackInfoRenderer(),
-            structlog.processors.format_exc_info,
-            structlog.processors.UnicodeDecoder(),
-        ]
+        Returns:
+            A new ConsoleLogger instance with merged context
+        """
+        new_context = {**self.context, **kwargs}
 
-        # Add appropriate renderer based on colors setting
-        if self.colors:
-            processors.append(
-                structlog.dev.ConsoleRenderer(
-                    colors=True,
-                    exception_formatter=structlog.dev.rich_traceback,
-                )
-            )
-        else:
-            processors.append(structlog.dev.ConsoleRenderer(colors=False))
+        # Create new instance with same configuration
+        new_logger = ConsoleLogger(
+            name=f"{self.name}.bound",
+            level=self.level,
+            context=new_context,
+            colors=self.colors,
+            stream=self.stream,
+            show_hostname=self.show_hostname,
+        )
 
-        return processors
+        return new_logger

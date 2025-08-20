@@ -1,24 +1,28 @@
 """
-ff-logger: Structured logging package for Fenixflow applications.
+ff-logger: Scoped logging package for Fenixflow applications.
 
-Provides scoped loggers with multiple backends using structlog.
+This package provides instance-based loggers that can be passed around as objects,
+with support for context binding and multiple output formats.
 """
+
+from .base import ScopedLogger
+from .console import ConsoleLogger
+from .database import DatabaseHandler, DatabaseLogger
+from .file import FileLogger
+from .json_logger import JSONLogger
+from .null import NullLogger
 
 __version__ = "0.1.0"
 
-from .base import ScopedLogger
-from .config import configure_logging, get_logger
-from .console import ConsoleLogger
-from .database import DatabaseLogger
-from .json import JSONLogger
-from .null import NullLogger
-
 __all__ = [
+    # Base class
     "ScopedLogger",
+    # Logger implementations
     "ConsoleLogger",
+    "NullLogger",
     "JSONLogger",
     "DatabaseLogger",
-    "NullLogger",
-    "configure_logging",
-    "get_logger",
+    "FileLogger",
+    # Handlers (for advanced use)
+    "DatabaseHandler",
 ]

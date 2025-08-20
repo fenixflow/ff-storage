@@ -1,176 +1,114 @@
 """
 Null logger implementation for zero-cost disabled logging.
+
+Note: If your code calls logger.info("some %s", arg) (i.e., letting the logger
+handle string interpolation), that's minimal overhead. If you do
+logger.info(f"some {arg}"), Python will build the string before calling the
+logger (meaning you pay the cost of string construction even if the logger
+is a no-op). To minimize overhead in production, stick to the logger's
+built-in interpolation with %s and pass arguments instead of f-strings.
 """
 
 from typing import Any
 
-import structlog
-from structlog.testing import LogCapture
-
 
 class NullLogger:
     """
-    A zero-cost null logger that discards all log messages.
+    A no-op (do nothing) logger that implements the same interface as ScopedLogger
+    but does nothing. This provides zero-cost logging when disabled.
 
-    When using this logger, expensive operations in log arguments
-    are never evaluated, providing true zero-cost logging when disabled.
-
-    Example:
-        logger = NullLogger("disabled")
-        logger.debug("msg", data=expensive_function())  # expensive_function() NOT called!
+    All methods are no-ops and return immediately without any processing.
     """
 
-    def __init__(self, name: str, context: dict[str, Any] | None = None):
+    def __init__(self, name: str, level: Any = None, context: dict[str, Any] | None = None):
         """
-        Initialize a null logger.
+        Initialize the null logger.
 
         Args:
-            name: Logger name (for compatibility)
-            context: Initial context (ignored but accepted for compatibility)
+            name: Logger name (stored but not used)
+            level: Log level (accepted but ignored)
+            context: Context fields (accepted but ignored)
         """
         self.name = name
-        self._context = context or {}
-        self._context["logger"] = name
+        self.level = level
+        self.context = context or {}
 
-        # Use structlog's PrintLogger with file=None for zero-cost logging
-        # This is the most efficient way - no string formatting, no I/O
-        self._logger = structlog.PrintLogger(file=None)
-
-    def bind(self, **kwargs: Any) -> "NullLogger":
+    def get_logger(self):
         """
-        Bind context (no-op, returns self for chaining).
-
-        Args:
-            **kwargs: Context to bind (ignored)
+        Returns self for compatibility with ScopedLogger interface.
 
         Returns:
-            Self for method chaining
+            Self (NullLogger instance)
         """
         return self
 
-    def unbind(self, *keys: str) -> "NullLogger":
+    def bind(self, **kwargs) -> "NullLogger":
         """
-        Unbind context (no-op, returns self for chaining).
+        Create a new NullLogger with additional context.
+        For compatibility only - returns a new NullLogger.
 
         Args:
-            *keys: Keys to unbind (ignored)
+            **kwargs: Context fields (accepted but ignored)
 
         Returns:
-            Self for method chaining
+            A new NullLogger instance
         """
-        return self
+        new_context = {**self.context, **kwargs}
+        return NullLogger(name=f"{self.name}.bound", level=self.level, context=new_context)
 
-    def debug(self, event: str, **kwargs: Any) -> None:
-        """Debug log (no-op)."""
+    def debug(self, *args, **kwargs):
+        """No-op debug log."""
         pass
 
-    def info(self, event: str, **kwargs: Any) -> None:
-        """Info log (no-op)."""
+    def info(self, *args, **kwargs):
+        """No-op info log."""
         pass
 
-    def warning(self, event: str, **kwargs: Any) -> None:
-        """Warning log (no-op)."""
+    def warning(self, *args, **kwargs):
+        """No-op warning log."""
         pass
 
-    def error(self, event: str, **kwargs: Any) -> None:
-        """Error log (no-op)."""
+    def error(self, *args, **kwargs):
+        """No-op error log."""
         pass
 
-    def critical(self, event: str, **kwargs: Any) -> None:
-        """Critical log (no-op)."""
+    def critical(self, *args, **kwargs):
+        """No-op critical log."""
         pass
 
-    def exception(self, event: str, **kwargs: Any) -> None:
-        """Exception log (no-op)."""
+    def exception(self, *args, **kwargs):
+        """No-op exception log."""
         pass
 
-    def log(self, level: str, event: str, **kwargs: Any) -> None:
-        """Log at any level (no-op)."""
+    def log(self, *args, **kwargs):
+        """No-op generic log."""
         pass
 
-    @property
-    def context(self) -> dict[str, Any]:
-        """Get context (returns empty dict for compatibility)."""
-        return {}
+    # Compatibility methods for standard logging interface
+    def isEnabledFor(self, level):
+        """
+        Always returns False since logging is disabled.
 
-    def __repr__(self) -> str:
+        Args:
+            level: Log level to check
+
+        Returns:
+            False
+        """
+        return False
+
+    def setLevel(self, level):
+        """No-op setLevel for compatibility."""
+        pass
+
+    def addHandler(self, handler):
+        """No-op addHandler for compatibility."""
+        pass
+
+    def removeHandler(self, handler):
+        """No-op removeHandler for compatibility."""
+        pass
+
+    def __repr__(self):
+        """String representation of the NullLogger."""
         return f"NullLogger(name={self.name!r})"
-
-
-class CaptureLogger:
-    """
-    A logger that captures log messages for testing.
-    Useful for verifying that your code logs the right things.
-    """
-
-    def __init__(self, name: str, context: dict[str, Any] | None = None):
-        """
-        Initialize a test logger.
-
-        Args:
-            name: Logger name
-            context: Initial context
-        """
-        self.name = name
-        self._context = context or {}
-        self._context["logger"] = name
-        self._capture = LogCapture()
-
-        # Create a logger that captures to our LogCapture
-        self._logger = structlog.get_logger(name).bind(**self._context)
-        structlog.configure(processors=[self._capture])
-
-    @property
-    def entries(self) -> list:
-        """Get captured log entries."""
-        return self._capture.entries
-
-    def clear(self) -> None:
-        """Clear captured entries."""
-        self._capture.entries.clear()
-
-    def bind(self, **kwargs: Any) -> "CaptureLogger":
-        """Bind additional context."""
-        new_logger = CaptureLogger(self.name, {**self._context, **kwargs})
-        new_logger._capture = self._capture  # Share the same capture
-        return new_logger
-
-    def unbind(self, *keys: str) -> "CaptureLogger":
-        """Remove keys from context."""
-        new_context = {k: v for k, v in self._context.items() if k not in keys}
-        new_logger = CaptureLogger(self.name, new_context)
-        new_logger._capture = self._capture  # Share the same capture
-        return new_logger
-
-    def debug(self, event: str, **kwargs: Any) -> None:
-        """Log debug message."""
-        self._logger.debug(event, **kwargs)
-
-    def info(self, event: str, **kwargs: Any) -> None:
-        """Log info message."""
-        self._logger.info(event, **kwargs)
-
-    def warning(self, event: str, **kwargs: Any) -> None:
-        """Log warning message."""
-        self._logger.warning(event, **kwargs)
-
-    def error(self, event: str, **kwargs: Any) -> None:
-        """Log error message."""
-        self._logger.error(event, **kwargs)
-
-    def critical(self, event: str, **kwargs: Any) -> None:
-        """Log critical message."""
-        self._logger.critical(event, **kwargs)
-
-    def exception(self, event: str, **kwargs: Any) -> None:
-        """Log exception with traceback."""
-        self._logger.exception(event, **kwargs)
-
-    def log(self, level: str, event: str, **kwargs: Any) -> None:
-        """Log at specific level."""
-        getattr(self._logger, level.lower())(event, **kwargs)
-
-    @property
-    def context(self) -> dict[str, Any]:
-        """Get current context."""
-        return self._context.copy()

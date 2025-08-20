@@ -13,10 +13,8 @@ authors = [
     {name = "Fenixflow", email = "dev@fenixflow.com"}
 ]
 dependencies = [
-    "structlog>=24.0",
-    "colorama>=0.4",  # For colored console output
-    "python-json-logger>=2.0",  # For JSON formatting
-    "typing-extensions>=4.0",
+    # No external dependencies required for core functionality
+    # Everything is built on Python's standard logging module
 ]
 
 [project.optional-dependencies]

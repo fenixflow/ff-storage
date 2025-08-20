@@ -1,148 +1,162 @@
 """
-Base scoped logger implementation using structlog.
+Base ScopedLogger class for ff-logger.
 """
 
+import logging
 from typing import Any
-
-import structlog
-from structlog.stdlib import BoundLogger
-from structlog.types import Processor
 
 
 class ScopedLogger:
     """
-    Base class for scoped loggers using structlog.
-
-    Each instance has its own context and processor chain.
-    Can be easily extended or overridden by importing different implementations.
+    Base class for creating a scoped logger with a handler.
+    Ensures that each instance has its own independent logger.
+    Supports context binding and arbitrary kwargs in log methods.
     """
 
     def __init__(
-        self,
-        name: str,
-        processors: list[Processor] | None = None,
-        context: dict[str, Any] | None = None,
-        wrapper_class: type | None = None,
-        cache_logger_on_first_use: bool = True,
+        self, name: str, level: int = logging.DEBUG, context: dict[str, Any] | None = None
     ):
         """
-        Initialize a scoped logger.
+        Initialize the scoped logger.
 
         Args:
-            name: Logger name/scope identifier
-            processors: List of structlog processors
-            context: Initial context dictionary
-            wrapper_class: Logger wrapper class (default: BoundLogger)
-            cache_logger_on_first_use: Whether to cache the logger
+            name: A unique name for the logger (e.g., the scope of the logger)
+            level: The logging level (default: DEBUG)
+            context: Permanent context fields to include in every log message
         """
         self.name = name
-        self._context = context or {}
-        self._context["logger"] = name
+        self.level = level
+        self.context = context or {}
 
-        # Set up processors if not provided
-        if processors is None:
-            processors = self._get_default_processors()
+        # Create a unique logger instance
+        self.logger = logging.getLogger(name)
+        self.logger.setLevel(level)
 
-        # Configure structlog for this logger instance
-        self._logger = structlog.get_logger(
-            name,
-            wrapper_class=wrapper_class or BoundLogger,
-            processors=processors,
-            cache_logger_on_first_use=cache_logger_on_first_use,
-        ).bind(**self._context)
+        # Clear any pre-existing handlers for this logger to avoid duplicates
+        if self.logger.hasHandlers():
+            self.logger.handlers.clear()
 
-    def _get_default_processors(self) -> list[Processor]:
+        # Disable propagation to avoid duplicate messages from parent loggers
+        self.logger.propagate = False
+
+    def get_logger(self) -> logging.Logger:
         """
-        Get default processor chain.
-        Can be overridden in subclasses.
-        """
-        return [
-            structlog.stdlib.add_log_level,
-            structlog.processors.TimeStamper(fmt="iso"),
-            structlog.processors.StackInfoRenderer(),
-            structlog.processors.format_exc_info,
-            structlog.processors.UnicodeDecoder(),
-            structlog.dev.ConsoleRenderer(),
-        ]
-
-    def bind(self, **kwargs: Any) -> "ScopedLogger":
-        """
-        Bind additional context to the logger.
-        Returns a new logger instance with the bound context.
-
-        Args:
-            **kwargs: Key-value pairs to bind to the logger context
+        Returns the underlying logger instance.
 
         Returns:
-            New ScopedLogger instance with bound context
+            The logging.Logger instance
         """
-        new_logger = self.__class__(
-            name=self.name,
-            processors=None,  # Will use same processors
-            context={**self._context, **kwargs},
-        )
-        new_logger._logger = self._logger.bind(**kwargs)
-        return new_logger
+        return self.logger
 
-    def unbind(self, *keys: str) -> "ScopedLogger":
+    def bind(self, **kwargs) -> "ScopedLogger":
         """
-        Remove keys from the logger context.
-        Returns a new logger instance without the specified keys.
+        Create a new logger instance with additional context.
 
         Args:
-            *keys: Keys to remove from context
+            **kwargs: Additional context fields to bind
 
         Returns:
-            New ScopedLogger instance with keys removed
+            A new ScopedLogger instance with merged context
         """
-        new_context = {k: v for k, v in self._context.items() if k not in keys}
+        new_context = {**self.context, **kwargs}
+
+        # Create a new instance of the same class
         new_logger = self.__class__(
-            name=self.name,
-            processors=None,
-            context=new_context,
+            name=f"{self.name}.bound", level=self.level, context=new_context
         )
-        new_logger._logger = self._logger.unbind(*keys)
+
+        # Copy handlers from the current logger
+        for handler in self.logger.handlers:
+            new_logger.logger.addHandler(handler)
+
         return new_logger
 
-    def debug(self, event: str, **kwargs: Any) -> None:
-        """Log a debug message."""
-        self._logger.debug(event, **kwargs)
-
-    def info(self, event: str, **kwargs: Any) -> None:
-        """Log an info message."""
-        self._logger.info(event, **kwargs)
-
-    def warning(self, event: str, **kwargs: Any) -> None:
-        """Log a warning message."""
-        self._logger.warning(event, **kwargs)
-
-    def error(self, event: str, **kwargs: Any) -> None:
-        """Log an error message."""
-        self._logger.error(event, **kwargs)
-
-    def critical(self, event: str, **kwargs: Any) -> None:
-        """Log a critical message."""
-        self._logger.critical(event, **kwargs)
-
-    def exception(self, event: str, **kwargs: Any) -> None:
-        """Log an exception with traceback."""
-        self._logger.exception(event, **kwargs)
-
-    def log(self, level: str, event: str, **kwargs: Any) -> None:
+    def _log_with_context(self, level: int, message: str, exc_info: bool = False, **kwargs):
         """
-        Log at a specific level.
+        Internal method to log with context.
 
         Args:
-            level: Log level (debug, info, warning, error, critical)
-            event: Event/message to log
-            **kwargs: Additional context
+            level: Logging level
+            message: Log message
+            exc_info: Whether to include exception information
+            **kwargs: Additional context fields for this log entry
         """
-        getattr(self._logger, level.lower())(event, **kwargs)
+        from .utils import RESERVED_FIELDS
 
-    @property
-    def context(self) -> dict[str, Any]:
-        """Get the current logger context."""
-        return self._context.copy()
+        # Merge permanent context with runtime kwargs
+        extra = {**self.context, **kwargs}
 
-    def __repr__(self) -> str:
-        return f"{self.__class__.__name__}(name={self.name!r}, context={self._context!r})"
+        # Remove exc_info from extra if present (it's a special parameter)
+        extra.pop("exc_info", None)
+
+        # Prefix any reserved fields to avoid conflicts with LogRecord
+        safe_extra = {}
+        for key, value in extra.items():
+            if key in RESERVED_FIELDS:
+                safe_extra[f"x_{key}"] = value
+            else:
+                safe_extra[key] = value
+
+        # Use stacklevel=3 to get the correct line number from calling code
+        # Stack: calling_code -> logger.info() -> _log_with_context() -> logger.log()
+        self.logger.log(level, message, extra=safe_extra, exc_info=exc_info, stacklevel=3)
+
+    def debug(self, message: str, **kwargs):
+        """
+        Log a debug message.
+
+        Args:
+            message: The log message
+            **kwargs: Additional context fields
+        """
+        self._log_with_context(logging.DEBUG, message, **kwargs)
+
+    def info(self, message: str, **kwargs):
+        """
+        Log an info message.
+
+        Args:
+            message: The log message
+            **kwargs: Additional context fields
+        """
+        self._log_with_context(logging.INFO, message, **kwargs)
+
+    def warning(self, message: str, **kwargs):
+        """
+        Log a warning message.
+
+        Args:
+            message: The log message
+            **kwargs: Additional context fields
+        """
+        self._log_with_context(logging.WARNING, message, **kwargs)
+
+    def error(self, message: str, **kwargs):
+        """
+        Log an error message.
+
+        Args:
+            message: The log message
+            **kwargs: Additional context fields
+        """
+        self._log_with_context(logging.ERROR, message, **kwargs)
+
+    def critical(self, message: str, **kwargs):
+        """
+        Log a critical message.
+
+        Args:
+            message: The log message
+            **kwargs: Additional context fields
+        """
+        self._log_with_context(logging.CRITICAL, message, **kwargs)
+
+    def exception(self, message: str, **kwargs):
+        """
+        Log an exception with traceback.
+
+        Args:
+            message: The log message
+            **kwargs: Additional context fields
+        """
+        self._log_with_context(logging.ERROR, message, exc_info=True, **kwargs)
