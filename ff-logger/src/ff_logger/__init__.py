@@ -23,6 +23,5 @@ __all__ = [
     "JSONLogger",
     "DatabaseLogger",
     "FileLogger",
-    # Handlers (for advanced use)
     "DatabaseHandler",
 ]
