@@ -4,7 +4,6 @@
 
 stages:
   - check
-  - version
   - build
   - test
   - publish
@@ -54,47 +53,6 @@ detect-changes:
     - main
     - merge_requests
 
-# Bump versions for changed packages
-version-bump:
-  stage: version
-  script:
-    - |
-      echo "Version bump stage starting..."
-      
-      # Skip if this is already a version bump commit
-      if git log -1 --pretty=%B | grep -q "\[skip-ci\]"; then
-        echo "This is a version bump commit, skipping"
-        exit 0
-      fi
-      
-      # Only run on main branch for automatic commits
-      if [ "$CI_COMMIT_REF_NAME" = "main" ]; then
-        echo "Running on main branch - will commit version changes back"
-        chmod +x scripts/bump_version.sh
-        ./scripts/bump_version.sh --commit-back
-      else
-        echo "Running on $CI_COMMIT_REF_NAME - will bump versions without committing"
-        chmod +x scripts/bump_version.sh
-        ./scripts/bump_version.sh
-      fi
-      
-      # Copy version artifacts for later stages
-      for dir in */; do
-        if [ -f "${dir}.version" ]; then
-          echo "Found version artifact for ${dir%/}"
-        fi
-      done
-  artifacts:
-    paths:
-      - changed_packages.json
-      - "*/.version"
-    expire_in: 1 hour
-  needs:
-    - detect-changes
-  only:
-    - main
-    - merge_requests
-
 # Build job template
 .build-package:
   stage: build
@@ -116,11 +74,9 @@ version-bump:
       - "ff-storage/dist/"
       - "ff-logger/dist/"
       - changed_packages.json
-      - "*/.version"
     expire_in: 1 hour
   needs:
     - detect-changes
-    - version-bump
   only:
     - main
     - merge_requests
@@ -156,7 +112,6 @@ version-bump:
   artifacts:
     paths:
       - changed_packages.json
-      - "*/.version"
     expire_in: 1 hour
   only:
     - main
@@ -181,20 +136,57 @@ version-bump:
         exit 0
       fi
       
-      echo "Package $PACKAGE_NAME has changed, proceeding with publish..."
+      echo "Package $PACKAGE_NAME has changed, proceeding with version bump and publish..."
       
-      # Check if dist directory exists from build stage
-      if [ ! -d "$PACKAGE_NAME/dist" ]; then
-        echo "Warning: dist directory not found for $PACKAGE_NAME"
-        echo "Build may have been skipped or failed. Attempting to build now..."
+      # Skip if this is already a version bump commit
+      if git log -1 --pretty=%B | grep -q "\[skip-ci\]"; then
+        echo "This is a version bump commit, skipping to avoid loops"
+        exit 0
+      fi
+      
+      # Bump version first (without committing)
+      echo "Bumping version for $PACKAGE_NAME..."
+      chmod +x scripts/bump_version.sh
+      ./scripts/bump_version.sh --no-commit
+      
+      # Check if version was actually bumped
+      if [ ! -f "$PACKAGE_NAME/.version" ]; then
+        echo "No version bump needed or version bump failed"
+      else
+        NEW_VERSION=$(cat "$PACKAGE_NAME/.version")
+        echo "Version bumped to: $NEW_VERSION"
+      fi
+      
+      # Rebuild with new version if it was bumped
+      if [ -f "$PACKAGE_NAME/.version" ]; then
+        echo "Rebuilding package with new version..."
+        chmod +x scripts/build_package.sh
+        ./scripts/build_package.sh "$PACKAGE_NAME"
+      elif [ ! -d "$PACKAGE_NAME/dist" ]; then
+        echo "Warning: dist directory not found, attempting to build..."
         chmod +x scripts/build_package.sh
         ./scripts/build_package.sh "$PACKAGE_NAME"
       fi
       
       # Run publish_if_new.sh which will check if the version exists
       # and only publish if it's missing from the registry
+      echo "Publishing package..."
       chmod +x scripts/publish_if_new.sh
       ./scripts/publish_if_new.sh "$PACKAGE_NAME"
+      
+      # If publish succeeded and version was bumped, commit the version change
+      if [ $? -eq 0 ] && [ -f "$PACKAGE_NAME/.version" ]; then
+        echo "Publish successful, committing version change..."
+        git config --global user.email "gitlab-ci@fenixflow.com"
+        git config --global user.name "GitLab CI"
+        
+        git add "$PACKAGE_NAME/pyproject.toml"
+        git commit -m "[skip-ci] Bump $PACKAGE_NAME version to $(cat $PACKAGE_NAME/.version)"
+        
+        # Push the version change back to main
+        git push "https://gitlab-ci-token:${CI_PUSH_TOKEN}@${CI_SERVER_HOST}/${CI_PROJECT_PATH}.git" HEAD:main
+        echo "Version change committed and pushed"
+      fi
   # Note: Each package must specify its own needs
   only:
     - main
@@ -215,7 +207,6 @@ publish-ff-storage:
   extends: .publish-package
   needs:
     - detect-changes
-    - version-bump
     - build-ff-storage
     - test-ff-storage
 
@@ -232,7 +223,6 @@ publish-ff-logger:
   extends: .publish-package
   needs:
     - detect-changes
-    - version-bump
     - build-ff-logger
     - test-ff-logger
 
