@@ -1,0 +1,25 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "fenix-example-plugin"
+version = "0.1.0"
+description = "Example plugin for Fenix CLI demonstrating plugin architecture"
+readme = "README.md"
+requires-python = ">=3.12"
+license = {text = "Proprietary"}
+authors = [
+    {name = "Fenixflow", email = "dev@fenixflow.com"}
+]
+dependencies = [
+    "typer>=0.16.0",
+    "rich>=13.0.0",
+]
+
+# This is the key part - register the plugin with Fenix CLI
+[project.entry-points."fenix.plugins"]
+ff-example = "fenix_example_plugin.cli:plugin"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/fenix_example_plugin"]
