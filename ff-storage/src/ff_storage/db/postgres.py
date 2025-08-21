@@ -36,7 +36,7 @@ class PostgresBase(SQL):
 
         try:
             with self.connection.cursor() as cursor:
-                cursor.execute(query, params or {})
+                cursor.execute(query, params)
                 return cursor.fetchall()
         except DatabaseError as e:
             self.logger.error(f"Database query error: {e}")
@@ -55,7 +55,7 @@ class PostgresBase(SQL):
 
         try:
             with self.connection.cursor() as cursor:
-                cursor.execute(query, params or {})
+                cursor.execute(query, params)
                 self.connection.commit()
         except Exception as e:
             self.connection.rollback()
@@ -78,7 +78,7 @@ class PostgresBase(SQL):
 
         try:
             with self.connection.cursor() as cursor:
-                cursor.execute(query, params or {})
+                cursor.execute(query, params)
                 result = cursor.fetchall() if "RETURNING" in query.upper() else []
                 self.connection.commit()
                 return result
