@@ -11,7 +11,7 @@ stages:
 variables:
   PIP_CACHE_DIR: "$CI_PROJECT_DIR/.cache/pip"
   UV_CACHE_DIR: "$CI_PROJECT_DIR/.cache/uv"
-  PYTHON_VERSION: "3.11"
+  PYTHON_VERSION: "3.12"
 
 cache:
   paths:
@@ -73,6 +73,7 @@ detect-changes:
     paths:
       - "ff-storage/dist/"
       - "ff-logger/dist/"
+      - "ff-cli/dist/"
       - changed_packages.json
     expire_in: 1 hour
   needs:
@@ -225,5 +226,21 @@ publish-ff-logger:
     - detect-changes
     - build-ff-logger
     - test-ff-logger
+
+# ff-cli package
+build-ff-cli:
+  extends: .build-package
+
+test-ff-cli:
+  extends: .test-package
+  needs:
+    - build-ff-cli
+
+publish-ff-cli:
+  extends: .publish-package
+  needs:
+    - detect-changes
+    - build-ff-cli
+    - test-ff-cli
 
 # Add more packages here as they are created

@@ -14,6 +14,19 @@ Fenix-Packages is a monorepo containing reusable Python packages for Fenixflow a
 - File storage interfaces for local, S3, and Azure Blob Storage
 - Migration management system for database schema updates
 
+**ff-logger**: Scoped, instance-based logging package providing:
+- Self-contained logger instances that can be passed as objects
+- Context binding for permanent field attachment
+- Multiple output formats (console, JSON, file, database, null)
+- Zero external dependencies (built on Python's standard logging)
+
+**ff-cli**: Unified CLI for the Fenix ecosystem with plugin architecture:
+- Single `fenix` command entry point for all tools
+- Plugin architecture allowing projects to add namespaced commands
+- Dynamic plugin discovery via Python entry points
+- Configuration management in `~/.fenix/config.toml`
+- uvx compatible for easy execution without installation
+
 ## Architecture
 
 ### ff-storage Package Structure
@@ -30,12 +43,41 @@ The package follows a layered architecture:
 - Provides unified interface for different storage backends
 - Supports local filesystem, AWS S3, and Azure Blob Storage
 
+### ff-logger Package Structure
+
+Instance-based logging architecture:
+
+**Core Components** (`src/ff_logger/`):
+- `base.py`: ScopedLogger base class for all logger types
+- `console.py`: Human-readable colored console output
+- `json_logger.py`: Structured JSON logging for aggregation
+- `file.py`: File logging with rotation support
+- `database.py`: Database logging integration
+- `null.py`: Zero-cost null logger for testing
+
+### ff-cli Package Structure
+
+Plugin-based CLI architecture:
+
+**Core Components** (`src/ff_cli/`):
+- `main.py`: Main CLI entry point with plugin loading
+- `plugin_manager.py`: Dynamic plugin discovery and registration
+- `config.py`: Configuration management with TOML
+- `commands/plugins.py`: Built-in plugin management commands
+
+**Plugin System**:
+- Plugins are Python packages with Typer apps
+- Register via entry points in pyproject.toml
+- Loaded as namespaced subcommands (e.g., `fenix ff-agents status`)
+
 ### Key Design Patterns
 
 1. **Abstract Base Classes**: SQL base class provides flexible interface for different database backends
 2. **Connection Pooling**: Production-ready pooling for PostgreSQL and MySQL
 3. **Transaction Management**: Built-in support for database transactions with rollback
 4. **Migration System**: Version-controlled SQL migrations with automatic tracking
+5. **Scoped Loggers**: Instance-based loggers that can be passed as dependencies
+6. **Plugin Architecture**: Extensible CLI through Python entry points
 
 ## Development Commands
 
@@ -43,10 +85,14 @@ The package follows a layered architecture:
 
 ```bash
 # Install for local development (from repository root)
-pip install -e ./ff-storage
+uv pip install -e ./ff-storage
+uv pip install -e ./ff-logger
+uv pip install -e ./ff-cli
 
 # Install with development dependencies
-pip install -e "./ff-storage[dev]"
+uv pip install -e "./ff-storage[dev]"
+uv pip install -e "./ff-logger[dev]"
+uv pip install -e "./ff-cli[dev]"
 
 # Build package
 cd ff-storage && python -m build
@@ -83,7 +129,7 @@ cd ff-storage && mypy src/
 
 ## Usage Examples
 
-### Database Operations
+### Database Operations (ff-storage)
 
 ```python
 from ff_storage.db.postgres import PostgresPool
@@ -104,33 +150,106 @@ results = db.read_query("SELECT * FROM documents WHERE status = %s", {"status": 
 db.close_connection()
 ```
 
-### Migration Management
+### Logging (ff-logger)
 
 ```python
-from ff_storage.db.migrations import MigrationManager
+from ff_logger import ConsoleLogger, NullLogger
 
-manager = MigrationManager(db_connection, "./migrations")
-manager.migrate()  # Run all pending migrations
+# Create a scoped logger with context
+logger = ConsoleLogger(
+    name="my_service",
+    context={"service": "api", "env": "prod"}
+)
+
+# All logs include the context
+logger.info("Request received", request_id="123")
+
+# Pass logger as dependency
+def process_data(data, logger=NullLogger):
+    logger.info("Processing data")
+    return data
+```
+
+### CLI Usage (ff-cli)
+
+```bash
+# Install the CLI
+uv pip install git+https://gitlab.com/fenixflow/fenix-packages.git#subdirectory=ff-cli
+
+# Install a plugin
+fenix plugins install git+https://gitlab.com/fenixflow/fenix-agents.git
+
+# Use plugin commands
+fenix ff-agents status
+fenix ff-agents run workflow
+
+# Run with uvx (no installation)
+uvx --from git+https://gitlab.com/fenixflow/fenix-packages.git#subdirectory=ff-cli fenix --help
+```
+
+### Creating a CLI Plugin
+
+```python
+# In your project's cli_plugin.py
+import typer
+
+app = typer.Typer(help="My project CLI plugin")
+
+@app.command()
+def status():
+    """Check project status."""
+    print("Project is running")
+
+def plugin():
+    return app
+```
+
+```toml
+# In your project's pyproject.toml
+[project.entry-points."fenix.plugins"]
+ff-myproject = "myproject.cli_plugin:plugin"
 ```
 
 ## Integration with fenix-agents
 
-This package is designed to support the Evidence-First Document QA System in fenix-agents by providing:
+These packages are designed to support the Evidence-First Document QA System in fenix-agents:
+
+**ff-storage**:
 - Database connections for storing documents, questions, answers, and evidence
 - File storage for document ingestion pipeline
 - Migration management for schema evolution
 
-When working on database-related features in fenix-agents, use ff-storage as the foundation for:
-- PostgreSQL connections with pooling
-- Transaction management for data consistency
-- Schema migrations for database updates
+**ff-logger**:
+- Scoped logging for request tracking
+- Structured logging for observability
+- Context propagation through processing pipelines
+
+**ff-cli**:
+- Unified CLI for agent operations
+- Plugin architecture for fenix-agents commands
+- Consistent interface for both developers and AI agents
+
+When working on fenix-agents, use these packages as foundations:
+- ff-storage for all database and file operations
+- ff-logger for consistent logging across services
+- ff-cli plugin for exposing agent commands
 
 ## Installation from GitLab
 
 For production use:
 ```bash
-pip install git+https://gitlab.com/fenixflow/fenix-packages.git@main#subdirectory=ff-storage
+# Install individual packages
+uv pip install git+https://gitlab.com/fenixflow/fenix-packages.git@main#subdirectory=ff-storage
+uv pip install git+https://gitlab.com/fenixflow/fenix-packages.git@main#subdirectory=ff-logger
+uv pip install git+https://gitlab.com/fenixflow/fenix-packages.git@main#subdirectory=ff-cli
+
+# Or use uvx for the CLI without installation
+uvx --from git+https://gitlab.com/fenixflow/fenix-packages.git@main#subdirectory=ff-cli fenix --help
 ```
+
+## Python Version Requirement
+
+All packages in this repository require **Python 3.12+** for stability and modern features.
 
 ## Future Packages
 
@@ -138,3 +257,5 @@ The monorepo structure is designed to accommodate additional packages:
 - `ff-tools`: Utility functions and helpers
 - `ff-auth`: Authentication and authorization
 - `ff-api`: Common API utilities and middleware
+- `ff-ml`: Machine learning utilities and model management
+- `ff-cache`: Caching abstractions for Redis/Memcached
