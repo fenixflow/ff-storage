@@ -1,6 +1,22 @@
 # GitLab CI/CD Pipeline for Fenix Packages
 # Builds and publishes Python packages to GitLab Package Registry
-# Only publishes when package version changes
+# 
+# Version Management Workflow:
+# 1. AUTOMATIC: Version bumps happen automatically based on commit messages:
+#    - [major] tag: Breaking changes (0.1.0 -> 1.0.0)
+#    - [minor] tag: New features (0.1.0 -> 0.2.0)  
+#    - [patch] or no tag: Bug fixes (0.1.0 -> 0.1.1)
+#    - [skip-version]: Don't bump version
+#
+# 2. CONFLICT DETECTION: The pipeline detects when a version already exists
+#    in the registry and provides clear error messages
+#
+# 3. MANUAL OVERRIDE: When version conflicts occur, developers can:
+#    - Run the manual-bump-{package} job from the failed pipeline
+#    - Edit the NEW_VERSION variable to specify exact version
+#    - The job will update, publish, and commit the new version
+#
+# This approach prevents version conflicts while maintaining developer control
 
 stages:
   - check
@@ -12,6 +28,7 @@ variables:
   PIP_CACHE_DIR: "$CI_PROJECT_DIR/.cache/pip"
   UV_CACHE_DIR: "$CI_PROJECT_DIR/.cache/uv"
   PYTHON_VERSION: "3.12"
+  GIT_DEPTH: "50"  # Ensure we have enough Git history for change detection
 
 cache:
   paths:
@@ -29,25 +46,52 @@ default:
     - uv --version
     - python --version
 
-# Detect which packages have changed
+# Detect which packages have changed and check for version conflicts
 detect-changes:
   stage: check
   script:
     - |
-      echo "Detecting changed packages..."
+      echo "Detecting changed packages and version conflicts..."
       chmod +x scripts/detect_changes.sh
-      CHANGED_PACKAGES=$(./scripts/detect_changes.sh)
+      chmod +x scripts/check_version_exists.sh
       
-      if [ -z "$CHANGED_PACKAGES" ]; then
-        echo "No packages have changed"
-        echo "[]" > changed_packages.json
-      else
-        echo "Changed packages: $CHANGED_PACKAGES"
-        echo "$CHANGED_PACKAGES" > changed_packages.json
+      # Ensure we have Git history available
+      git fetch --unshallow || true
+      
+      # Run detection (outputs JSON with changed and version_conflicts arrays)
+      # Note: stderr contains debug info, stdout contains JSON result
+      DETECTION_RESULT=$(./scripts/detect_changes.sh 2>/dev/null) || {
+        echo "Warning: detect_changes.sh failed, using fallback"
+        DETECTION_RESULT='{"changed": [], "version_conflicts": []}'
+      }
+      
+      # Validate JSON output
+      if [ -z "$DETECTION_RESULT" ]; then
+        echo "Warning: detect_changes.sh produced no output, using fallback"
+        DETECTION_RESULT='{"changed": [], "version_conflicts": []}'
       fi
+      
+      echo "$DETECTION_RESULT" > detection_result.json
+      
+      # Extract just the changed packages for backward compatibility
+      CHANGED_PACKAGES=$(echo "$DETECTION_RESULT" | python3 -c "
+      import json, sys
+      try:
+          data = json.load(sys.stdin)
+          print(json.dumps(data.get('changed', [])))
+      except json.JSONDecodeError:
+          print('[]')
+      " 2>/dev/null || echo '[]')
+      
+      echo "Detection complete:"
+      cat detection_result.json
+      
+      # Save both for artifact usage
+      echo "$CHANGED_PACKAGES" > changed_packages.json
   artifacts:
     paths:
       - changed_packages.json
+      - detection_result.json
     expire_in: 1 hour
   only:
     - main
@@ -145,7 +189,47 @@ detect-changes:
         exit 0
       fi
       
-      # Bump version first (without committing)
+      # Check if there's a version conflict for this package
+      if [ -f detection_result.json ]; then
+        HAS_CONFLICT=$(python3 -c "
+      import json, sys
+      with open('detection_result.json', 'r') as f:
+          data = json.load(f)
+      conflicts = data.get('version_conflicts', [])
+      print('true' if '$PACKAGE_NAME' in conflicts else 'false')
+      ")
+        
+        if [ "$HAS_CONFLICT" = "true" ]; then
+          # Get current version for the error message
+          CURRENT_VERSION=$(python3 -c "
+      import tomllib
+      with open('$PACKAGE_NAME/pyproject.toml', 'rb') as f:
+          data = tomllib.load(f)
+          print(data['project']['version'])
+      ")
+          
+          echo "================================================================"
+          echo "ERROR: Version Conflict Detected!"
+          echo "================================================================"
+          echo "Package: $PACKAGE_NAME"
+          echo "Version: $CURRENT_VERSION (already exists in registry)"
+          echo ""
+          echo "This version has already been published. To resolve this:"
+          echo "1. Go to the pipeline page"
+          echo "2. Find and run the 'manual-bump-$PACKAGE_NAME' job"
+          echo "3. Edit the NEW_VERSION variable if needed (suggested: next patch)"
+          echo "4. Run the manual job to bump and publish"
+          echo "================================================================"
+          
+          # Create artifact with version info for manual job
+          echo "$CURRENT_VERSION" > "${PACKAGE_NAME}_version_conflict.txt"
+          
+          # Exit with error to trigger manual job availability
+          exit 1
+        fi
+      fi
+      
+      # Normal flow: Bump version first (without committing)
       echo "Bumping version for $PACKAGE_NAME..."
       chmod +x scripts/bump_version.sh
       ./scripts/bump_version.sh --no-commit
@@ -188,6 +272,11 @@ detect-changes:
         git push "https://gitlab-ci-token:${CI_PUSH_TOKEN}@${CI_SERVER_HOST}/${CI_PROJECT_PATH}.git" HEAD:main
         echo "Version change committed and pushed"
       fi
+  artifacts:
+    paths:
+      - "*_version_conflict.txt"
+    expire_in: 1 hour
+    when: on_failure
   # Note: Each package must specify its own needs
   only:
     - main
@@ -242,5 +331,324 @@ publish-ff-cli:
     - detect-changes
     - build-ff-cli
     - test-ff-cli
+
+# Manual version bump jobs - only available when version conflicts occur
+# These jobs allow developers to manually specify a new version when automatic bumping fails
+
+manual-bump-ff-storage:
+  stage: publish
+  when: manual
+  needs:
+    - job: publish-ff-storage
+      optional: true
+      artifacts: true
+  variables:
+    PACKAGE_NAME: "ff-storage"
+    # Developer can edit this in the UI before running
+    NEW_VERSION: "0.1.2"  # Default suggestion, will be calculated dynamically
+  script:
+    - |
+      echo "================================================================"
+      echo "Manual Version Bump for $PACKAGE_NAME"
+      echo "================================================================"
+      
+      # Get current version from conflict file or pyproject.toml
+      if [ -f "${PACKAGE_NAME}_version_conflict.txt" ]; then
+        CURRENT_VERSION=$(cat "${PACKAGE_NAME}_version_conflict.txt")
+        echo "Current conflicting version: $CURRENT_VERSION"
+      else
+        CURRENT_VERSION=$(python3 -c "
+      import tomllib
+      with open('$PACKAGE_NAME/pyproject.toml', 'rb') as f:
+          data = tomllib.load(f)
+          print(data['project']['version'])
+      ")
+        echo "Current version: $CURRENT_VERSION"
+      fi
+      
+      # Calculate suggested version if not overridden
+      if [ "$NEW_VERSION" = "0.1.2" ]; then
+        # Auto-calculate next patch version
+        SUGGESTED_VERSION=$(python3 -c "
+      import re
+      version = '$CURRENT_VERSION'
+      parts = version.split('.')
+      if len(parts) == 3:
+          parts[2] = str(int(parts[2]) + 1)
+          print('.'.join(parts))
+      else:
+          print(version)
+      ")
+        NEW_VERSION="$SUGGESTED_VERSION"
+        echo "Auto-calculated next version: $NEW_VERSION"
+      else
+        echo "Using manually specified version: $NEW_VERSION"
+      fi
+      
+      # Update version in pyproject.toml
+      echo "Updating $PACKAGE_NAME to version $NEW_VERSION..."
+      python3 << EOF
+      import re
+      with open('$PACKAGE_NAME/pyproject.toml', 'r') as f:
+          content = f.read()
+      content = re.sub(
+          r'^version = ["\'"][^"\']*["\'"]',
+          'version = "$NEW_VERSION"',
+          content,
+          flags=re.MULTILINE
+      )
+      with open('$PACKAGE_NAME/pyproject.toml', 'w') as f:
+          f.write(content)
+      print('Version updated in pyproject.toml')
+      EOF
+      
+      # Build the package with new version
+      echo "Building package with new version..."
+      chmod +x scripts/build_package.sh
+      ./scripts/build_package.sh "$PACKAGE_NAME"
+      
+      # Publish the package
+      echo "Publishing $PACKAGE_NAME version $NEW_VERSION..."
+      chmod +x scripts/publish_if_new.sh
+      ./scripts/publish_if_new.sh "$PACKAGE_NAME"
+      
+      if [ $? -eq 0 ]; then
+        echo "Publish successful!"
+        
+        # Commit the version change
+        echo "Committing version change..."
+        git config --global user.email "gitlab-ci@fenixflow.com"
+        git config --global user.name "GitLab CI"
+        
+        git add "$PACKAGE_NAME/pyproject.toml"
+        git commit -m "[skip-ci] Manual version bump: $PACKAGE_NAME to $NEW_VERSION
+        
+        Manual bump performed by: ${GITLAB_USER_NAME:-CI User}
+        Reason: Version conflict resolution"
+        
+        # Push the version change back to main
+        git push "https://gitlab-ci-token:${CI_PUSH_TOKEN}@${CI_SERVER_HOST}/${CI_PROJECT_PATH}.git" HEAD:main
+        echo "Version change committed and pushed"
+        echo "================================================================"
+        echo "SUCCESS: $PACKAGE_NAME bumped to $NEW_VERSION and published"
+        echo "================================================================"
+      else
+        echo "================================================================"
+        echo "ERROR: Failed to publish $PACKAGE_NAME version $NEW_VERSION"
+        echo "================================================================"
+        exit 1
+      fi
+  only:
+    - main
+
+manual-bump-ff-logger:
+  stage: publish
+  when: manual
+  needs:
+    - job: publish-ff-logger
+      optional: true
+      artifacts: true
+  variables:
+    PACKAGE_NAME: "ff-logger"
+    NEW_VERSION: "0.1.2"  # Default suggestion, will be calculated dynamically
+  script:
+    - |
+      echo "================================================================"
+      echo "Manual Version Bump for $PACKAGE_NAME"
+      echo "================================================================"
+      
+      # Get current version from conflict file or pyproject.toml
+      if [ -f "${PACKAGE_NAME}_version_conflict.txt" ]; then
+        CURRENT_VERSION=$(cat "${PACKAGE_NAME}_version_conflict.txt")
+        echo "Current conflicting version: $CURRENT_VERSION"
+      else
+        CURRENT_VERSION=$(python3 -c "
+      import tomllib
+      with open('$PACKAGE_NAME/pyproject.toml', 'rb') as f:
+          data = tomllib.load(f)
+          print(data['project']['version'])
+      ")
+        echo "Current version: $CURRENT_VERSION"
+      fi
+      
+      # Calculate suggested version if not overridden
+      if [ "$NEW_VERSION" = "0.1.2" ]; then
+        # Auto-calculate next patch version
+        SUGGESTED_VERSION=$(python3 -c "
+      import re
+      version = '$CURRENT_VERSION'
+      parts = version.split('.')
+      if len(parts) == 3:
+          parts[2] = str(int(parts[2]) + 1)
+          print('.'.join(parts))
+      else:
+          print(version)
+      ")
+        NEW_VERSION="$SUGGESTED_VERSION"
+        echo "Auto-calculated next version: $NEW_VERSION"
+      else
+        echo "Using manually specified version: $NEW_VERSION"
+      fi
+      
+      # Update version in pyproject.toml
+      echo "Updating $PACKAGE_NAME to version $NEW_VERSION..."
+      python3 << EOF
+      import re
+      with open('$PACKAGE_NAME/pyproject.toml', 'r') as f:
+          content = f.read()
+      content = re.sub(
+          r'^version = ["\'"][^"\']*["\'"]',
+          'version = "$NEW_VERSION"',
+          content,
+          flags=re.MULTILINE
+      )
+      with open('$PACKAGE_NAME/pyproject.toml', 'w') as f:
+          f.write(content)
+      print('Version updated in pyproject.toml')
+      EOF
+      
+      # Build the package with new version
+      echo "Building package with new version..."
+      chmod +x scripts/build_package.sh
+      ./scripts/build_package.sh "$PACKAGE_NAME"
+      
+      # Publish the package
+      echo "Publishing $PACKAGE_NAME version $NEW_VERSION..."
+      chmod +x scripts/publish_if_new.sh
+      ./scripts/publish_if_new.sh "$PACKAGE_NAME"
+      
+      if [ $? -eq 0 ]; then
+        echo "Publish successful!"
+        
+        # Commit the version change
+        echo "Committing version change..."
+        git config --global user.email "gitlab-ci@fenixflow.com"
+        git config --global user.name "GitLab CI"
+        
+        git add "$PACKAGE_NAME/pyproject.toml"
+        git commit -m "[skip-ci] Manual version bump: $PACKAGE_NAME to $NEW_VERSION
+        
+        Manual bump performed by: ${GITLAB_USER_NAME:-CI User}
+        Reason: Version conflict resolution"
+        
+        # Push the version change back to main
+        git push "https://gitlab-ci-token:${CI_PUSH_TOKEN}@${CI_SERVER_HOST}/${CI_PROJECT_PATH}.git" HEAD:main
+        echo "Version change committed and pushed"
+        echo "================================================================"
+        echo "SUCCESS: $PACKAGE_NAME bumped to $NEW_VERSION and published"
+        echo "================================================================"
+      else
+        echo "================================================================"
+        echo "ERROR: Failed to publish $PACKAGE_NAME version $NEW_VERSION"
+        echo "================================================================"
+        exit 1
+      fi
+  only:
+    - main
+
+manual-bump-ff-cli:
+  stage: publish
+  when: manual
+  needs:
+    - job: publish-ff-cli
+      optional: true
+      artifacts: true
+  variables:
+    PACKAGE_NAME: "ff-cli"
+    NEW_VERSION: "0.1.1"  # Default suggestion, will be calculated dynamically
+  script:
+    - |
+      echo "================================================================"
+      echo "Manual Version Bump for $PACKAGE_NAME"
+      echo "================================================================"
+      
+      # Get current version from conflict file or pyproject.toml
+      if [ -f "${PACKAGE_NAME}_version_conflict.txt" ]; then
+        CURRENT_VERSION=$(cat "${PACKAGE_NAME}_version_conflict.txt")
+        echo "Current conflicting version: $CURRENT_VERSION"
+      else
+        CURRENT_VERSION=$(python3 -c "
+      import tomllib
+      with open('$PACKAGE_NAME/pyproject.toml', 'rb') as f:
+          data = tomllib.load(f)
+          print(data['project']['version'])
+      ")
+        echo "Current version: $CURRENT_VERSION"
+      fi
+      
+      # Calculate suggested version if not overridden
+      if [ "$NEW_VERSION" = "0.1.1" ]; then
+        # Auto-calculate next patch version
+        SUGGESTED_VERSION=$(python3 -c "
+      import re
+      version = '$CURRENT_VERSION'
+      parts = version.split('.')
+      if len(parts) == 3:
+          parts[2] = str(int(parts[2]) + 1)
+          print('.'.join(parts))
+      else:
+          print(version)
+      ")
+        NEW_VERSION="$SUGGESTED_VERSION"
+        echo "Auto-calculated next version: $NEW_VERSION"
+      else
+        echo "Using manually specified version: $NEW_VERSION"
+      fi
+      
+      # Update version in pyproject.toml
+      echo "Updating $PACKAGE_NAME to version $NEW_VERSION..."
+      python3 << EOF
+      import re
+      with open('$PACKAGE_NAME/pyproject.toml', 'r') as f:
+          content = f.read()
+      content = re.sub(
+          r'^version = ["\'"][^"\']*["\'"]',
+          'version = "$NEW_VERSION"',
+          content,
+          flags=re.MULTILINE
+      )
+      with open('$PACKAGE_NAME/pyproject.toml', 'w') as f:
+          f.write(content)
+      print('Version updated in pyproject.toml')
+      EOF
+      
+      # Build the package with new version
+      echo "Building package with new version..."
+      chmod +x scripts/build_package.sh
+      ./scripts/build_package.sh "$PACKAGE_NAME"
+      
+      # Publish the package
+      echo "Publishing $PACKAGE_NAME version $NEW_VERSION..."
+      chmod +x scripts/publish_if_new.sh
+      ./scripts/publish_if_new.sh "$PACKAGE_NAME"
+      
+      if [ $? -eq 0 ]; then
+        echo "Publish successful!"
+        
+        # Commit the version change
+        echo "Committing version change..."
+        git config --global user.email "gitlab-ci@fenixflow.com"
+        git config --global user.name "GitLab CI"
+        
+        git add "$PACKAGE_NAME/pyproject.toml"
+        git commit -m "[skip-ci] Manual version bump: $PACKAGE_NAME to $NEW_VERSION
+        
+        Manual bump performed by: ${GITLAB_USER_NAME:-CI User}
+        Reason: Version conflict resolution"
+        
+        # Push the version change back to main
+        git push "https://gitlab-ci-token:${CI_PUSH_TOKEN}@${CI_SERVER_HOST}/${CI_PROJECT_PATH}.git" HEAD:main
+        echo "Version change committed and pushed"
+        echo "================================================================"
+        echo "SUCCESS: $PACKAGE_NAME bumped to $NEW_VERSION and published"
+        echo "================================================================"
+      else
+        echo "================================================================"
+        echo "ERROR: Failed to publish $PACKAGE_NAME version $NEW_VERSION"
+        echo "================================================================"
+        exit 1
+      fi
+  only:
+    - main
 
 # Add more packages here as they are created
