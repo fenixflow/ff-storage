@@ -18,74 +18,100 @@ class NullLogger:
     but does nothing. This provides zero-cost logging when disabled.
 
     All methods are no-ops and return immediately without any processing.
+
+    Can be used directly as a class without instantiation:
+        NullLogger.info("message")  # Does nothing
+
+    Or as a default parameter:
+        def my_func(logger=NullLogger):
+            logger.info("message")
     """
 
-    def __init__(self, name: str, level: Any = None, context: dict[str, Any] | None = None):
+    def __init__(
+        self,
+        name: str = "null",
+        level: Any = None,
+        context: dict[str, Any] | None = None,
+        *args,
+        **kwargs,
+    ):
         """
-        Initialize the null logger.
+        Initialize the null logger. All parameters are optional and ignored.
+
+        This method exists primarily for backward compatibility. The preferred
+        usage is to call class methods directly without instantiation.
 
         Args:
-            name: Logger name (stored but not used)
-            level: Log level (accepted but ignored)
-            context: Context fields (accepted but ignored)
+            name: Optional logger name (ignored)
+            level: Optional log level (ignored)
+            context: Optional context fields (ignored)
+            *args, **kwargs: Accept and ignore any other arguments
         """
-        self.name = name
-        self.level = level
-        self.context = context or {}
+        pass
 
-    def get_logger(self):
+    @classmethod
+    def get_logger(cls):
         """
-        Returns self for compatibility with ScopedLogger interface.
+        Returns the class itself for compatibility with ScopedLogger interface.
 
         Returns:
-            Self (NullLogger instance)
+            The NullLogger class
         """
-        return self
+        return cls
 
-    def bind(self, **kwargs) -> "NullLogger":
+    @classmethod
+    def bind(cls, **kwargs) -> "NullLogger":
         """
-        Create a new NullLogger with additional context.
-        For compatibility only - returns a new NullLogger.
+        For compatibility only - returns the NullLogger class itself.
+
+        Since NullLogger doesn't do anything with context, binding is meaningless.
 
         Args:
             **kwargs: Context fields (accepted but ignored)
 
         Returns:
-            A new NullLogger instance
+            The NullLogger class
         """
-        new_context = {**self.context, **kwargs}
-        return NullLogger(name=f"{self.name}.bound", level=self.level, context=new_context)
+        return cls
 
-    def debug(self, *args, **kwargs):
+    @classmethod
+    def debug(cls, *args, **kwargs):
         """No-op debug log."""
         pass
 
-    def info(self, *args, **kwargs):
+    @classmethod
+    def info(cls, *args, **kwargs):
         """No-op info log."""
         pass
 
-    def warning(self, *args, **kwargs):
+    @classmethod
+    def warning(cls, *args, **kwargs):
         """No-op warning log."""
         pass
 
-    def error(self, *args, **kwargs):
+    @classmethod
+    def error(cls, *args, **kwargs):
         """No-op error log."""
         pass
 
-    def critical(self, *args, **kwargs):
+    @classmethod
+    def critical(cls, *args, **kwargs):
         """No-op critical log."""
         pass
 
-    def exception(self, *args, **kwargs):
+    @classmethod
+    def exception(cls, *args, **kwargs):
         """No-op exception log."""
         pass
 
-    def log(self, *args, **kwargs):
+    @classmethod
+    def log(cls, *args, **kwargs):
         """No-op generic log."""
         pass
 
     # Compatibility methods for standard logging interface
-    def isEnabledFor(self, level):
+    @classmethod
+    def isEnabledFor(cls, level):
         """
         Always returns False since logging is disabled.
 
@@ -97,18 +123,26 @@ class NullLogger:
         """
         return False
 
-    def setLevel(self, level):
+    @classmethod
+    def setLevel(cls, level):
         """No-op setLevel for compatibility."""
         pass
 
-    def addHandler(self, handler):
+    @classmethod
+    def addHandler(cls, handler):
         """No-op addHandler for compatibility."""
         pass
 
-    def removeHandler(self, handler):
+    @classmethod
+    def removeHandler(cls, handler):
         """No-op removeHandler for compatibility."""
         pass
 
     def __repr__(self):
         """String representation of the NullLogger."""
-        return f"NullLogger(name={self.name!r})"
+        return "NullLogger()"
+
+    @classmethod
+    def __class_repr__(cls):
+        """String representation when used as a class."""
+        return "NullLogger"
