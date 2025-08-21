@@ -118,6 +118,7 @@ detect-changes:
       - "ff-storage/dist/"
       - "ff-logger/dist/"
       - "ff-cli/dist/"
+      - "ff-parsers/dist/"
       - changed_packages.json
     expire_in: 1 hour
   needs:
@@ -331,6 +332,22 @@ publish-ff-cli:
     - detect-changes
     - build-ff-cli
     - test-ff-cli
+
+# ff-parsers package
+build-ff-parsers:
+  extends: .build-package
+
+test-ff-parsers:
+  extends: .test-package
+  needs:
+    - build-ff-parsers
+
+publish-ff-parsers:
+  extends: .publish-package
+  needs:
+    - detect-changes
+    - build-ff-parsers
+    - test-ff-parsers
 
 # Manual version bump jobs - only available when version conflicts occur
 # These jobs allow developers to manually specify a new version when automatic bumping fails
@@ -555,6 +572,111 @@ manual-bump-ff-cli:
       artifacts: true
   variables:
     PACKAGE_NAME: "ff-cli"
+    NEW_VERSION: "0.1.1"  # Default suggestion, will be calculated dynamically
+  script:
+    - |
+      echo "================================================================"
+      echo "Manual Version Bump for $PACKAGE_NAME"
+      echo "================================================================"
+      
+      # Get current version from conflict file or pyproject.toml
+      if [ -f "${PACKAGE_NAME}_version_conflict.txt" ]; then
+        CURRENT_VERSION=$(cat "${PACKAGE_NAME}_version_conflict.txt")
+        echo "Current conflicting version: $CURRENT_VERSION"
+      else
+        CURRENT_VERSION=$(python3 -c "
+      import tomllib
+      with open('$PACKAGE_NAME/pyproject.toml', 'rb') as f:
+          data = tomllib.load(f)
+          print(data['project']['version'])
+      ")
+        echo "Current version: $CURRENT_VERSION"
+      fi
+      
+      # Calculate suggested version if not overridden
+      if [ "$NEW_VERSION" = "0.1.1" ]; then
+        # Auto-calculate next patch version
+        SUGGESTED_VERSION=$(python3 -c "
+      import re
+      version = '$CURRENT_VERSION'
+      parts = version.split('.')
+      if len(parts) == 3:
+          parts[2] = str(int(parts[2]) + 1)
+          print('.'.join(parts))
+      else:
+          print(version)
+      ")
+        NEW_VERSION="$SUGGESTED_VERSION"
+        echo "Auto-calculated next version: $NEW_VERSION"
+      else
+        echo "Using manually specified version: $NEW_VERSION"
+      fi
+      
+      # Update version in pyproject.toml
+      echo "Updating $PACKAGE_NAME to version $NEW_VERSION..."
+      python3 << EOF
+      import re
+      with open('$PACKAGE_NAME/pyproject.toml', 'r') as f:
+          content = f.read()
+      content = re.sub(
+          r'^version = ["\'"][^"\']*["\'"]',
+          'version = "$NEW_VERSION"',
+          content,
+          flags=re.MULTILINE
+      )
+      with open('$PACKAGE_NAME/pyproject.toml', 'w') as f:
+          f.write(content)
+      print('Version updated in pyproject.toml')
+      EOF
+      
+      # Build the package with new version
+      echo "Building package with new version..."
+      chmod +x scripts/build_package.sh
+      ./scripts/build_package.sh "$PACKAGE_NAME"
+      
+      # Publish the package
+      echo "Publishing $PACKAGE_NAME version $NEW_VERSION..."
+      chmod +x scripts/publish_if_new.sh
+      ./scripts/publish_if_new.sh "$PACKAGE_NAME"
+      
+      if [ $? -eq 0 ]; then
+        echo "Publish successful!"
+        
+        # Commit the version change
+        echo "Committing version change..."
+        git config --global user.email "gitlab-ci@fenixflow.com"
+        git config --global user.name "GitLab CI"
+        
+        git add "$PACKAGE_NAME/pyproject.toml"
+        git commit -m "[skip-ci] Manual version bump: $PACKAGE_NAME to $NEW_VERSION
+        
+        Manual bump performed by: ${GITLAB_USER_NAME:-CI User}
+        Reason: Version conflict resolution"
+        
+        # Push the version change back to main
+        git push "https://gitlab-ci-token:${CI_PUSH_TOKEN}@${CI_SERVER_HOST}/${CI_PROJECT_PATH}.git" HEAD:main
+        echo "Version change committed and pushed"
+        echo "================================================================"
+        echo "SUCCESS: $PACKAGE_NAME bumped to $NEW_VERSION and published"
+        echo "================================================================"
+      else
+        echo "================================================================"
+        echo "ERROR: Failed to publish $PACKAGE_NAME version $NEW_VERSION"
+        echo "================================================================"
+        exit 1
+      fi
+  only:
+    - main
+
+manual-bump-ff-parsers:
+  stage: publish
+  when: manual
+  needs:
+    - job: publish-ff-parsers
+      optional: true
+      artifacts: true
+  variables:
+    PACKAGE_NAME: "ff-parsers"
     NEW_VERSION: "0.1.1"  # Default suggestion, will be calculated dynamically
   script:
     - |
