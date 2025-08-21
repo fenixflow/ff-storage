@@ -9,6 +9,9 @@ from .db.postgres import Postgres, PostgresPool
 from .db.mysql import MySQL, MySQLPool
 from .db.migrations import MigrationManager
 
+# Object storage exports
+from .object import ObjectStorage, LocalObjectStorage, S3ObjectStorage
+
 __all__ = [
     # PostgreSQL
     "Postgres",
@@ -18,4 +21,8 @@ __all__ = [
     "MySQLPool",
     # Migrations
     "MigrationManager",
+    # Object Storage
+    "ObjectStorage",
+    "LocalObjectStorage",
+    "S3ObjectStorage",
 ]

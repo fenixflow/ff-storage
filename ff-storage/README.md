@@ -1,13 +1,16 @@
 # ff-storage
 
-Database and file storage operations for Fenixflow applications.
+Database and object storage operations for Fenixflow applications.
 
 ## Features
 
 - **Database Connections**: PostgreSQL and MySQL with connection pooling
 - **Multi-Database Support**: Consistent API for PostgreSQL and MySQL
 - **Migration Management**: Simple SQL file-based migrations
-- **File Storage**: Local, S3, and Azure Blob storage interfaces
+- **Object Storage**: Async local filesystem and S3/S3-compatible storage
+- **Streaming Support**: Read/write large files without loading into memory
+- **Atomic Operations**: Safe file writes with temp file + rename
+- **Metadata Management**: Store and retrieve metadata with objects
 - **Base Models**: Dataclass-based models with UUID and timestamp support
 - **Query Builder**: SQL query construction utilities
 
@@ -96,20 +99,33 @@ manager = MigrationManager(db_connection, "./migrations")
 manager.migrate()
 ```
 
-### File Storage
+### Object Storage
 
 ```python
-from ff_storage.file.local import LocalStorage
-from ff_storage.file.s3 import S3Storage
+from ff_storage import LocalObjectStorage, S3ObjectStorage
+import asyncio
 
-# Local storage
-storage = LocalStorage(base_path="/var/data/documents")
-await storage.store("doc123", document_bytes)
-data = await storage.retrieve("doc123")
+async def main():
+    # Local filesystem storage
+    local = LocalObjectStorage("/var/data/documents")
+    await local.write("docs/report.pdf", pdf_bytes, {"content-type": "application/pdf"})
+    data = await local.read("docs/report.pdf")
+    exists = await local.exists("docs/report.pdf")
+    files = await local.list_keys(prefix="docs/")
+    
+    # S3 storage (AWS or S3-compatible)
+    s3 = S3ObjectStorage(
+        bucket="fenix-documents",
+        region="us-east-1"
+    )
+    await s3.write("docs/report.pdf", pdf_bytes)
+    data = await s3.read("docs/report.pdf")
+    
+    # Stream large files
+    async for chunk in s3.read_stream("large_file.bin", chunk_size=8192):
+        process_chunk(chunk)
 
-# S3 storage
-s3 = S3Storage(bucket="fenix-documents", prefix="documents")
-await s3.store("doc123", document_bytes)
+asyncio.run(main())
 ```
 
 ## Database Classes
