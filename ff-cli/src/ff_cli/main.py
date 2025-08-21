@@ -23,6 +23,7 @@ app = typer.Typer(
     rich_markup_mode="rich",
     pretty_exceptions_enable=True,
     pretty_exceptions_show_locals=False,
+    context_settings={"help_option_names": ["-h", "--help"]},
 )
 
 
@@ -53,9 +54,23 @@ def main(
 
     Examples:
         fenix --help                    # Show this help
+        fenix -h                        # Short form for help
         fenix plugins list              # List installed plugins
+        fenix plugins create            # Create a new plugin interactively
         fenix ff-agents --help          # Show help for a plugin
         fenix ff-agents status          # Run a plugin command
+
+    Shell Completion:
+        fenix --install-completion      # Install completion for current shell
+        fenix --show-completion         # Show completion script
+
+    Troubleshooting ZSH Completion:
+        If auto-completion doesn't work on zsh, try:
+        1. Run: fenix --install-completion
+        2. Restart your terminal or run: exec zsh
+        3. Ensure ~/.zshrc contains completion initialization
+        4. For manual setup, add to ~/.zshrc:
+           eval "$(fenix --show-completion zsh)"
     """
     pass
 
