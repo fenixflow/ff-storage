@@ -2,11 +2,16 @@
 Plugin manager for discovering and loading Fenix CLI plugins.
 """
 
+import importlib
+import sys
 from dataclasses import dataclass
+from pathlib import Path
 
 import typer
 from rich.console import Console
 from rich.table import Table
+
+from . import plugin_registry
 
 console = Console()
 
@@ -49,7 +54,64 @@ class PluginManager:
         self._discover_plugins()
 
     def _discover_plugins(self) -> None:
-        """Discover installed plugins via entry points."""
+        """Discover installed plugins via entry points and installed directory."""
+        # First discover from installed plugins directory
+        self._discover_installed_plugins()
+
+        # Then discover from entry points (these may override installed ones)
+        self._discover_entry_point_plugins()
+
+    def _discover_installed_plugins(self) -> None:
+        """Discover plugins from the installed_plugins directory."""
+        try:
+            # Get all plugins from registry
+            installed = plugin_registry.list_installed_plugins()
+
+            for name, info in installed.items():
+                if not info.get("files_exist", False):
+                    continue
+
+                # Add plugin directory to path temporarily
+                # Use the module name from the registry, not the plugin name
+                plugin_module = info.get("plugin_module", name)
+                plugin_dir = plugin_registry.get_plugins_dir() / plugin_module
+                parent_dir = plugin_dir.parent
+
+                if str(parent_dir) not in sys.path:
+                    sys.path.insert(0, str(parent_dir))
+
+                try:
+                    # Import the plugin module
+                    module_path, func_name = info["entry_point"].rsplit(":", 1)
+
+                    # Import the module
+                    importlib.import_module(module_path)
+
+                    # Create plugin object
+                    plugin = Plugin(
+                        name=name,
+                        version="local",
+                        description=info.get("description", ""),
+                        module_path=info["entry_point"],
+                        source=info.get("source_path", "registry"),
+                    )
+
+                    self.plugins[name] = plugin
+
+                except Exception as e:
+                    console.print(
+                        f"[yellow]Warning: Could not load installed plugin {name}: {e}[/yellow]"
+                    )
+                finally:
+                    # Clean up path
+                    if str(parent_dir) in sys.path:
+                        sys.path.remove(str(parent_dir))
+
+        except Exception as e:
+            console.print(f"[yellow]Warning: Could not discover installed plugins: {e}[/yellow]")
+
+    def _discover_entry_point_plugins(self) -> None:
+        """Discover plugins via entry points."""
         try:
             from importlib.metadata import entry_points
 
@@ -122,15 +184,25 @@ class PluginManager:
         table = Table(title="Installed Plugins")
         table.add_column("Name", style="cyan", no_wrap=True)
         table.add_column("Version", style="green")
+        table.add_column("Source", style="blue")
         table.add_column("Description", style="white")
 
         for plugin in self.plugins.values():
+            # Shorten source path if it's a file path
+            source = plugin.source
+            if source.startswith("/"):
+                # Show just the last two directories
+                parts = Path(source).parts
+                if len(parts) > 2:
+                    source = f".../{parts[-2]}/{parts[-1]}"
+
             table.add_row(
                 plugin.name,
                 plugin.version,
+                source,
                 (
-                    plugin.description[:50] + "..."
-                    if len(plugin.description) > 50
+                    plugin.description[:40] + "..."
+                    if len(plugin.description) > 40
                     else plugin.description
                 ),
             )
