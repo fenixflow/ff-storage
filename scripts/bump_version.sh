@@ -13,9 +13,20 @@ set -e
 
 # Parse arguments
 COMMIT_BACK=false
-if [ "$1" = "--commit-back" ]; then
-    COMMIT_BACK=true
-fi
+NO_COMMIT=false
+
+for arg in "$@"; do
+    case $arg in
+        --commit-back)
+            COMMIT_BACK=true
+            ;;
+        --no-commit)
+            NO_COMMIT=true
+            ;;
+        *)
+            ;;
+    esac
+done
 
 # Colors for output
 RED='\033[0;31m'
@@ -103,8 +114,23 @@ fi
 
 # Load changed packages from detect_changes output if available
 if [ -f "changed_packages.json" ]; then
-    # Parse JSON array
-    CHANGED_PACKAGES=$(python3 -c "import json; packages = json.load(open('changed_packages.json')); print(' '.join(packages) if packages else '')")
+    # Parse JSON array with better error handling
+    CHANGED_PACKAGES=$(python3 -c "
+import json
+import sys
+try:
+    with open('changed_packages.json', 'r') as f:
+        content = f.read().strip()
+        if not content or content == '[]':
+            print('')
+        else:
+            packages = json.loads(content)
+            print(' '.join(packages) if packages else '')
+except Exception as e:
+    print(f'Error reading changed_packages.json: {e}', file=sys.stderr)
+    print('')
+" 2>&1 | grep -v "Error reading" || echo "")
+    
     if [ -z "$CHANGED_PACKAGES" ]; then
         echo -e "${YELLOW}No packages have changed, skipping version bump${NC}"
         exit 0
@@ -187,8 +213,8 @@ EOF
     VERSIONS_BUMPED=true
     BUMPED_PACKAGES="$BUMPED_PACKAGES $package:$NEW_VERSION"
     
-    # Create version artifact for CI
-    if [ -n "$CI" ]; then
+    # Create version artifact for CI or when using --no-commit
+    if [ -n "$CI" ] || [ "$NO_COMMIT" = true ]; then
         echo "$NEW_VERSION" > "$package/.version"
         echo "Created version artifact: $package/.version"
     fi
@@ -230,12 +256,16 @@ if [ "$VERSIONS_BUMPED" = true ] && [ "$COMMIT_BACK" = true ] && [ -n "$CI" ]; t
         # Push back to the branch
         if [ -n "$CI_COMMIT_REF_NAME" ]; then
             echo "Pushing version changes to $CI_COMMIT_REF_NAME..."
-            git push "https://gitlab-ci-token:${CI_JOB_TOKEN}@${CI_SERVER_HOST}/${CI_PROJECT_PATH}.git" HEAD:${CI_COMMIT_REF_NAME}
+            git push "https://gitlab-ci-token:${CI_PUSH_TOKEN}@${CI_SERVER_HOST}/${CI_PROJECT_PATH}.git" HEAD:${CI_COMMIT_REF_NAME}
             echo -e "${GREEN}Version changes committed and pushed successfully${NC}"
         else
             echo -e "${YELLOW}Not in CI environment, skipping push${NC}"
         fi
     fi
+elif [ "$VERSIONS_BUMPED" = true ] && [ "$NO_COMMIT" = true ]; then
+    echo ""
+    echo -e "${GREEN}Versions bumped without committing (--no-commit flag used).${NC}"
+    echo "Version artifacts created for CI pipeline use."
 elif [ "$VERSIONS_BUMPED" = true ]; then
     echo ""
     echo -e "${GREEN}Versions bumped locally. Changes not committed.${NC}"

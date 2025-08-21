@@ -124,7 +124,7 @@ if [ "$CI_COMMIT_TAG" = "" ]; then
     
     # Create and push tag
     git tag -a "$TAG_NAME" -m "Release $PACKAGE_NAME version $VERSION"
-    git push "https://gitlab-ci-token:${CI_JOB_TOKEN}@${CI_SERVER_HOST}/${CI_PROJECT_PATH}.git" "$TAG_NAME" || true
+    git push "https://gitlab-ci-token:${CI_PUSH_TOKEN}@${CI_SERVER_HOST}/${CI_PROJECT_PATH}.git" "$TAG_NAME" || true
 fi
 
 echo "Successfully published $PYPI_NAME version $VERSION to GitLab Package Registry"
