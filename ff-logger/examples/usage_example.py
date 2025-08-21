@@ -54,20 +54,25 @@ def main():
     # Example 4: Switching loggers at runtime
     print("\n4. Logger switching (e.g., for testing):")
 
-    def process_data(logger):
-        """Function that accepts any logger instance."""
+    def process_data(data, logger=NullLogger):
+        """Function that accepts any logger, defaults to NullLogger."""
         logger.info("Starting data processing")
         logger.debug("Loading data from source", source="database")
-        logger.info("Data processed successfully", records=1000)
+        logger.info("Data processed successfully", records=len(data))
+        return data
 
     # Use with console logger
     print("  With ConsoleLogger:")
-    process_data(console_logger)
+    process_data([1, 2, 3], logger=console_logger)
 
-    # Switch to null logger (no output)
-    print("  With NullLogger (no output):")
-    null_logger = NullLogger(name="app.null")
-    process_data(null_logger)
+    # Use default NullLogger (no output)
+    print("  With default NullLogger (no output):")
+    _ = process_data([4, 5, 6])  # Silent by default
+
+    # Can also use NullLogger directly as a class
+    print("  Direct class usage:")
+    NullLogger.info("This message goes nowhere")
+    NullLogger.error("Neither does this error")
 
     # Example 5: File Logger with rotation
     print("\n5. FileLogger with rotation:")

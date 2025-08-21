@@ -103,9 +103,21 @@ Zero-cost logger for testing or when logging is disabled:
 ```python
 from ff_logger import NullLogger
 
-# No output, no formatting, no I/O
-logger = NullLogger(name="app")
-logger.info("This does nothing")  # No-op
+# Preferred: Use directly as a class (no instantiation needed)
+NullLogger.info("This does nothing")  # No-op
+NullLogger.debug("Debug message")     # No-op
+
+# As a default parameter (perfect for dependency injection)
+def process_data(data, logger=NullLogger):
+    logger.info("Processing data: %s", data)
+    return data * 2
+
+# Call without providing a logger
+result = process_data([1, 2, 3])
+
+# Backward compatibility: Can still instantiate if needed
+logger = NullLogger()  # All parameters are optional
+logger.info("This also does nothing")
 ```
 
 ### DatabaseLogger
@@ -216,9 +228,17 @@ Use `NullLogger` in tests for zero overhead:
 
 ```python
 def test_my_function():
-    logger = NullLogger("test")
-    result = my_function(logger)  # No logging output
+    # Option 1: Pass the class directly
+    result = my_function(logger=NullLogger)  # No logging output
     assert result == expected
+    
+    # Option 2: Functions with NullLogger as default
+    def my_function(data, logger=NullLogger):
+        logger.info("Processing: %s", data)
+        return process(data)
+    
+    # In tests, just call without logger parameter
+    result = my_function(test_data)  # Silent by default
 ```
 
 ## License
