@@ -4,6 +4,7 @@
 
 stages:
   - check
+  - version
   - build
   - test
   - publish
@@ -53,6 +54,47 @@ detect-changes:
     - main
     - merge_requests
 
+# Bump versions for changed packages
+version-bump:
+  stage: version
+  script:
+    - |
+      echo "Version bump stage starting..."
+      
+      # Skip if this is already a version bump commit
+      if git log -1 --pretty=%B | grep -q "\[skip-ci\]"; then
+        echo "This is a version bump commit, skipping"
+        exit 0
+      fi
+      
+      # Only run on main branch for automatic commits
+      if [ "$CI_COMMIT_REF_NAME" = "main" ]; then
+        echo "Running on main branch - will commit version changes back"
+        chmod +x scripts/bump_version.sh
+        ./scripts/bump_version.sh --commit-back
+      else
+        echo "Running on $CI_COMMIT_REF_NAME - will bump versions without committing"
+        chmod +x scripts/bump_version.sh
+        ./scripts/bump_version.sh
+      fi
+      
+      # Copy version artifacts for later stages
+      for dir in */; do
+        if [ -f "${dir}.version" ]; then
+          echo "Found version artifact for ${dir%/}"
+        fi
+      done
+  artifacts:
+    paths:
+      - changed_packages.json
+      - "*/.version"
+    expire_in: 1 hour
+  needs:
+    - detect-changes
+  only:
+    - main
+    - merge_requests
+
 # Build job template
 .build-package:
   stage: build
@@ -74,9 +116,11 @@ detect-changes:
       - "ff-storage/dist/"
       - "ff-logger/dist/"
       - changed_packages.json
+      - "*/.version"
     expire_in: 1 hour
   needs:
     - detect-changes
+    - version-bump
   only:
     - main
     - merge_requests
@@ -112,6 +156,7 @@ detect-changes:
   artifacts:
     paths:
       - changed_packages.json
+      - "*/.version"
     expire_in: 1 hour
   only:
     - main
@@ -170,6 +215,7 @@ publish-ff-storage:
   extends: .publish-package
   needs:
     - detect-changes
+    - version-bump
     - build-ff-storage
     - test-ff-storage
 
@@ -186,6 +232,7 @@ publish-ff-logger:
   extends: .publish-package
   needs:
     - detect-changes
+    - version-bump
     - build-ff-logger
     - test-ff-logger
 

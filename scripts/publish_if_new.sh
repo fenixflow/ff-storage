@@ -20,7 +20,7 @@ fi
 # Extract package info from pyproject.toml
 cd "$PACKAGE_NAME"
 
-# Get the package name and version from pyproject.toml
+# Get the package name from pyproject.toml
 PYPI_NAME=$(python -c "
 import tomllib
 with open('pyproject.toml', 'rb') as f:
@@ -28,12 +28,20 @@ with open('pyproject.toml', 'rb') as f:
     print(data['project']['name'])
 ")
 
-VERSION=$(python -c "
+# Check if there's a bumped version from the version-bump stage
+if [ -f ".version" ]; then
+    VERSION=$(cat .version)
+    echo "Using bumped version from CI: $VERSION"
+else
+    # Fall back to version in pyproject.toml
+    VERSION=$(python -c "
 import tomllib
 with open('pyproject.toml', 'rb') as f:
     data = tomllib.load(f)
     print(data['project']['version'])
 ")
+    echo "Using version from pyproject.toml: $VERSION"
+fi
 
 echo "Package: $PYPI_NAME"
 echo "Version: $VERSION"
