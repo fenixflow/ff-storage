@@ -8,10 +8,12 @@ Fenix-Packages is a monorepo containing reusable Python packages for Fenixflow a
 
 ### Current Packages
 
-**ff-storage**: Database and file storage operations package providing:
+**ff-storage**: Database and object storage operations package providing:
 - PostgreSQL and MySQL connections with connection pooling
 - SQL query builder and transaction management
-- File storage interfaces for local, S3, and Azure Blob Storage
+- Async object storage for local filesystem and S3/S3-compatible services
+- Streaming support for large files without memory overhead
+- Atomic writes with metadata management
 - Migration management system for database schema updates
 
 **ff-logger**: Scoped, instance-based logging package providing:
@@ -39,9 +41,11 @@ The package follows a layered architecture:
 - `models.py`: Dataclass-based models with UUID and timestamp support
 - `migrations.py`: SQL file-based migration management system
 
-**File Storage Layer** (`src/ff_storage/file/`):
-- Provides unified interface for different storage backends
-- Supports local filesystem, AWS S3, and Azure Blob Storage
+**Object Storage Layer** (`src/ff_storage/object/`):
+- `base.py`: Abstract ObjectStorage base class defining the async interface
+- `local.py`: LocalObjectStorage with atomic writes and metadata sidecar files
+- `s3.py`: S3ObjectStorage supporting AWS S3 and S3-compatible services (MinIO, etc.)
+- Features: streaming, multipart upload, metadata management, path traversal protection
 
 ### ff-logger Package Structure
 
@@ -148,6 +152,25 @@ db = PostgresPool(
 db.connect()
 results = db.read_query("SELECT * FROM documents WHERE status = %s", {"status": "active"})
 db.close_connection()
+```
+
+### Object Storage (ff-storage)
+
+```python
+from ff_storage import LocalObjectStorage, S3ObjectStorage
+
+# Local storage
+storage = LocalObjectStorage("/path/to/storage")
+await storage.write("documents/file.pdf", data, {"content-type": "application/pdf"})
+data = await storage.read("documents/file.pdf")
+
+# S3 storage
+storage = S3ObjectStorage(bucket="my-bucket", region="us-east-1")
+await storage.write("documents/file.pdf", data)
+
+# Streaming for large files
+async for chunk in storage.read_stream("large_file.bin", chunk_size=8192):
+    process_chunk(chunk)
 ```
 
 ### Logging (ff-logger)
