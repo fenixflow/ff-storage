@@ -135,3 +135,20 @@ data/
 logs/
 *.db
 *.sqlite
+
+# Build artifacts
+*_build.log
+*_new_version.txt
+releases/
+.gitlab-ci.yml.backup
+.gitlab-ci.yml.original
+TEST_MARKER.md
+MR_DESCRIPTION.md
+versions.lock
+version_manifest.json
+
+# Package-specific artifacts
+ff-*/dist/
+ff-*/build/
+ff-*/src/*.egg-info/
+ff-*/*.egg-info/
