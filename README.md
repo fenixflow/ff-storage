@@ -17,10 +17,10 @@ uv pip install ff-storage \
   --index-url https://<token_name>:<token>@gitlab.com/api/v4/projects/<project_id>/packages/pypi/simple
 
 # From Git repository
-pip install git+https://gitlab.com/fenixflow/fenix-packages.git@main#subdirectory=ff-storage
+uv pip install git+https://gitlab.com/fenixflow/fenix-packages.git@main#subdirectory=ff-storage
 
 # Local development
-pip install -e ./ff-storage
+uv pip install -e ./ff-storage
 ```
 
 ### ff-logger
@@ -40,113 +40,121 @@ uv pip install ff-logger \
   --index-url https://<token_name>:<token>@gitlab.com/api/v4/projects/<project_id>/packages/pypi/simple
 
 # From Git repository
-pip install git+https://gitlab.com/fenixflow/fenix-packages.git@main#subdirectory=ff-logger
+uv pip install git+https://gitlab.com/fenixflow/fenix-packages.git@main#subdirectory=ff-logger
 
 # Local development
-pip install -e ./ff-logger
+uv pip install -e ./ff-logger
+```
+
+### ff-cli
+Unified CLI for the Fenix ecosystem with plugin architecture. Provides a single `fenix` command entry point with support for dynamically loaded plugins via Python entry points.
+
+**Key Features:**
+- Single entry point for all Fenix tools
+- Plugin architecture for extensibility
+- Dynamic command discovery
+- Configuration management
+- uvx compatible for easy execution
+
+**Installation:**
+```bash
+# From GitLab Package Registry (recommended)
+uv pip install ff-cli \
+  --index-url https://<token_name>:<token>@gitlab.com/api/v4/projects/<project_id>/packages/pypi/simple
+
+# From Git repository
+uv pip install git+https://gitlab.com/fenixflow/fenix-packages.git@main#subdirectory=ff-cli
+
+# Local development
+uv pip install -e ./ff-cli
+
+# Run without installation using uvx
+uvx --from git+https://gitlab.com/fenixflow/fenix-packages.git@main#subdirectory=ff-cli fenix --help
+```
+
+### ff-parsers
+Document parsing utilities for various file formats. Provides parsers for PDF, DOCX, JSON, Markdown, and other common document formats.
+
+**Key Features:**
+- Multi-format document parsing
+- Text extraction from PDFs and Office documents
+- Structured data extraction
+- Metadata extraction
+- Streaming support for large files
+
+**Installation:**
+```bash
+# From GitLab Package Registry (recommended)
+uv pip install ff-parsers \
+  --index-url https://<token_name>:<token>@gitlab.com/api/v4/projects/<project_id>/packages/pypi/simple
+
+# From Git repository
+uv pip install git+https://gitlab.com/fenixflow/fenix-packages.git@main#subdirectory=ff-parsers
+
+# Local development
+uv pip install -e ./ff-parsers
 ```
 
 ## CI/CD Pipeline
 
-This repository uses GitLab CI/CD for automated building and publishing of packages.
+This repository uses GitLab CI/CD for automated building, testing, and publishing of packages.
 
-### How It Works
+### Automatic Pipeline (Main Branch & MRs)
 
-1. **Change Detection**: The pipeline detects which packages have changed
-2. **Automatic Version Bumping**: Versions are automatically bumped based on commit messages
-3. **Selective Building**: Only changed packages are built and tested
-4. **Automatic Publishing**: New versions are published to GitLab Package Registry
+The main CI/CD pipeline (`.gitlab-ci.yml`) runs automatically on:
+- Push to main branch
+- Merge requests
+
+**Pipeline Stages:**
+1. **Build**: All packages are built in parallel
+2. **Test**: All packages are tested in parallel
+3. **Publish**: Packages are published to GitLab Package Registry (main branch only)
+
+### Manual Release Pipeline
+
+For controlled releases with version management, use the manual release pipeline (`.gitlab-ci-manual-release.yml`).
+
+**Features:**
+- Selective package releases via dropdown menus
+- Semantic version bumping (patch/minor/major)
+- Reads current versions from GitLab Package Registry
+- Creates git tags for each release
+- Single atomic commit prevents race conditions
+
+**To trigger a manual release:**
+1. Go to **CI/CD > Pipelines** in GitLab
+2. Click **"Run pipeline"**
+3. Select `.gitlab-ci-manual-release.yml`
+4. Choose version bump type for each package:
+   - `none`: Skip this package (default)
+   - `patch`: Bug fixes (0.1.2 → 0.1.3)
+   - `minor`: New features (0.1.2 → 0.2.0)
+   - `major`: Breaking changes (0.1.2 → 1.0.0)
+5. Click **"Run pipeline"**
+
+See [docs/MANUAL_RELEASE.md](docs/MANUAL_RELEASE.md) for detailed instructions.
 
 ### Version Management
 
-The pipeline automatically manages package versions using semantic versioning (MAJOR.MINOR.PATCH).
-
-#### Automatic Version Bumping
-
-Versions are automatically bumped based on commit message tags:
-
-- **No tag or `[patch]`**: Bumps patch version (0.1.0 → 0.1.1) - Default for bug fixes
-  ```bash
-  git commit -m "Fix NullLogger initialization issue"
-  git commit -m "[patch] Fix database connection timeout"
-  ```
-
-- **`[minor]`**: Bumps minor version (0.1.1 → 0.2.0) - For new features
-  ```bash
-  git commit -m "[minor] Add new DatabaseLogger class"
-  ```
-
-- **`[major]`**: Bumps major version (0.1.0 → 1.0.0) - For breaking changes
-  ```bash
-  git commit -m "[major] Refactor API with breaking changes"
-  ```
-
-- **`[skip-version]`**: No version change - For documentation, CI/CD changes
-  ```bash
-  git commit -m "[skip-version] Update README documentation"
-  ```
-
-#### Manual Version Control
-
-You can also manually set versions:
-
-1. Edit `<package>/pyproject.toml` directly
-2. Update the `version = "X.Y.Z"` line
-3. Commit with `[skip-version]` to avoid double-bumping:
-   ```bash
-   git commit -m "[skip-version] Manually set version to 2.0.0"
-   ```
-
-#### How Version Syncing Works
-
-1. When changes are pushed to `main`, the pipeline:
-   - Detects changed packages
-   - Analyzes commit messages for version bump tags
-   - Updates `pyproject.toml` with new versions
-   - Commits the version changes back to `main` with `[skip-ci]` tag
-   - Publishes packages to the registry
-
-2. The `[skip-ci]` tag prevents infinite loops by telling the pipeline not to run again
-
-#### Local Version Bumping
-
-You can test version bumping locally:
+**Manual Version Updates:**
+Developers are responsible for updating version numbers in `pyproject.toml` files:
 
 ```bash
-# Check what would be bumped (dry run)
-./scripts/bump_version.sh
+# Edit the version in pyproject.toml
+vim ff-storage/pyproject.toml
 
-# For testing in CI-like environment
-echo '["ff-logger"]' > changed_packages.json
-./scripts/bump_version.sh
-```
-
-### Triggering a Release
-
-Simply push your changes to main with an appropriate commit message:
-
-```bash
-# For a bug fix (patch bump)
-git commit -m "Fix critical bug in logger"
-git push origin main
-
-# For a new feature (minor bump)
-git commit -m "[minor] Add async support to logger"
-git push origin main
-
-# For breaking changes (major bump)
-git commit -m "[major] Redesign logger API"
+# Commit the change
+git commit -m "chore: Bump ff-storage version to 0.2.0"
 git push origin main
 ```
 
-The pipeline will automatically:
-1. Detect the changed packages
-2. Bump versions based on commit messages
-3. Build and test the packages
-4. Publish to GitLab Package Registry
-5. Commit version changes back to main
+**Automatic Publishing:**
+When changes are pushed to main, the pipeline automatically:
+1. Builds all packages in parallel
+2. Runs tests in parallel
+3. Publishes new versions to GitLab Package Registry (if version doesn't exist)
 
-### Manual Operations
+### Local Development
 
 ```bash
 # Build all packages locally
@@ -157,55 +165,103 @@ The pipeline will automatically:
 
 # Test a package
 ./scripts/test_package.sh ff-storage
+
+# Run all tests
+./scripts/test_all.sh
 ```
 
-## Development
+## Installation from GitLab Package Registry
 
-### Setting Up Local Environment
+### Setting up Authentication
+
+Create a personal access token with `read_api` scope:
+1. Go to GitLab > User Settings > Access Tokens
+2. Create token with `read_api` scope
+3. Save the token securely
+
+### Installing Packages
+
+```bash
+# Set environment variables
+export GITLAB_TOKEN="your-token-here"
+export GITLAB_PROJECT_ID="73458224"  # fenix-packages project ID
+
+# Install a package
+uv pip install ff-storage \
+  --index-url https://gitlab-ci-token:${GITLAB_TOKEN}@gitlab.com/api/v4/projects/${GITLAB_PROJECT_ID}/packages/pypi/simple
+
+# Or add to requirements.txt
+--index-url https://gitlab-ci-token:${GITLAB_TOKEN}@gitlab.com/api/v4/projects/73458224/packages/pypi/simple
+ff-storage==0.1.3
+ff-logger==0.1.2
+ff-cli==0.1.2
+ff-parsers==0.1.1
+```
+
+See [docs/PACKAGE_INSTALLATION.md](docs/PACKAGE_INSTALLATION.md) for more details.
+
+## Development Setup
+
+### Prerequisites
+
+- Python 3.12+
+- uv (recommended) or pip
+- Git
+
+### Clone and Setup
 
 ```bash
 # Clone the repository
-git clone git@gitlab.com:fenixflow/fenix-packages.git
+git clone https://gitlab.com/fenixflow/fenix-packages.git
 cd fenix-packages
 
-# Install uv package manager
-curl -LsSf https://astral.sh/uv/install.sh | sh
+# Install all packages in development mode
+uv pip install -e ./ff-storage
+uv pip install -e ./ff-logger
+uv pip install -e ./ff-cli
+uv pip install -e ./ff-parsers
 
-# Set up a package for development
-cd ff-storage
-uv sync --extra dev
+# Install development dependencies
+uv pip install -e "./ff-storage[dev]"
+uv pip install -e "./ff-logger[dev]"
+uv pip install -e "./ff-cli[dev]"
+uv pip install -e "./ff-parsers[dev]"
 ```
 
-### Testing
+### Running Tests
+
 ```bash
-# Test a specific package
-cd ff-storage && uv run pytest tests/
+# Test individual package
+cd ff-storage && pytest tests/
 
-# Run linting
-cd ff-storage && uv run ruff check src/
-cd ff-storage && uv run black --check src/
+# Test all packages
+./scripts/test_all.sh
+
+# Run with coverage
+cd ff-storage && pytest --cov=ff_storage tests/
 ```
 
-### Publishing (Automated)
-Packages are automatically published to GitLab Package Registry when:
-1. Changes are pushed to main
-2. The package version in `pyproject.toml` has been updated
-3. Tests pass successfully
+### Code Quality
 
-## Structure
-```
-fenix-packages/
-├── ff-storage/         # Database & file storage
-├── ff-tools/          # Future: utility packages
-├── ff-auth/           # Future: authentication
-└── scripts/           # Build and deployment scripts
+```bash
+# Format code with black
+black ff-storage/src/
+
+# Lint with ruff
+ruff check ff-storage/src/
+
+# Pre-commit hooks (runs automatically on commit)
+pre-commit run --all-files
 ```
 
 ## Contributing
-1. Create feature branch
-2. Make changes
-3. Add tests
-4. Submit merge request
+
+1. Create a feature branch
+2. Make your changes
+3. Update tests as needed
+4. Update version in `pyproject.toml` if needed
+5. Create a merge request
 
 ## License
-Proprietary - Fenixflow Internal Use Only
+
+Proprietary - Fenixflow

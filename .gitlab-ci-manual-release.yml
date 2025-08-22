@@ -1,0 +1,536 @@
+# Manual Release Pipeline for Fenix Packages
+#
+# This pipeline allows selective package releases with version bumping.
+# It can only be triggered manually from the GitLab UI.
+#
+# Features:
+# - Dropdown selection for each package (none/patch/minor/major)
+# - Reads current version from GitLab Package Registry
+# - Builds and publishes only selected packages
+# - Single commit at the end with all version updates
+# - Creates git tags for released packages
+
+# Define input parameters for manual pipeline
+spec:
+  inputs:
+    ff_storage_bump:
+      description: "Version bump for ff-storage"
+      type: string
+      default: "none"
+      options:
+        - "none"
+        - "patch"
+        - "minor"
+        - "major"
+    ff_logger_bump:
+      description: "Version bump for ff-logger"
+      type: string
+      default: "none"
+      options:
+        - "none"
+        - "patch"
+        - "minor"
+        - "major"
+    ff_cli_bump:
+      description: "Version bump for ff-cli"
+      type: string
+      default: "none"
+      options:
+        - "none"
+        - "patch"
+        - "minor"
+        - "major"
+    ff_parsers_bump:
+      description: "Version bump for ff-parsers"
+      type: string
+      default: "none"
+      options:
+        - "none"
+        - "patch"
+        - "minor"
+        - "major"
+
+---
+
+stages:
+  - prepare
+  - build
+  - publish
+  - finalize
+
+variables:
+  PIP_CACHE_DIR: "$CI_PROJECT_DIR/.cache/pip"
+  UV_CACHE_DIR: "$CI_PROJECT_DIR/.cache/uv"
+  PYTHON_VERSION: "3.12"
+  GIT_DEPTH: "0"  # Full clone for version history
+
+cache:
+  paths:
+    - .cache/pip
+    - .cache/uv
+
+# Default configuration for all jobs
+default:
+  image: python:${PYTHON_VERSION}-slim
+  before_script:
+    - apt-get update && apt-get install -y git curl
+    - curl -LsSf https://astral.sh/uv/install.sh | sh
+    - source $HOME/.local/bin/env
+    - export PATH="/root/.local/bin:$PATH"
+    - uv --version
+    - python --version
+    # Configure git for commits
+    - git config --global user.email "gitlab-ci@fenixflow.com"
+    - git config --global user.name "GitLab CI"
+
+# ============================================================================
+# PREPARE STAGE - Determine versions and prepare release info
+# ============================================================================
+
+prepare:release:
+  stage: prepare
+  script:
+    - |
+      echo "========================================"
+      echo "Preparing Release Information"
+      echo "========================================"
+      
+      # Create a releases directory to store version info
+      mkdir -p releases
+      
+      # Process each package
+      for PACKAGE in ff-storage ff-logger ff-cli ff-parsers; do
+        # Get the bump type from input variables
+        BUMP_VAR="${PACKAGE//-/_}_bump"
+        BUMP_TYPE=$(eval echo \$"$[[ inputs.$BUMP_VAR ]]")
+        
+        echo "Processing $PACKAGE with bump type: $BUMP_TYPE"
+        
+        if [ "$BUMP_TYPE" != "none" ]; then
+          # Get new version from registry and bump it
+          python scripts/bump_version_from_registry.py "$PACKAGE" "$BUMP_TYPE"
+          
+          # Store the new version for later stages
+          if [ -f "${PACKAGE}_new_version.txt" ]; then
+            NEW_VERSION=$(cat "${PACKAGE}_new_version.txt")
+            echo "$NEW_VERSION" > "releases/${PACKAGE}_version.txt"
+            echo "✅ $PACKAGE will be released as version $NEW_VERSION"
+          else
+            echo "❌ Failed to determine new version for $PACKAGE"
+            exit 1
+          fi
+        else
+          echo "⏭️  Skipping $PACKAGE (no version bump requested)"
+        fi
+      done
+      
+      # Create a summary file
+      echo "Release Summary:" > releases/summary.txt
+      for VERSION_FILE in releases/*_version.txt; do
+        if [ -f "$VERSION_FILE" ]; then
+          PACKAGE=$(basename "$VERSION_FILE" _version.txt)
+          VERSION=$(cat "$VERSION_FILE")
+          echo "  - $PACKAGE: $VERSION" >> releases/summary.txt
+        fi
+      done
+      
+      if [ ! -s releases/summary.txt ] || [ $(wc -l < releases/summary.txt) -eq 1 ]; then
+        echo "No packages selected for release"
+        echo "NO_RELEASE" > releases/no_release.txt
+      else
+        cat releases/summary.txt
+      fi
+  artifacts:
+    paths:
+      - releases/
+      - ff-*/pyproject.toml
+    expire_in: 2 hours
+
+# ============================================================================
+# BUILD STAGE - Build selected packages
+# ============================================================================
+
+build:ff-storage:
+  stage: build
+  needs:
+    - prepare:release
+  rules:
+    - if: '$[[ inputs.ff_storage_bump ]] != "none"'
+  script:
+    - |
+      echo "========================================"
+      echo "Building ff-storage"
+      echo "========================================"
+      
+      cd ff-storage
+      
+      # Clean previous builds
+      rm -rf dist/ build/ *.egg-info src/*.egg-info 2>/dev/null || true
+      
+      # Install build dependencies
+      uv pip install --system build
+      
+      # Build the package
+      python -m build
+      
+      # Verify the build
+      VERSION=$(cat ../releases/ff-storage_version.txt)
+      EXPECTED_WHEEL="ff_storage-${VERSION}-py3-none-any.whl"
+      
+      if [ -f "dist/$EXPECTED_WHEEL" ]; then
+        echo "✅ Build successful: $EXPECTED_WHEEL"
+        ls -la dist/
+      else
+        echo "❌ Build failed - expected wheel not found: $EXPECTED_WHEEL"
+        exit 1
+      fi
+  artifacts:
+    paths:
+      - ff-storage/dist/
+    expire_in: 2 hours
+
+build:ff-logger:
+  stage: build
+  needs:
+    - prepare:release
+  rules:
+    - if: '$[[ inputs.ff_logger_bump ]] != "none"'
+  script:
+    - |
+      echo "========================================"
+      echo "Building ff-logger"
+      echo "========================================"
+      
+      cd ff-logger
+      
+      # Clean previous builds
+      rm -rf dist/ build/ *.egg-info src/*.egg-info 2>/dev/null || true
+      
+      # Install build dependencies
+      uv pip install --system build
+      
+      # Build the package
+      python -m build
+      
+      # Verify the build
+      VERSION=$(cat ../releases/ff-logger_version.txt)
+      EXPECTED_WHEEL="ff_logger-${VERSION}-py3-none-any.whl"
+      
+      if [ -f "dist/$EXPECTED_WHEEL" ]; then
+        echo "✅ Build successful: $EXPECTED_WHEEL"
+        ls -la dist/
+      else
+        echo "❌ Build failed - expected wheel not found: $EXPECTED_WHEEL"
+        exit 1
+      fi
+  artifacts:
+    paths:
+      - ff-logger/dist/
+    expire_in: 2 hours
+
+build:ff-cli:
+  stage: build
+  needs:
+    - prepare:release
+  rules:
+    - if: '$[[ inputs.ff_cli_bump ]] != "none"'
+  script:
+    - |
+      echo "========================================"
+      echo "Building ff-cli"
+      echo "========================================"
+      
+      cd ff-cli
+      
+      # Clean previous builds
+      rm -rf dist/ build/ *.egg-info src/*.egg-info 2>/dev/null || true
+      
+      # Install build dependencies
+      uv pip install --system build
+      
+      # Build the package
+      python -m build
+      
+      # Verify the build
+      VERSION=$(cat ../releases/ff-cli_version.txt)
+      EXPECTED_WHEEL="ff_cli-${VERSION}-py3-none-any.whl"
+      
+      if [ -f "dist/$EXPECTED_WHEEL" ]; then
+        echo "✅ Build successful: $EXPECTED_WHEEL"
+        ls -la dist/
+      else
+        echo "❌ Build failed - expected wheel not found: $EXPECTED_WHEEL"
+        exit 1
+      fi
+  artifacts:
+    paths:
+      - ff-cli/dist/
+    expire_in: 2 hours
+
+build:ff-parsers:
+  stage: build
+  needs:
+    - prepare:release
+  rules:
+    - if: '$[[ inputs.ff_parsers_bump ]] != "none"'
+  script:
+    - |
+      echo "========================================"
+      echo "Building ff-parsers"
+      echo "========================================"
+      
+      cd ff-parsers
+      
+      # Clean previous builds
+      rm -rf dist/ build/ *.egg-info src/*.egg-info 2>/dev/null || true
+      
+      # Install build dependencies
+      uv pip install --system build
+      
+      # Build the package
+      python -m build
+      
+      # Verify the build
+      VERSION=$(cat ../releases/ff-parsers_version.txt)
+      EXPECTED_WHEEL="ff_parsers-${VERSION}-py3-none-any.whl"
+      
+      if [ -f "dist/$EXPECTED_WHEEL" ]; then
+        echo "✅ Build successful: $EXPECTED_WHEEL"
+        ls -la dist/
+      else
+        echo "❌ Build failed - expected wheel not found: $EXPECTED_WHEEL"
+        exit 1
+      fi
+  artifacts:
+    paths:
+      - ff-parsers/dist/
+    expire_in: 2 hours
+
+# ============================================================================
+# PUBLISH STAGE - Publish packages to GitLab Package Registry
+# ============================================================================
+
+publish:ff-storage:
+  stage: publish
+  needs:
+    - prepare:release
+    - build:ff-storage
+  rules:
+    - if: '$[[ inputs.ff_storage_bump ]] != "none"'
+  script:
+    - |
+      echo "========================================"
+      echo "Publishing ff-storage"
+      echo "========================================"
+      
+      VERSION=$(cat releases/ff-storage_version.txt)
+      echo "Publishing version: $VERSION"
+      
+      # Install twine
+      uv pip install --system twine
+      
+      # Configure PyPI repository for GitLab
+      cat > ~/.pypirc << EOF
+      [distutils]
+      index-servers = gitlab
+      
+      [gitlab]
+      repository = ${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/pypi
+      username = gitlab-ci-token
+      password = ${CI_JOB_TOKEN}
+      EOF
+      
+      # Upload to GitLab Package Registry
+      cd ff-storage
+      python -m twine upload --repository gitlab dist/* --verbose
+      
+      echo "✅ Successfully published ff-storage version $VERSION"
+
+publish:ff-logger:
+  stage: publish
+  needs:
+    - prepare:release
+    - build:ff-logger
+  rules:
+    - if: '$[[ inputs.ff_logger_bump ]] != "none"'
+  script:
+    - |
+      echo "========================================"
+      echo "Publishing ff-logger"
+      echo "========================================"
+      
+      VERSION=$(cat releases/ff-logger_version.txt)
+      echo "Publishing version: $VERSION"
+      
+      # Install twine
+      uv pip install --system twine
+      
+      # Configure PyPI repository for GitLab
+      cat > ~/.pypirc << EOF
+      [distutils]
+      index-servers = gitlab
+      
+      [gitlab]
+      repository = ${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/pypi
+      username = gitlab-ci-token
+      password = ${CI_JOB_TOKEN}
+      EOF
+      
+      # Upload to GitLab Package Registry
+      cd ff-logger
+      python -m twine upload --repository gitlab dist/* --verbose
+      
+      echo "✅ Successfully published ff-logger version $VERSION"
+
+publish:ff-cli:
+  stage: publish
+  needs:
+    - prepare:release
+    - build:ff-cli
+  rules:
+    - if: '$[[ inputs.ff_cli_bump ]] != "none"'
+  script:
+    - |
+      echo "========================================"
+      echo "Publishing ff-cli"
+      echo "========================================"
+      
+      VERSION=$(cat releases/ff-cli_version.txt)
+      echo "Publishing version: $VERSION"
+      
+      # Install twine
+      uv pip install --system twine
+      
+      # Configure PyPI repository for GitLab
+      cat > ~/.pypirc << EOF
+      [distutils]
+      index-servers = gitlab
+      
+      [gitlab]
+      repository = ${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/pypi
+      username = gitlab-ci-token
+      password = ${CI_JOB_TOKEN}
+      EOF
+      
+      # Upload to GitLab Package Registry
+      cd ff-cli
+      python -m twine upload --repository gitlab dist/* --verbose
+      
+      echo "✅ Successfully published ff-cli version $VERSION"
+
+publish:ff-parsers:
+  stage: publish
+  needs:
+    - prepare:release
+    - build:ff-parsers
+  rules:
+    - if: '$[[ inputs.ff_parsers_bump ]] != "none"'
+  script:
+    - |
+      echo "========================================"
+      echo "Publishing ff-parsers"
+      echo "========================================"
+      
+      VERSION=$(cat releases/ff-parsers_version.txt)
+      echo "Publishing version: $VERSION"
+      
+      # Install twine
+      uv pip install --system twine
+      
+      # Configure PyPI repository for GitLab
+      cat > ~/.pypirc << EOF
+      [distutils]
+      index-servers = gitlab
+      
+      [gitlab]
+      repository = ${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/pypi
+      username = gitlab-ci-token
+      password = ${CI_JOB_TOKEN}
+      EOF
+      
+      # Upload to GitLab Package Registry
+      cd ff-parsers
+      python -m twine upload --repository gitlab dist/* --verbose
+      
+      echo "✅ Successfully published ff-parsers version $VERSION"
+
+# ============================================================================
+# FINALIZE STAGE - Commit version updates and create tags
+# ============================================================================
+
+finalize:release:
+  stage: finalize
+  needs:
+    - prepare:release
+    - job: publish:ff-storage
+      optional: true
+    - job: publish:ff-logger
+      optional: true
+    - job: publish:ff-cli
+      optional: true
+    - job: publish:ff-parsers
+      optional: true
+  rules:
+    - if: '$[[ inputs.ff_storage_bump ]] != "none" || $[[ inputs.ff_logger_bump ]] != "none" || $[[ inputs.ff_cli_bump ]] != "none" || $[[ inputs.ff_parsers_bump ]] != "none"'
+  script:
+    - |
+      echo "========================================"
+      echo "Finalizing Release"
+      echo "========================================"
+      
+      # Check if there's anything to commit
+      if [ -f releases/no_release.txt ]; then
+        echo "No packages were released, skipping finalization"
+        exit 0
+      fi
+      
+      # Clone the repository with write access
+      git clone https://gitlab-ci-token:${CI_JOB_TOKEN}@${CI_SERVER_HOST}/${CI_PROJECT_PATH}.git repo
+      cd repo
+      
+      # Configure git
+      git config user.email "gitlab-ci@fenixflow.com"
+      git config user.name "GitLab CI"
+      
+      # Create commit message
+      COMMIT_MSG="chore: Update package versions [skip ci]"$'\n\n'"Released packages:"$'\n'
+      
+      # Update pyproject.toml files and create tags
+      for VERSION_FILE in ../releases/*_version.txt; do
+        if [ -f "$VERSION_FILE" ]; then
+          PACKAGE=$(basename "$VERSION_FILE" _version.txt)
+          VERSION=$(cat "$VERSION_FILE")
+          
+          # Update the pyproject.toml file
+          cp "../${PACKAGE}/pyproject.toml" "${PACKAGE}/pyproject.toml"
+          git add "${PACKAGE}/pyproject.toml"
+          
+          # Add to commit message
+          COMMIT_MSG="${COMMIT_MSG}- ${PACKAGE}: v${VERSION}"$'\n'
+          
+          # Create tag
+          TAG_NAME="${PACKAGE}-v${VERSION}"
+          git tag -a "$TAG_NAME" -m "Release ${PACKAGE} version ${VERSION}"
+          echo "Created tag: $TAG_NAME"
+        fi
+      done
+      
+      # Commit the changes
+      if git diff --cached --quiet; then
+        echo "No changes to commit"
+      else
+        git commit -m "$COMMIT_MSG"
+        
+        # Push the commit and tags
+        git push origin main
+        git push origin --tags
+        
+        echo "✅ Successfully committed version updates and created tags"
+      fi
+      
+      # Display final summary
+      echo ""
+      echo "========================================"
+      echo "Release Complete!"
+      echo "========================================"
+      cat ../releases/summary.txt

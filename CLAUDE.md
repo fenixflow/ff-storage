@@ -29,6 +29,13 @@ Fenix-Packages is a monorepo containing reusable Python packages for Fenixflow a
 - Configuration management in `~/.fenix/config.toml`
 - uvx compatible for easy execution without installation
 
+**ff-parsers**: Document parsing utilities for various formats:
+- Multi-format document parsing (PDF, DOCX, JSON, Markdown, etc.)
+- Text extraction from PDFs and Office documents
+- Structured data extraction and metadata parsing
+- Streaming support for large files
+- Extensible parser architecture for adding new formats
+
 ## Architecture
 
 ### ff-storage Package Structure
@@ -74,6 +81,18 @@ Plugin-based CLI architecture:
 - Register via entry points in pyproject.toml
 - Loaded as namespaced subcommands (e.g., `fenix ff-agents status`)
 
+### ff-parsers Package Structure
+
+Document parsing architecture:
+
+**Core Components** (`src/ff_parsers/`):
+- `base.py`: Abstract base classes for parser implementations
+- `pdf.py`: PDF document parsing with text and metadata extraction
+- `docx.py`: Microsoft Word document parsing
+- `markdown.py`: Markdown parsing and processing
+- `json_parser.py`: JSON and structured data parsing
+- Features: streaming support, metadata extraction, extensible architecture
+
 ### Key Design Patterns
 
 1. **Abstract Base Classes**: SQL base class provides flexible interface for different database backends
@@ -92,11 +111,13 @@ Plugin-based CLI architecture:
 uv pip install -e ./ff-storage
 uv pip install -e ./ff-logger
 uv pip install -e ./ff-cli
+uv pip install -e ./ff-parsers
 
 # Install with development dependencies
 uv pip install -e "./ff-storage[dev]"
 uv pip install -e "./ff-logger[dev]"
 uv pip install -e "./ff-cli[dev]"
+uv pip install -e "./ff-parsers[dev]"
 
 # Build package
 cd ff-storage && python -m build
@@ -116,6 +137,9 @@ cd ff-storage && pytest --cov=ff_storage tests/
 
 # Test all packages
 ./scripts/test_all.sh
+
+# Test a specific package with the script
+./scripts/test_package.sh ff-storage
 ```
 
 ### Code Quality
@@ -252,10 +276,16 @@ These packages are designed to support the Evidence-First Document QA System in 
 - Plugin architecture for fenix-agents commands
 - Consistent interface for both developers and AI agents
 
+**ff-parsers**:
+- Document parsing for ingestion pipeline
+- Support for multiple document formats
+- Text and metadata extraction for processing
+
 When working on fenix-agents, use these packages as foundations:
 - ff-storage for all database and file operations
 - ff-logger for consistent logging across services
 - ff-cli plugin for exposing agent commands
+- ff-parsers for document processing and extraction
 
 ## Installation from GitLab
 
@@ -265,6 +295,7 @@ For production use:
 uv pip install git+https://gitlab.com/fenixflow/fenix-packages.git@main#subdirectory=ff-storage
 uv pip install git+https://gitlab.com/fenixflow/fenix-packages.git@main#subdirectory=ff-logger
 uv pip install git+https://gitlab.com/fenixflow/fenix-packages.git@main#subdirectory=ff-cli
+uv pip install git+https://gitlab.com/fenixflow/fenix-packages.git@main#subdirectory=ff-parsers
 
 # Or use uvx for the CLI without installation
 uvx --from git+https://gitlab.com/fenixflow/fenix-packages.git@main#subdirectory=ff-cli fenix --help
@@ -273,6 +304,25 @@ uvx --from git+https://gitlab.com/fenixflow/fenix-packages.git@main#subdirectory
 ## Python Version Requirement
 
 All packages in this repository require **Python 3.12+** for stability and modern features.
+
+## CI/CD Pipeline
+
+### Automatic Pipeline
+The repository uses a simple, reliable CI/CD pipeline that:
+- Builds all packages in parallel using GitLab's native matrix jobs
+- Runs tests for all packages in parallel
+- Publishes to GitLab Package Registry when merged to main (if version doesn't exist)
+- Requires manual version updates in pyproject.toml files
+
+### Manual Release Pipeline
+A separate manual release pipeline (`.gitlab-ci-manual-release.yml`) provides:
+- Selective package releases via dropdown inputs
+- Semantic version bumping (none/patch/minor/major per package)
+- Version detection from GitLab Package Registry
+- Automatic git tagging and version commits
+- Single atomic commit to prevent race conditions
+
+See `docs/MANUAL_RELEASE.md` for detailed usage instructions.
 
 ## Future Packages
 
