@@ -2,8 +2,6 @@
 Plugin manager for discovering and loading Fenix CLI plugins.
 """
 
-import importlib
-import sys
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -54,61 +52,8 @@ class PluginManager:
         self._discover_plugins()
 
     def _discover_plugins(self) -> None:
-        """Discover installed plugins via entry points and installed directory."""
-        # First discover from installed plugins directory
-        self._discover_installed_plugins()
-
-        # Then discover from entry points (these may override installed ones)
+        """Discover installed plugins via entry points."""
         self._discover_entry_point_plugins()
-
-    def _discover_installed_plugins(self) -> None:
-        """Discover plugins from the installed_plugins directory."""
-        try:
-            # Get all plugins from registry
-            installed = plugin_registry.list_installed_plugins()
-
-            for name, info in installed.items():
-                if not info.get("files_exist", False):
-                    continue
-
-                # Add plugin directory to path temporarily
-                # Use the module name from the registry, not the plugin name
-                plugin_module = info.get("plugin_module", name)
-                plugin_dir = plugin_registry.get_plugins_dir() / plugin_module
-                parent_dir = plugin_dir.parent
-
-                if str(parent_dir) not in sys.path:
-                    sys.path.insert(0, str(parent_dir))
-
-                try:
-                    # Import the plugin module
-                    module_path, func_name = info["entry_point"].rsplit(":", 1)
-
-                    # Import the module
-                    importlib.import_module(module_path)
-
-                    # Create plugin object
-                    plugin = Plugin(
-                        name=name,
-                        version="local",
-                        description=info.get("description", ""),
-                        module_path=info["entry_point"],
-                        source=info.get("source_path", "registry"),
-                    )
-
-                    self.plugins[name] = plugin
-
-                except Exception as e:
-                    console.print(
-                        f"[yellow]Warning: Could not load installed plugin {name}: {e}[/yellow]"
-                    )
-                finally:
-                    # Clean up path
-                    if str(parent_dir) in sys.path:
-                        sys.path.remove(str(parent_dir))
-
-        except Exception as e:
-            console.print(f"[yellow]Warning: Could not discover installed plugins: {e}[/yellow]")
 
     def _discover_entry_point_plugins(self) -> None:
         """Discover plugins via entry points."""
@@ -132,12 +77,21 @@ class PluginManager:
                         metadata = dist.metadata
                         description = metadata.get("Summary", "") or metadata.get("Description", "")
 
+                    # Check if this plugin is in our registry for source tracking
+                    registry_info = plugin_registry.get_plugin_info(ep.name)
+                    source = (
+                        registry_info.get("source_path", "installed")
+                        if registry_info
+                        else "installed"
+                    )
+
                     plugin = Plugin(
                         name=ep.name,
                         version=dist.version if dist else "unknown",
-                        description=description,
+                        description=description
+                        or (registry_info.get("description", "") if registry_info else ""),
                         module_path=f"{ep.module}:{ep.attr}",
-                        source="installed",
+                        source=source,
                     )
                     self.plugins[ep.name] = plugin
                 except Exception as e:
