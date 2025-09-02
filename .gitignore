@@ -152,3 +152,6 @@ ff-*/dist/
 ff-*/build/
 ff-*/src/*.egg-info/
 ff-*/*.egg-info/
+
+# ff-cli plugin data (local plugin registry)
+ff-cli/src/ff_cli/.plugin_data/
