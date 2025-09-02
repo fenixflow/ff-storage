@@ -204,14 +204,10 @@ def list_plugins():
             source_path = f".../{'/'.join(parts[-3:])}" if len(parts) > 3 else source_path
 
         # Check status
-        if info["source_exists"] and info["files_exist"]:
+        if info["source_exists"]:
             status = "✅ Active"
-        elif not info["source_exists"]:
-            status = "⚠️ Source missing"
-        elif not info["files_exist"]:
-            status = "⚠️ Files missing"
         else:
-            status = "❓ Unknown"
+            status = "⚠️ Source missing"
 
         # Format install date
         install_date = info.get("install_date", "Unknown")
@@ -249,13 +245,9 @@ def plugin_info(name: str = typer.Argument(..., help="Plugin name")):
 
     # Check status
     source_exists = Path(info["source_path"]).exists()
-    plugin_module = info.get("plugin_module", name)
-    plugin_dir = plugin_registry.get_plugins_dir() / plugin_module
-    files_exist = plugin_dir.exists()
 
     console.print("\n[bold]Status:[/bold]")
     console.print(f"  Source exists: {'✅' if source_exists else '❌'}")
-    console.print(f"  Files installed: {'✅' if files_exist else '❌'}")
 
     if source_exists:
         console.print("\n[bold]Commands:[/bold]")
@@ -267,9 +259,6 @@ def plugin_info(name: str = typer.Argument(..., help="Plugin name")):
 def install_plugin(
     source: str = typer.Argument(..., help="Plugin source (local path or git URL)"),
     upgrade: bool = typer.Option(False, "--upgrade", "-U", help="Upgrade if already installed"),
-    editable: bool = typer.Option(
-        False, "--editable", "-e", help="Install in editable mode (not implemented)"
-    ),
 ):
     """Install a Fenix CLI plugin.
 
@@ -293,21 +282,32 @@ def install_plugin(
         # Find plugin information
         plugin_name, plugin_module, entry_point = _find_plugin_info(source_path)
 
+        # Get package name from pyproject.toml if available
+        package_name = _get_package_name(source_path) or plugin_module
+
         # Check if already installed
         if plugin_registry.is_plugin_installed(plugin_name) and not upgrade:
             console.print(f"[yellow]Plugin '{plugin_name}' is already installed[/yellow]")
             console.print(f"Use --upgrade to reinstall or 'fenix plugins upgrade {plugin_name}'")
             raise typer.Exit(1)
 
-        # Copy plugin files
-        console.print("Copying plugin files...")
-        plugin_registry.copy_plugin_files(source_path, plugin_module, plugin_name)
+        # Install plugin in editable mode using uv/pip
+        console.print("Installing plugin in editable mode...")
+        use_uv = subprocess.run(["which", "uv"], capture_output=True).returncode == 0
 
-        # Install dependencies if pyproject.toml exists
-        pyproject_path = source_path / "pyproject.toml"
-        if pyproject_path.exists():
-            console.print("Installing plugin dependencies...")
-            _install_dependencies(pyproject_path)
+        if use_uv:
+            cmd = ["uv", "pip", "install", "-e", str(source_path), "--python", sys.executable]
+            if upgrade:
+                cmd.append("--force-reinstall")
+        else:
+            cmd = [sys.executable, "-m", "pip", "install", "-e", str(source_path)]
+            if upgrade:
+                cmd.append("--force-reinstall")
+
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        if result.returncode != 0:
+            console.print(f"[red]Failed to install plugin: {result.stderr}[/red]")
+            raise typer.Exit(1)
 
         # Add to registry
         plugin_registry.add_plugin_to_registry(
@@ -315,11 +315,12 @@ def install_plugin(
             source_path=str(source_path),
             plugin_module=plugin_module,
             entry_point=entry_point,
+            package_name=package_name,
             description=_get_plugin_description(source_path),
         )
 
         console.print(f"[green]✅ Plugin '{plugin_name}' installed successfully![/green]")
-        console.print(f"Source tracked at: {source_path}")
+        console.print(f"Source: {source_path}")
         console.print(f"\nTry: [cyan]fenix {plugin_name} --help[/cyan]")
 
     except Exception as e:
@@ -371,9 +372,27 @@ def remove_plugin(
 
     console.print(f"[cyan]Removing plugin: {name}[/cyan]")
 
-    # Remove plugin files
-    if plugin_registry.remove_plugin_files(name):
-        console.print("✅ Plugin files removed")
+    # Get plugin info for package name
+    info = plugin_registry.get_plugin_info(name)
+    if not info:
+        console.print(f"[red]Plugin '{name}' not found in registry[/red]")
+        raise typer.Exit(1)
+
+    package_name = info.get("package_name", info.get("plugin_module", name))
+
+    # Uninstall plugin using uv/pip
+    use_uv = subprocess.run(["which", "uv"], capture_output=True).returncode == 0
+
+    if use_uv:
+        cmd = ["uv", "pip", "uninstall", package_name, "--python", sys.executable]
+    else:
+        cmd = [sys.executable, "-m", "pip", "uninstall", "-y", package_name]
+
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode == 0:
+        console.print("✅ Plugin package uninstalled")
+    else:
+        console.print(f"[yellow]⚠️ Could not uninstall package: {result.stderr}[/yellow]")
 
     # Remove from registry
     if plugin_registry.remove_plugin_from_registry(name):
@@ -450,32 +469,14 @@ def _get_plugin_description(source_path: Path) -> str:
     return ""
 
 
-def _install_dependencies(pyproject_path: Path):
-    """Install dependencies from pyproject.toml."""
-    try:
-        with open(pyproject_path, "rb") as f:
-            data = tomllib.load(f)
-
-        dependencies = data.get("project", {}).get("dependencies", [])
-
-        if dependencies:
-            console.print(f"Installing {len(dependencies)} dependencies...")
-
-            # Check if uv is available
-            use_uv = subprocess.run(["which", "uv"], capture_output=True).returncode == 0
-
-            for dep in dependencies:
-                # Skip if it's a common dependency that's likely already installed
-                if any(skip in dep.lower() for skip in ["typer", "rich", "click"]):
-                    continue
-
-                if use_uv:
-                    cmd = ["uv", "pip", "install", dep]
-                else:
-                    cmd = [sys.executable, "-m", "pip", "install", dep]
-
-                result = subprocess.run(cmd, capture_output=True, text=True)
-                if result.returncode != 0:
-                    console.print(f"[yellow]Warning: Could not install {dep}[/yellow]")
-    except Exception as e:
-        console.print(f"[yellow]Warning: Could not install dependencies: {e}[/yellow]")
+def _get_package_name(source_path: Path) -> str | None:
+    """Get package name from pyproject.toml."""
+    pyproject_path = source_path / "pyproject.toml"
+    if pyproject_path.exists():
+        try:
+            with open(pyproject_path, "rb") as f:
+                data = tomllib.load(f)
+                return data.get("project", {}).get("name")
+        except (OSError, tomllib.TOMLDecodeError):
+            pass
+    return None
