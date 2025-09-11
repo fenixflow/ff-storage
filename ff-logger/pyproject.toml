@@ -4,13 +4,38 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ff-logger"
-version = "0.1.2"
-description = "Fenixflow structured logging package with scoped loggers"
+version = "0.2.0"
+description = "Fenixflow structured logging package with scoped, instance-based loggers"
 readme = "README.md"
 requires-python = ">=3.10"
-license = {text = "Proprietary"}
+license = {text = "MIT"}
 authors = [
-    {name = "Fenixflow", email = "dev@fenixflow.com"}
+    {name = "Ben Moag", email = "dev@fenixflow.com"}
+]
+maintainers = [
+    {name = "Fenixflow Team", email = "dev@fenixflow.com"}
+]
+keywords = [
+    "logging",
+    "structured-logging",
+    "json-logging",
+    "scoped-logger",
+    "instance-logger",
+    "fenixflow"
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: System :: Logging",
+    "Typing :: Typed"
 ]
 dependencies = [
     # No external dependencies required for core functionality
@@ -31,8 +56,11 @@ database = [
 ]
 
 [project.urls]
-repository = "https://gitlab.com/fenixflow/fenix-packages"
-documentation = "https://gitlab.com/fenixflow/fenix-packages/-/tree/main/ff-logger"
+Homepage = "https://fenixflow.com"
+Repository = "https://gitlab.com/fenixflow/fenix-packages"
+Documentation = "https://gitlab.com/fenixflow/fenix-packages/-/tree/main/ff-logger"
+"Bug Tracker" = "https://gitlab.com/fenixflow/fenix-packages/-/issues"
+Changelog = "https://gitlab.com/fenixflow/fenix-packages/-/blob/main/ff-logger/CHANGELOG.md"
 
 [tool.setuptools]
 package-dir = {"" = "src"}

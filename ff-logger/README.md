@@ -1,13 +1,25 @@
 # ff-logger
 
+[![PyPI version](https://badge.fury.io/py/ff-logger.svg)](https://badge.fury.io/py/ff-logger)
+[![Python Support](https://img.shields.io/pypi/pyversions/ff-logger.svg)](https://pypi.org/project/ff-logger/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+
 A scoped, instance-based logging package for Fenixflow applications. Unlike traditional Python logging which uses a global configuration, ff-logger provides self-contained logger instances that can be passed around as objects, with support for context binding and multiple output formats.
+
+Created by **Ben Moag** at **[Fenixflow](https://fenixflow.com)**
 
 ## Quick Start
 
 ### Installation
 
+#### From PyPI (when published)
 ```bash
 pip install ff-logger
+```
+
+#### From GitLab (current)
+```bash
+pip install git+https://gitlab.com/fenixflow/fenix-packages.git#subdirectory=ff-logger
 ```
 
 ### Basic Usage
@@ -241,6 +253,12 @@ def test_my_function():
     result = my_function(test_data)  # Silent by default
 ```
 
+## Contributing
+
+Contributions are welcome! Please feel free to submit a Pull Request to the [GitLab repository](https://gitlab.com/fenixflow/fenix-packages).
+
 ## License
 
-Proprietary - Fenixflow
+MIT License - see [LICENSE](LICENSE) file for details.
+
+Copyright (c) 2024 Ben Moag / Fenixflow
