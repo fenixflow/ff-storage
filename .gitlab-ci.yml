@@ -206,10 +206,18 @@ publish:pypi:ff-logger:
       echo "========================================"
       echo "Publishing $PACKAGE to PyPI"
       echo "========================================"
-      
+
+      # Safety check - warn if not on main branch
+      if [ "$CI_COMMIT_BRANCH" != "main" ] && [ "$CI_COMMIT_REF_NAME" != "main" ]; then
+        echo "⚠️  WARNING: Not on main branch (current: ${CI_COMMIT_BRANCH:-$CI_COMMIT_REF_NAME})"
+        echo "⚠️  PyPI publishing should typically be done from main branch"
+        echo "⚠️  Proceeding anyway - please ensure this is intentional"
+        echo ""
+      fi
+
       # Install build and upload tools
       pip install --upgrade pip build twine
-      
+
       # Get package version
       VERSION=$(python3 -c "
       import tomllib
@@ -249,16 +257,9 @@ publish:pypi:ff-logger:
     PYPI_ID_TOKEN:
       aud: pypi
   rules:
-    # Manual trigger only on main branch (matching the publish:packages job)
-    - if: '$CI_COMMIT_BRANCH == "main"'
-      when: manual
+    # Always available as manual trigger
+    - when: manual
       allow_failure: false
-    # Also allow on default branch or when ref is main
-    - if: '$CI_COMMIT_REF_NAME == "main" && $CI_COMMIT_BRANCH == null'
-      when: manual
-      allow_failure: false
-    # Skip for all other branches and merge requests
-    - when: never
 
 # ============================================================================
 # SUMMARY JOB - Provides a summary of the pipeline (optional)
