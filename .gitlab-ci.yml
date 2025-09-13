@@ -11,6 +11,7 @@ stages:
   - build
   - test
   - publish
+  - publish-pypi
 
 variables:
   PIP_CACHE_DIR: "$CI_PROJECT_DIR/.cache/pip"
@@ -184,6 +185,73 @@ publish:packages:
       when: on_success
     # Skip for merge requests and other branches
     - when: never
+
+# ============================================================================
+# PUBLISH TO PYPI - Manual publishing to PyPI.org
+# ============================================================================
+
+publish:pypi:ff-logger:
+  stage: publish-pypi
+  image: python:${PYTHON_VERSION}-slim
+  environment:
+    name: release
+    url: https://pypi.org/project/ff-logger/
+  variables:
+    PACKAGE: "ff-logger"
+  before_script:
+    - apt-get update && apt-get install -y git curl
+    - python --version
+  script:
+    - |
+      echo "========================================"
+      echo "Publishing $PACKAGE to PyPI"
+      echo "========================================"
+      
+      # Install build and upload tools
+      pip install --upgrade pip build twine
+      
+      # Get package version
+      VERSION=$(python3 -c "
+      import tomllib
+      with open('$PACKAGE/pyproject.toml', 'rb') as f:
+          data = tomllib.load(f)
+      print(data['project']['version'])
+      ")
+      
+      echo "Package: $PACKAGE"
+      echo "Version: $VERSION"
+      echo "Environment: ${CI_ENVIRONMENT_NAME}"
+      
+      # Build the package
+      cd "$PACKAGE"
+      echo "Building package..."
+      python -m build
+      
+      # List built artifacts
+      echo "Built artifacts:"
+      ls -la dist/
+      
+      # Check if version already exists on PyPI
+      echo "Checking if version exists on PyPI..."
+      if pip index versions ff-logger 2>/dev/null | grep -q "^Available versions:.*$VERSION"; then
+        echo "❌ Version $VERSION already exists on PyPI!"
+        echo "Please update the version in pyproject.toml before publishing."
+        exit 1
+      fi
+      
+      # Upload to PyPI using OIDC token
+      echo "Uploading to PyPI..."
+      python -m twine upload --non-interactive --verbose dist/*
+      
+      echo "✅ Successfully published $PACKAGE version $VERSION to PyPI"
+      echo "View at: https://pypi.org/project/ff-logger/$VERSION/"
+  id_tokens:
+    PYPI_ID_TOKEN:
+      aud: pypi
+  rules:
+    # Manual trigger only
+    - when: manual
+      allow_failure: false
 
 # ============================================================================
 # SUMMARY JOB - Provides a summary of the pipeline (optional)
