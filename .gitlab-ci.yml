@@ -193,6 +193,7 @@ publish:packages:
 publish:pypi:ff-logger:
   stage: publish-pypi
   image: python:${PYTHON_VERSION}-slim
+  needs: []  # Don't wait for previous stages
   environment:
     name: release
     url: https://pypi.org/project/ff-logger/
