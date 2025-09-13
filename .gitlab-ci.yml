@@ -249,11 +249,15 @@ publish:pypi:ff-logger:
     PYPI_ID_TOKEN:
       aud: pypi
   rules:
-    # Manual trigger only on main branch
+    # Manual trigger only on main branch (matching the publish:packages job)
     - if: '$CI_COMMIT_BRANCH == "main"'
       when: manual
       allow_failure: false
-    # Skip for all other branches
+    # Also allow on default branch or when ref is main
+    - if: '$CI_COMMIT_REF_NAME == "main" && $CI_COMMIT_BRANCH == null'
+      when: manual
+      allow_failure: false
+    # Skip for all other branches and merge requests
     - when: never
 
 # ============================================================================
