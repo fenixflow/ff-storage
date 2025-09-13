@@ -249,9 +249,12 @@ publish:pypi:ff-logger:
     PYPI_ID_TOKEN:
       aud: pypi
   rules:
-    # Manual trigger only
-    - when: manual
+    # Manual trigger only on main branch
+    - if: '$CI_COMMIT_BRANCH == "main"'
+      when: manual
       allow_failure: false
+    # Skip for all other branches
+    - when: never
 
 # ============================================================================
 # SUMMARY JOB - Provides a summary of the pipeline (optional)
