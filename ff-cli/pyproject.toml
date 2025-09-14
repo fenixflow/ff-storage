@@ -4,10 +4,10 @@ build-backend = "hatchling.build"
 
 [project]
 name = "ff-cli"
-version = "0.1.3"
+version = "0.1.4"
 description = "Fenix-wide CLI with plugin architecture for project-specific commands"
 readme = "README.md"
-requires-python = ">=3.12"
+requires-python = ">=3.10"
 license = {text = "Proprietary"}
 authors = [
     {name = "Fenixflow", email = "dev@fenixflow.com"}
