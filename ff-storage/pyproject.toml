@@ -4,13 +4,42 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ff-storage"
-version = "0.1.4"
+version = "0.2.1"
 description = "Fenixflow storage package for database and file operations"
 readme = "README.md"
 requires-python = ">=3.10"
-license = {text = "Proprietary"}
+license = {text = "MIT"}
 authors = [
-    {name = "Fenixflow", email = "dev@fenixflow.com"}
+    {name = "Ben Moag", email = "dev@fenixflow.com"}
+]
+maintainers = [
+    {name = "Fenixflow Team", email = "dev@fenixflow.com"}
+]
+keywords = [
+    "storage",
+    "database",
+    "postgresql",
+    "mysql",
+    "s3",
+    "object-storage",
+    "file-storage",
+    "migrations",
+    "fenixflow"
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Database",
+    "Topic :: System :: Filesystems",
+    "Typing :: Typed"
 ]
 dependencies = [
     "psycopg2-binary>=2.9",
@@ -34,8 +63,11 @@ dev = [
 ]
 
 [project.urls]
-repository = "https://gitlab.com/fenixflow/fenix-packages"
-documentation = "https://gitlab.com/fenixflow/fenix-packages/-/tree/main/ff-storage"
+Homepage = "https://fenixflow.com"
+Repository = "https://gitlab.com/fenixflow/fenix-packages"
+Documentation = "https://gitlab.com/fenixflow/fenix-packages/-/tree/main/ff-storage"
+"Bug Tracker" = "https://gitlab.com/fenixflow/fenix-packages/-/issues"
+Changelog = "https://gitlab.com/fenixflow/fenix-packages/-/blob/main/ff-storage/CHANGELOG.md"
 
 [tool.setuptools]
 package-dir = {"" = "src"}

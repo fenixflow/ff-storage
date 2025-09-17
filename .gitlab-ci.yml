@@ -12,6 +12,7 @@ stages:
   - test
   - publish
   - publish-pypi
+  - mirror-github
 
 variables:
   PIP_CACHE_DIR: "$CI_PROJECT_DIR/.cache/pip"
@@ -190,149 +191,171 @@ publish:packages:
 # PUBLISH TO PYPI - Manual publishing to PyPI.org
 # ============================================================================
 
-publish:pypi:ff-logger:
+# Shared template for PyPI publishing
+.pypi_publish_template: &pypi_publish_template
   stage: publish-pypi
   image: python:${PYTHON_VERSION}-slim
   needs: []  # Don't wait for previous stages
+  before_script:
+    - apt-get update && apt-get install -y git curl
+    - python --version
+  script:
+    - |
+      echo "========================================"
+      echo "Publishing $PACKAGE to PyPI"
+      echo "========================================"
+
+      # Safety check - warn if not on main branch
+      if [ "$CI_COMMIT_BRANCH" != "main" ] && [ "$CI_COMMIT_REF_NAME" != "main" ]; then
+        echo "⚠️  WARNING: Not on main branch (current: ${CI_COMMIT_BRANCH:-$CI_COMMIT_REF_NAME})"
+        echo "⚠️  PyPI publishing should typically be done from main branch"
+        echo "⚠️  Proceeding anyway - please ensure this is intentional"
+        echo ""
+      fi
+
+      # Install build and upload tools
+      pip install --upgrade pip build twine
+
+      # Get package version
+      VERSION=$(python3 -c "
+      import tomllib
+      with open('$PACKAGE/pyproject.toml', 'rb') as f:
+          data = tomllib.load(f)
+      print(data['project']['version'])
+      ")
+
+      echo "Package: $PACKAGE"
+      echo "Version: $VERSION"
+      echo "Environment: ${CI_ENVIRONMENT_NAME}"
+
+      # Build the package
+      cd "$PACKAGE"
+      echo "Building package..."
+      python -m build
+
+      # List built artifacts
+      echo "Built artifacts:"
+      ls -la dist/
+
+      # Check if version already exists on PyPI
+      echo "Checking if version exists on PyPI..."
+      PACKAGE_UNDERSCORE="${PACKAGE//-/_}"
+      if pip index versions ${PACKAGE_UNDERSCORE} 2>/dev/null | grep -q "^Available versions:.*$VERSION"; then
+        echo "❌ Version $VERSION already exists on PyPI!"
+        echo "Please update the version in pyproject.toml before publishing."
+        exit 1
+      fi
+
+      # Upload to PyPI using OIDC token
+      echo "Uploading to PyPI..."
+      python -m twine upload --non-interactive --verbose dist/*
+
+      echo "✅ Successfully published $PACKAGE version $VERSION to PyPI"
+      echo "View at: https://pypi.org/project/${PACKAGE_UNDERSCORE}/$VERSION/"
+  id_tokens:
+    PYPI_ID_TOKEN:
+      aud: pypi
+  rules:
+    # Always available as manual trigger
+    - when: manual
+      allow_failure: false
+
+# Individual package jobs using the template
+publish:pypi:ff-logger:
+  <<: *pypi_publish_template
   environment:
     name: release
     url: https://pypi.org/project/ff-logger/
   variables:
     PACKAGE: "ff-logger"
-  before_script:
-    - apt-get update && apt-get install -y git curl
-    - python --version
-  script:
-    - |
-      echo "========================================"
-      echo "Publishing $PACKAGE to PyPI"
-      echo "========================================"
-
-      # Safety check - warn if not on main branch
-      if [ "$CI_COMMIT_BRANCH" != "main" ] && [ "$CI_COMMIT_REF_NAME" != "main" ]; then
-        echo "⚠️  WARNING: Not on main branch (current: ${CI_COMMIT_BRANCH:-$CI_COMMIT_REF_NAME})"
-        echo "⚠️  PyPI publishing should typically be done from main branch"
-        echo "⚠️  Proceeding anyway - please ensure this is intentional"
-        echo ""
-      fi
-
-      # Install build and upload tools
-      pip install --upgrade pip build twine
-
-      # Get package version
-      VERSION=$(python3 -c "
-      import tomllib
-      with open('$PACKAGE/pyproject.toml', 'rb') as f:
-          data = tomllib.load(f)
-      print(data['project']['version'])
-      ")
-
-      echo "Package: $PACKAGE"
-      echo "Version: $VERSION"
-      echo "Environment: ${CI_ENVIRONMENT_NAME}"
-
-      # Build the package
-      cd "$PACKAGE"
-      echo "Building package..."
-      python -m build
-
-      # List built artifacts
-      echo "Built artifacts:"
-      ls -la dist/
-
-      # Check if version already exists on PyPI
-      echo "Checking if version exists on PyPI..."
-      if pip index versions ff-logger 2>/dev/null | grep -q "^Available versions:.*$VERSION"; then
-        echo "❌ Version $VERSION already exists on PyPI!"
-        echo "Please update the version in pyproject.toml before publishing."
-        exit 1
-      fi
-
-      # Upload to PyPI using OIDC token
-      echo "Uploading to PyPI..."
-      python -m twine upload --non-interactive --verbose dist/*
-
-      echo "✅ Successfully published $PACKAGE version $VERSION to PyPI"
-      echo "View at: https://pypi.org/project/ff-logger/$VERSION/"
-  id_tokens:
-    PYPI_ID_TOKEN:
-      aud: pypi
-  rules:
-    # Always available as manual trigger
-    - when: manual
-      allow_failure: false
 
 publish:pypi:ff-storage:
-  stage: publish-pypi
-  image: python:${PYTHON_VERSION}-slim
-  needs: []  # Don't wait for previous stages
+  <<: *pypi_publish_template
   environment:
     name: release
     url: https://pypi.org/project/ff-storage/
   variables:
     PACKAGE: "ff-storage"
+
+# ============================================================================
+# GITHUB MIRRORING - Push packages to GitHub after PyPI publish
+# ============================================================================
+
+mirror:github:
+  stage: mirror-github
+  image: alpine/git:latest
+  variables:
+    GIT_STRATEGY: clone
+    GIT_DEPTH: 0  # Full history
   before_script:
-    - apt-get update && apt-get install -y git curl
-    - python --version
+    - apk add --no-cache python3 py3-pip
   script:
     - |
       echo "========================================"
-      echo "Publishing $PACKAGE to PyPI"
+      echo "Mirroring $PACKAGE to GitHub"
       echo "========================================"
-
-      # Safety check - warn if not on main branch
-      if [ "$CI_COMMIT_BRANCH" != "main" ] && [ "$CI_COMMIT_REF_NAME" != "main" ]; then
-        echo "⚠️  WARNING: Not on main branch (current: ${CI_COMMIT_BRANCH:-$CI_COMMIT_REF_NAME})"
-        echo "⚠️  PyPI publishing should typically be done from main branch"
-        echo "⚠️  Proceeding anyway - please ensure this is intentional"
-        echo ""
-      fi
-
-      # Install build and upload tools
-      pip install --upgrade pip build twine
 
       # Get package version
       VERSION=$(python3 -c "
       import tomllib
-      with open('$PACKAGE/pyproject.toml', 'rb') as f:
+      with open('${PACKAGE}/pyproject.toml', 'rb') as f:
           data = tomllib.load(f)
       print(data['project']['version'])
       ")
 
       echo "Package: $PACKAGE"
       echo "Version: $VERSION"
-      echo "Environment: ${CI_ENVIRONMENT_NAME}"
+      echo "GitHub Org: ${GITHUB_ORG}"
 
-      # Build the package
-      cd "$PACKAGE"
-      echo "Building package..."
-      python -m build
+      # Configure git
+      git config --global user.email "ci@fenixflow.com"
+      git config --global user.name "GitLab CI"
 
-      # List built artifacts
-      echo "Built artifacts:"
-      ls -la dist/
+      # Create temp directory for package files
+      mkdir -p /tmp/github-push
+      cd /tmp/github-push
 
-      # Check if version already exists on PyPI
-      echo "Checking if version exists on PyPI..."
-      if pip index versions ff-storage 2>/dev/null | grep -q "^Available versions:.*$VERSION"; then
-        echo "❌ Version $VERSION already exists on PyPI!"
-        echo "Please update the version in pyproject.toml before publishing."
-        exit 1
+      # Clone the GitHub repository
+      echo "Cloning GitHub repository..."
+      git clone https://${GITHUB_TOKEN}@github.com/${GITHUB_ORG}/${PACKAGE}.git . || {
+        echo "Repository might be empty, initializing..."
+        git init
+        git remote add origin https://${GITHUB_TOKEN}@github.com/${GITHUB_ORG}/${PACKAGE}.git
+      }
+
+      # Remove all existing files (to ensure clean sync)
+      find . -mindepth 1 -maxdepth 1 ! -name '.git' -exec rm -rf {} +
+
+      # Copy package files from GitLab repo
+      echo "Copying package files..."
+      cp -r ${CI_PROJECT_DIR}/${PACKAGE}/* .
+      cp ${CI_PROJECT_DIR}/LICENSE . 2>/dev/null || true
+
+      # Add and commit if there are changes
+      git add -A
+      if ! git diff --cached --quiet; then
+        echo "Committing changes..."
+        git commit -m "Update to version ${VERSION} from GitLab"
+
+        echo "Pushing to GitHub..."
+        git push origin main || git push origin main --force-with-lease
+        echo "✅ Successfully pushed to GitHub: ${GITHUB_ORG}/${PACKAGE}"
+      else
+        echo "No changes to push"
       fi
-
-      # Upload to PyPI using OIDC token
-      echo "Uploading to PyPI..."
-      python -m twine upload --non-interactive --verbose dist/*
-
-      echo "✅ Successfully published $PACKAGE version $VERSION to PyPI"
-      echo "View at: https://pypi.org/project/ff-storage/$VERSION/"
-  id_tokens:
-    PYPI_ID_TOKEN:
-      aud: pypi
+  parallel:
+    matrix:
+      - PACKAGE: [ff-storage, ff-logger]
+  needs:
+    - job: "publish:pypi:ff-storage"
+      optional: true
+    - job: "publish:pypi:ff-logger"
+      optional: true
   rules:
-    # Always available as manual trigger
-    - when: manual
-      allow_failure: false
+    # Only run on main branch when PyPI publish succeeds
+    - if: '$CI_COMMIT_BRANCH == "main"'
+      when: on_success
+    - when: never
 
 # ============================================================================
 # SUMMARY JOB - Provides a summary of the pipeline (optional)
