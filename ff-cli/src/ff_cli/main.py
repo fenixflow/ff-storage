@@ -1,7 +1,5 @@
 #!/usr/bin/env python3
-"""
-Main entry point for the Fenix CLI.
-"""
+"""Main entry point for the branded CLI."""
 
 import sys
 
@@ -9,16 +7,23 @@ import typer
 from rich.console import Console
 
 from ff_cli import __version__
+from ff_cli.branding import get_brand
+from ff_cli.commands import branding as branding_cmd
 from ff_cli.commands import plugins as plugins_cmd
+from ff_cli.commands import services as services_cmd
+from ff_cli.commands import status as status_cmd
 from ff_cli.plugin_manager import PluginManager
 
 # Initialize console for rich output
 console = Console()
 
-# Create the main Typer app
+# Get brand configuration
+brand = get_brand()
+
+# Create the main Typer app with branding
 app = typer.Typer(
-    name="fenix",
-    help="Fenix-wide CLI with plugin architecture for project-specific commands",
+    name=brand.cli_name,
+    help=brand.cli_description,
     no_args_is_help=True,
     rich_markup_mode="rich",
     pretty_exceptions_enable=True,
@@ -30,7 +35,8 @@ app = typer.Typer(
 def version_callback(value: bool):
     """Show version and exit."""
     if value:
-        console.print(f"[bold cyan]Fenix CLI[/bold cyan] version {__version__}")
+        brand = get_brand()
+        console.print(f"[bold cyan]{brand.cli_display_name}[/bold cyan] version {__version__}")
         raise typer.Exit()
 
 
@@ -46,37 +52,32 @@ def main(
     ),
 ):
     """
-    Fenix CLI - Unified command-line interface for the Fenix ecosystem.
+    Main CLI callback - handles global options.
 
-    This CLI provides a central entry point for all Fenix tools and project-specific
-    commands through a plugin architecture. Each project can install its own plugin
-    to add namespaced commands.
-
-    Examples:
-        fenix --help                    # Show this help
-        fenix -h                        # Short form for help
-        fenix plugins list              # List installed plugins
-        fenix plugins create            # Create a new plugin interactively
-        fenix ff-agents --help          # Show help for a plugin
-        fenix ff-agents status          # Run a plugin command
-
-    Shell Completion:
-        fenix --install-completion      # Install completion for current shell
-        fenix --show-completion         # Show completion script
-
-    Troubleshooting ZSH Completion:
-        If auto-completion doesn't work on zsh, try:
-        1. Run: fenix --install-completion
-        2. Restart your terminal or run: exec zsh
-        3. Ensure ~/.zshrc contains completion initialization
-        4. For manual setup, add to ~/.zshrc:
-           eval "$(fenix --show-completion zsh)"
+    The actual help text is dynamically generated based on branding.
     """
     pass
 
 
-# Add the plugins command group
-app.add_typer(plugins_cmd.app, name="plugins", help="Manage Fenix CLI plugins")
+# Add command groups
+app.add_typer(
+    plugins_cmd.app,
+    name="plugins",
+    help=f"Manage {brand.cli_display_name} plugins",
+)
+app.add_typer(
+    services_cmd.app,
+    name="services",
+    help="Manage Docker services",
+)
+app.add_typer(
+    branding_cmd.app,
+    name="branding",
+    help="Configure CLI branding",
+)
+
+# Add top-level status command
+app.command(name="status")(status_cmd.status)
 
 
 def load_plugins():

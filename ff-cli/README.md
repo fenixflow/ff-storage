@@ -4,12 +4,31 @@ Fenix-wide CLI with plugin architecture for project-specific commands. This prov
 
 ## Features
 
-- **Unified Entry Point**: Single `fenix` command for all Fenix tools
+- **Unified Entry Point**: Single `fenix` command for all tools (with optional custom branding)
 - **Plugin Architecture**: Projects can add their own namespaced commands
-- **uvx Compatible**: Can be installed and run with `uvx fenix`
+- **uvx Compatible**: Can be installed and run with `uvx <cli-name>`
 - **Auto-completion**: Shell completion support for all commands
-- **Configuration Management**: Centralized config in `~/.fenix/config.toml`
+- **Configuration Management**: Centralized config in the brand-specific `~/.<cli-name>/config.toml`
 - **Dynamic Discovery**: Automatically discovers installed plugins
+
+## Quick Start
+
+```bash
+cd ff-cli
+
+# Install in editable mode (requires uv)
+uv pip install -e .
+
+# Run the default Fenix-branded command
+fenix --help
+fenix status
+fenix services list
+
+# Optional: launch the branding wizard
+fenix branding configure
+```
+
+The CLI supports custom branding through the branding configuration wizard. See the Branding section below for details.
 
 ## Installation
 
@@ -48,6 +67,21 @@ fenix --install-completion fish
 ```
 
 ## Usage
+
+> **Note:** The examples below use the default `fenix` command. If you've configured custom branding, the command name may differ.
+
+### Branding
+
+```bash
+fenix branding show
+fenix branding configure
+fenix branding reset
+```
+
+The wizard writes your selections to `~/.ff-cli/branding.toml` and can optionally
+create a helper command in `~/.local/bin`. See
+[docs/BRANDING.md](../docs/BRANDING.md) for detailed guidance on wrapping these
+settings in a dedicated installer or package.
 
 ### Basic Commands
 
@@ -243,3 +277,26 @@ fenix --help
 ## License
 
 Proprietary - Fenixflow
+## Rebranding the CLI
+
+The CLI determines its branding from the executable name that launches it.
+By default only the `fenix` command is installed. To create a custom brand:
+
+1. Add or override a `BrandConfig` entry (either in `src/ff_cli/branding.py` or via a TOML file) with your desired names, network identifiers, and entry-point group.
+2. Publish or install your own package that exposes a console script pointing at `ff_cli.main:run` (for example `mybrand = ff_cli.main:run`).
+3. Invoke the CLI via that script (`mybrand status`) to receive customized help text, configuration directories, plugin namespaces, and Docker naming.
+
+Plugins created through `fenix plugins create` automatically honour the active brand, so the same workflow applies when operating under any custom brand configuration.
+
+For more detail, see [docs/BRANDING.md](../docs/BRANDING.md).
+
+## Testing
+
+Run the test suite with uv so dependencies are resolved automatically:
+
+```bash
+cd ff-cli
+UV_CACHE_DIR=$(pwd)/.uv-cache uv run --with pytest python -m pytest
+```
+
+If you already have the dev dependencies installed, a plain `python -m pytest` works as well.

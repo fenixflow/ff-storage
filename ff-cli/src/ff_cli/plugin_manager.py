@@ -1,15 +1,16 @@
-"""
-Plugin manager for discovering and loading Fenix CLI plugins.
-"""
+"""Plugin manager for discovering and loading branded CLI plugins."""
 
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 import typer
 from rich.console import Console
 from rich.table import Table
 
 from . import plugin_registry
+from .branding import get_brand
+from .plugin_base import get_plugin_status, has_status_support
 
 console = Console()
 
@@ -48,6 +49,7 @@ class PluginManager:
     """Manages plugin discovery, loading, and registration."""
 
     def __init__(self):
+        self.brand = get_brand()
         self.plugins: dict[str, Plugin] = {}
         self._discover_plugins()
 
@@ -61,12 +63,22 @@ class PluginManager:
             from importlib.metadata import entry_points
 
             eps = entry_points()
+            groups = {self.brand.plugin_entry_point}
+            if self.brand.plugin_entry_point != "fenix.plugins":
+                groups.add("fenix.plugins")
+
+            plugin_eps = []
             if hasattr(eps, "select"):
-                # Python 3.10+ with select method
-                plugin_eps = eps.select(group="fenix.plugins")
+                for group in groups:
+                    try:
+                        plugin_eps.extend(list(eps.select(group=group)))
+                    except Exception as exc:  # pragma: no cover - defensive
+                        console.print(
+                            f"[yellow]Warning: Could not query entry point group {group}: {exc}[/yellow]"
+                        )
             else:
-                # Fallback for different implementations
-                plugin_eps = eps.get("fenix.plugins", [])
+                for group in groups:
+                    plugin_eps.extend(eps.get(group, []))
 
             for ep in plugin_eps:
                 try:
@@ -179,11 +191,60 @@ class PluginManager:
         # Try to load and show available commands
         try:
             app = plugin.load()
-            if app and hasattr(app, "registered_commands"):
-                console.print("\n[bold]Available Commands:[/bold]")
-                for cmd in app.registered_commands:
-                    if hasattr(cmd, "callback"):
-                        help_text = cmd.callback.__doc__ or "No description"
-                        console.print(f"  {cmd.name}: {help_text.strip()}")
+            if app:
+                # Check for status support
+                if has_status_support(app):
+                    console.print("[green]✓ Status support enabled[/green]")
+
+                if hasattr(app, "registered_commands"):
+                    console.print("\n[bold]Available Commands:[/bold]")
+                    for cmd in app.registered_commands:
+                        if hasattr(cmd, "callback"):
+                            help_text = cmd.callback.__doc__ or "No description"
+                            console.print(f"  {cmd.name}: {help_text.strip()}")
         except Exception as e:
             console.print(f"\n[yellow]Could not load plugin commands: {e}[/yellow]")
+
+    def get_plugin_status(self, name: str, verbose: bool = False) -> dict[str, Any] | None:
+        """Get status from a specific plugin.
+
+        Args:
+            name: Plugin name
+            verbose: Include detailed metrics
+
+        Returns:
+            Status dictionary or None if not supported
+        """
+        plugin = self.get_plugin(name)
+        if not plugin:
+            return None
+
+        try:
+            app = plugin.load()
+            if app:
+                return get_plugin_status(app, verbose=verbose)
+        except Exception as e:
+            return {
+                "name": plugin.name,
+                "healthy": False,
+                "services": [],
+                "message": f"Failed to get status: {e}",
+                "errors": [str(e)],
+            }
+        return None
+
+    def get_all_plugin_statuses(self, verbose: bool = False) -> dict[str, dict[str, Any]]:
+        """Get status from all plugins that support it.
+
+        Args:
+            verbose: Include detailed metrics
+
+        Returns:
+            Dictionary mapping plugin names to their status
+        """
+        statuses = {}
+        for name, _plugin in self.plugins.items():
+            status = self.get_plugin_status(name, verbose=verbose)
+            if status:
+                statuses[name] = status
+        return statuses

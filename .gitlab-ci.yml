@@ -277,16 +277,34 @@ publish:pypi:ff-storage:
   variables:
     PACKAGE: "ff-storage"
 
+publish:pypi:ff-cli:
+  <<: *pypi_publish_template
+  environment:
+    name: release
+    url: https://pypi.org/project/ff-cli/
+  variables:
+    PACKAGE: "ff-cli"
+
+publish:pypi:ff-parsers:
+  <<: *pypi_publish_template
+  environment:
+    name: release
+    url: https://pypi.org/project/ff-parsers/
+  variables:
+    PACKAGE: "ff-parsers"
+
 # ============================================================================
-# GITHUB MIRRORING - Push packages to GitHub after PyPI publish
+# GITHUB MIRRORING - Push packages to GitHub (independent jobs)
 # ============================================================================
 
-mirror:github:
+# Shared template for GitHub mirroring
+.github_mirror_template: &github_mirror_template
   stage: mirror-github
   image: alpine:latest
   variables:
     GIT_STRATEGY: clone
     GIT_DEPTH: 0  # Full history
+  needs: []  # No dependencies - can run independently
   before_script:
     - apk add --no-cache git python3 py3-pip
   script:
@@ -294,6 +312,12 @@ mirror:github:
       echo "========================================"
       echo "Mirroring $PACKAGE to GitHub"
       echo "========================================"
+
+      # Safety check for required variables
+      if [ -z "$GITHUB_TOKEN" ] || [ -z "$GITHUB_ORG" ]; then
+        echo "❌ GITHUB_TOKEN or GITHUB_ORG not set. Skipping GitHub mirror."
+        exit 0
+      fi
 
       # Get package version
       VERSION=$(python3 -c "
@@ -306,6 +330,7 @@ mirror:github:
       echo "Package: $PACKAGE"
       echo "Version: $VERSION"
       echo "GitHub Org: ${GITHUB_ORG}"
+      echo "Branch: ${CI_COMMIT_BRANCH}"
 
       # Configure git
       git config --global user.email "ci@fenixflow.com"
@@ -321,6 +346,7 @@ mirror:github:
         echo "Repository might be empty, initializing..."
         git init
         git remote add origin https://${GITHUB_TOKEN}@github.com/${GITHUB_ORG}/${PACKAGE}.git
+        git checkout -b main 2>/dev/null || git checkout main
       }
 
       # Remove all existing files (to ensure clean sync)
@@ -331,31 +357,157 @@ mirror:github:
       cp -r ${CI_PROJECT_DIR}/${PACKAGE}/* .
       cp ${CI_PROJECT_DIR}/LICENSE . 2>/dev/null || true
 
+      # Copy README if it exists at package level
+      if [ -f "${CI_PROJECT_DIR}/${PACKAGE}/README.md" ]; then
+        cp ${CI_PROJECT_DIR}/${PACKAGE}/README.md .
+      fi
+
       # Add and commit if there are changes
       git add -A
       if ! git diff --cached --quiet; then
         echo "Committing changes..."
-        git commit -m "Update to version ${VERSION} from GitLab"
+        git commit -m "Update to version ${VERSION} from GitLab (${CI_COMMIT_BRANCH})"
 
         echo "Pushing to GitHub..."
-        git push origin main || git push origin main --force-with-lease
+        git push origin main --force-with-lease || git push origin main --force
         echo "✅ Successfully pushed to GitHub: ${GITHUB_ORG}/${PACKAGE}"
       else
         echo "No changes to push"
       fi
-  parallel:
-    matrix:
-      - PACKAGE: [ff-storage, ff-logger]
-  needs:
-    - job: "publish:pypi:ff-storage"
-      optional: true
-    - job: "publish:pypi:ff-logger"
-      optional: true
   rules:
-    # Only run on main branch when PyPI publish succeeds
-    - if: '$CI_COMMIT_BRANCH == "main"'
-      when: on_success
-    - when: never
+    # Manual trigger - always available
+    - when: manual
+      allow_failure: false
+
+# Individual GitHub mirror jobs for each package
+mirror:github:ff-storage:
+  <<: *github_mirror_template
+  variables:
+    PACKAGE: "ff-storage"
+  environment:
+    name: github
+    url: https://github.com/${GITHUB_ORG}/ff-storage
+
+mirror:github:ff-logger:
+  <<: *github_mirror_template
+  variables:
+    PACKAGE: "ff-logger"
+  environment:
+    name: github
+    url: https://github.com/${GITHUB_ORG}/ff-logger
+
+mirror:github:ff-cli:
+  <<: *github_mirror_template
+  variables:
+    PACKAGE: "ff-cli"
+  environment:
+    name: github
+    url: https://github.com/${GITHUB_ORG}/ff-cli
+
+mirror:github:ff-parsers:
+  <<: *github_mirror_template
+  variables:
+    PACKAGE: "ff-parsers"
+  environment:
+    name: github
+    url: https://github.com/${GITHUB_ORG}/ff-parsers
+
+# Automatic mirror job for main branch (optional - runs all packages)
+mirror:github:auto:
+  stage: mirror-github
+  image: alpine:latest
+  variables:
+    GIT_STRATEGY: clone
+    GIT_DEPTH: 0
+  needs: []  # No dependencies
+  before_script:
+    - apk add --no-cache git python3 py3-pip
+  script:
+    - |
+      echo "========================================"
+      echo "Auto-mirroring all packages to GitHub"
+      echo "========================================"
+
+      # Safety check for required variables
+      if [ -z "$GITHUB_TOKEN" ] || [ -z "$GITHUB_ORG" ]; then
+        echo "❌ GITHUB_TOKEN or GITHUB_ORG not set. Skipping GitHub mirror."
+        exit 0
+      fi
+
+      for PACKAGE in ff-storage ff-logger ff-cli ff-parsers; do
+        echo ""
+        echo "Processing $PACKAGE..."
+        echo "------------------------"
+
+        # Get package version
+        VERSION=$(python3 -c "
+        import tomllib
+        with open('${PACKAGE}/pyproject.toml', 'rb') as f:
+            data = tomllib.load(f)
+        print(data['project']['version'])
+        ")
+
+        echo "Package: $PACKAGE"
+        echo "Version: $VERSION"
+
+        # Configure git
+        git config --global user.email "ci@fenixflow.com"
+        git config --global user.name "GitLab CI"
+
+        # Create temp directory for package files
+        mkdir -p /tmp/github-push-${PACKAGE}
+        cd /tmp/github-push-${PACKAGE}
+
+        # Clone the GitHub repository
+        echo "Cloning GitHub repository..."
+        git clone https://${GITHUB_TOKEN}@github.com/${GITHUB_ORG}/${PACKAGE}.git . || {
+          echo "Repository might be empty, initializing..."
+          git init
+          git remote add origin https://${GITHUB_TOKEN}@github.com/${GITHUB_ORG}/${PACKAGE}.git
+          git checkout -b main 2>/dev/null || git checkout main
+        }
+
+        # Remove all existing files (to ensure clean sync)
+        find . -mindepth 1 -maxdepth 1 ! -name '.git' -exec rm -rf {} +
+
+        # Copy package files from GitLab repo
+        echo "Copying package files..."
+        cp -r ${CI_PROJECT_DIR}/${PACKAGE}/* .
+        cp ${CI_PROJECT_DIR}/LICENSE . 2>/dev/null || true
+
+        # Copy README if it exists at package level
+        if [ -f "${CI_PROJECT_DIR}/${PACKAGE}/README.md" ]; then
+          cp ${CI_PROJECT_DIR}/${PACKAGE}/README.md .
+        fi
+
+        # Add and commit if there are changes
+        git add -A
+        if ! git diff --cached --quiet; then
+          echo "Committing changes..."
+          git commit -m "Update to version ${VERSION} from GitLab (${CI_COMMIT_BRANCH})"
+
+          echo "Pushing to GitHub..."
+          git push origin main --force-with-lease || git push origin main --force
+          echo "✅ Successfully pushed ${PACKAGE} to GitHub"
+        else
+          echo "No changes to push for ${PACKAGE}"
+        fi
+
+        cd ${CI_PROJECT_DIR}
+        rm -rf /tmp/github-push-${PACKAGE}
+      done
+
+      echo ""
+      echo "========================================"
+      echo "GitHub mirroring completed"
+      echo "========================================"
+  rules:
+    # Automatic on main branch (disabled by default - uncomment to enable)
+    # - if: '$CI_COMMIT_BRANCH == "main"'
+    #   when: on_success
+    # Manual trigger - always available
+    - when: manual
+      allow_failure: false
 
 # ============================================================================
 # SUMMARY JOB - Provides a summary of the pipeline (optional)
