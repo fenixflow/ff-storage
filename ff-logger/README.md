@@ -31,7 +31,7 @@ import logging
 # Create a logger instance with permanent context
 logger = ConsoleLogger(
     name="my_app",
-    level=logging.INFO,
+    level="INFO",  # Can use strings now! (or logging.INFO)
     context={"service": "api", "environment": "production"}
 )
 
@@ -46,20 +46,25 @@ logger.info("Request processed", request_id="req-123", duration=45)
 
 ### Context Binding
 
-Create scoped loggers with additional permanent context:
+Add permanent context fields to your logger instance:
 
 ```python
-# Create a request-scoped logger
-request_logger = logger.bind(
+# Add context that will appear in all subsequent logs
+logger.bind(
     request_id="req-456",
     user_id=789,
     ip="192.168.1.1"
 )
 
-# All messages from request_logger include the bound context
-request_logger.info("Processing payment")
-request_logger.error("Payment failed", error_code="CARD_DECLINED")
+# All messages now include the bound context
+logger.info("Processing payment")
+logger.error("Payment failed", error_code="CARD_DECLINED")
+
+# bind() returns self for chaining
+logger.bind(session_id="xyz").info("Session started")
 ```
+
+**Note:** As of v0.3.0, `bind()` modifies the logger instance in place rather than creating a new one. This is cleaner and more intuitive. The method validates that fields are not reserved and values are JSON-serializable.
 
 ## Logger Types
 
@@ -71,7 +76,7 @@ from ff_logger import ConsoleLogger
 
 logger = ConsoleLogger(
     name="app",
-    level=logging.INFO,
+    level="INFO",  # String or int (logging.INFO)
     colors=True,  # Enable colored output
     show_hostname=False  # Optional hostname in logs
 )
@@ -85,7 +90,7 @@ from ff_logger import JSONLogger
 
 logger = JSONLogger(
     name="app",
-    level=logging.INFO,
+    level="WARNING",  # String or int levels supported
     show_hostname=True,
     include_timestamp=True
 )
@@ -148,7 +153,14 @@ logger = DatabaseLogger(
 )
 ```
 
-## Key Features
+## Key Features (v0.3.0)
+
+### Flexible Log Levels
+Accepts both string and integer log levels for better developer experience:
+- Strings: `"DEBUG"`, `"INFO"`, `"WARNING"`, `"ERROR"`, `"CRITICAL"`
+- Case-insensitive: `"info"` works the same as `"INFO"`
+- Integers: Traditional `logging.DEBUG`, `logging.INFO`, etc.
+- Numeric values: `10`, `20`, `30`, `40`, `50`
 
 ### Instance-Based
 Each logger is a self-contained instance with its own configuration:
@@ -203,16 +215,18 @@ logger.info("Message")
 
 ## Advanced Usage
 
-### Custom Log Levels
+### Flexible Log Levels
 
 ```python
-import logging
+# All of these work now (v0.3.0+):
+logger1 = ConsoleLogger("app", level="DEBUG")     # String
+logger2 = ConsoleLogger("app", level="info")      # Case-insensitive
+logger3 = ConsoleLogger("app", level=logging.INFO) # Traditional int
+logger4 = ConsoleLogger("app", level=20)          # Numeric value
+logger5 = ConsoleLogger("app")                    # Default: "DEBUG"
 
-# Create logger with custom level
-logger = ConsoleLogger(
-    name="debug_app",
-    level=logging.DEBUG  # Show all messages including debug
-)
+# Supported string levels:
+# "DEBUG", "INFO", "WARNING"/"WARN", "ERROR", "CRITICAL"
 ```
 
 ### Exception Logging

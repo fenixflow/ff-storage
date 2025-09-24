@@ -78,7 +78,7 @@ class FileLogger(ScopedLogger):
         self,
         name: str,
         filename: str,
-        level: int = logging.DEBUG,
+        level: int | str = "DEBUG",
         context: dict[str, Any] | None = None,
         max_bytes: int = 10 * 1024 * 1024,  # 10MB default
         backup_count: int = 5,
@@ -94,7 +94,7 @@ class FileLogger(ScopedLogger):
         Args:
             name: Logger name
             filename: Path to the log file
-            level: Logging level
+            level: Logging level as int or string (default: "DEBUG")
             context: Permanent context fields
             max_bytes: Maximum file size before rotation (for size-based)
             backup_count: Number of backup files to keep
@@ -131,7 +131,7 @@ class FileLogger(ScopedLogger):
             # No rotation - simple file handler
             handler = logging.FileHandler(filename=filename, encoding="utf-8")
 
-        handler.setLevel(level)
+        # No need to set handler level - inherits from logger
 
         # Set up the formatter
         formatter = FileFormatter(include_extra=include_extra)
@@ -140,7 +140,7 @@ class FileLogger(ScopedLogger):
         # Add handler to logger
         self.logger.addHandler(handler)
 
-        # Store configuration for bind()
+        # Store configuration for local use
         self.filename = filename
         self.max_bytes = max_bytes
         self.backup_count = backup_count
@@ -150,38 +150,7 @@ class FileLogger(ScopedLogger):
         self.include_extra = include_extra
         self.ensure_dir = ensure_dir
 
-    def bind(self, **kwargs) -> "FileLogger":
-        """
-        Create a new logger instance with additional context.
-
-        Args:
-            **kwargs: Additional context fields to bind
-
-        Returns:
-            A new FileLogger instance with merged context
-        """
-        new_context = {**self.context, **kwargs}
-
-        # Create new instance with same configuration
-        # Use a modified filename to avoid conflicts
-        base, ext = os.path.splitext(self.filename)
-        new_filename = f"{base}.bound{ext}"
-
-        new_logger = FileLogger(
-            name=f"{self.name}.bound",
-            filename=new_filename,
-            level=self.level,
-            context=new_context,
-            max_bytes=self.max_bytes,
-            backup_count=self.backup_count,
-            rotation_type=self.rotation_type,
-            when=self.when,
-            interval=self.interval,
-            include_extra=self.include_extra,
-            ensure_dir=self.ensure_dir,
-        )
-
-        return new_logger
+    # bind() method inherited from ScopedLogger base class
 
     def get_current_log_file(self) -> str:
         """

@@ -7,6 +7,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2024-01-23
+
+### Added
+- **Flexible log levels**: Loggers now accept both string and integer log levels
+  - Strings: `"DEBUG"`, `"INFO"`, `"WARNING"`, `"ERROR"`, `"CRITICAL"`
+  - Case-insensitive: `"info"` works the same as `"INFO"`
+  - Includes `"WARN"` as an alias for `"WARNING"`
+  - Backward compatible with integer levels (`logging.INFO`, `20`, etc.)
+- **Context validation in bind()**: The `bind()` method now validates:
+  - Reserved fields are rejected with helpful error messages
+  - Values must be JSON-serializable (str, int, float, bool, list, dict)
+
+### Changed
+- **Simplified bind() method**: Now modifies the logger instance in place instead of creating a new one
+  - Returns `self` for method chaining
+  - More intuitive behavior - adds context to existing logger
+  - Much cleaner implementation with less code duplication
+- **Removed redundant handler.setLevel() calls**: Handlers now inherit the logger's level automatically
+  - Cleaner separation of concerns
+  - Level is managed once in the base class
+
+### Fixed
+- Type hints now use modern Python syntax (`int | str` instead of `Union[int, str]`)
+- Eliminated code duplication across logger implementations
+
+### Developer Experience
+- Configuration-friendly: Can now use strings from config files/environment variables
+- No need to import `logging` module for basic usage
+- Better error messages when using reserved fields or invalid values
+
+## [0.2.3] - 2024-01-20
+
+### Changed
+- Updated package dependencies and build configuration
+
 ## [0.2.0] - 2024-12-11
 
 ### Added

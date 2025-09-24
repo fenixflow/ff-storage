@@ -24,7 +24,7 @@ class DatabaseHandler(logging.Handler):
         db_connection,
         table_name: str = "logs",
         schema: str = "public",
-        level: int = logging.DEBUG,
+        level: int | str = "DEBUG",
         ensure_table: bool = True,
     ):
         """
@@ -34,10 +34,12 @@ class DatabaseHandler(logging.Handler):
             db_connection: Database connection (ff_storage compatible)
             table_name: Name of the logs table (default: "logs")
             schema: Database schema (default: "public")
-            level: Minimum log level
+            level: Minimum log level as int or string (default: "DEBUG")
             ensure_table: Whether to create table if it doesn't exist
         """
-        super().__init__(level=level)
+        from ..utils import normalize_level
+
+        super().__init__(level=normalize_level(level))
         self.db_connection = db_connection
         self.table_name = table_name
         self.schema = schema
@@ -173,7 +175,7 @@ class DatabaseLogger(ScopedLogger):
         self,
         name: str,
         db_connection,
-        level: int = logging.DEBUG,
+        level: int | str = "DEBUG",
         context: dict[str, Any] | None = None,
         table_name: str = "logs",
         schema: str = "public",
@@ -186,7 +188,7 @@ class DatabaseLogger(ScopedLogger):
         Args:
             name: Logger name
             db_connection: Database connection (ff_storage compatible)
-            level: Logging level
+            level: Logging level as int or string (default: "DEBUG")
             context: Permanent context fields
             table_name: Name of the logs table
             schema: Database schema
@@ -200,7 +202,7 @@ class DatabaseLogger(ScopedLogger):
             db_connection=db_connection,
             table_name=table_name,
             schema=schema,
-            level=level,
+            level=self.level,  # Use normalized level from parent
             ensure_table=ensure_table,
         )
         self.logger.addHandler(db_handler)
@@ -208,42 +210,17 @@ class DatabaseLogger(ScopedLogger):
         # Optionally add console handler for debugging
         if also_console:
             console_handler = logging.StreamHandler()
-            console_handler.setLevel(level)
+            # No need to set handler level - inherits from logger
 
             # Use a simple formatter for console
             formatter = logging.Formatter("[%(asctime)s] %(levelname)s [%(name)s] %(message)s")
             console_handler.setFormatter(formatter)
             self.logger.addHandler(console_handler)
 
-        # Store configuration for bind()
+        # Store configuration for local use
         self.db_connection = db_connection
         self.table_name = table_name
         self.schema = schema
-        self.ensure_table = False  # Don't re-create on bind
         self.also_console = also_console
 
-    def bind(self, **kwargs) -> "DatabaseLogger":
-        """
-        Create a new logger instance with additional context.
-
-        Args:
-            **kwargs: Additional context fields to bind
-
-        Returns:
-            A new DatabaseLogger instance with merged context
-        """
-        new_context = {**self.context, **kwargs}
-
-        # Create new instance with same configuration
-        new_logger = DatabaseLogger(
-            name=f"{self.name}.bound",
-            db_connection=self.db_connection,
-            level=self.level,
-            context=new_context,
-            table_name=self.table_name,
-            schema=self.schema,
-            ensure_table=self.ensure_table,
-            also_console=self.also_console,
-        )
-
-        return new_logger
+    # bind() method inherited from ScopedLogger base class
