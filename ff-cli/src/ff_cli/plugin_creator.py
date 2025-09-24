@@ -1,7 +1,7 @@
-"""
-Plugin creation utilities for Fenix CLI.
+"""Plugin creation utilities for the branded CLI.
 
-This module provides templates and utilities for creating new Fenix CLI plugins.
+This module provides templates and utilities for creating new CLI plugins that
+respect the active branding configuration.
 """
 
 import re
@@ -9,6 +9,8 @@ from datetime import datetime
 from pathlib import Path
 
 from rich.console import Console
+
+from ff_cli.branding import get_brand
 
 console = Console()
 
@@ -39,9 +41,11 @@ def get_pyproject_template(
     description: str,
     author_name: str = "Your Name",
     author_email: str = "you@example.com",
+    entry_point_group: str | None = None,
 ) -> str:
     """Generate pyproject.toml content for a new plugin."""
     module_name = sanitize_plugin_name(plugin_name)
+    entry_point_group = entry_point_group or get_brand().plugin_entry_point
 
     return f"""[build-system]
 requires = ["hatchling"]
@@ -70,8 +74,8 @@ dev = [
     "ruff>=0.1",
 ]
 
-# Register the plugin with Fenix CLI
-[project.entry-points."fenix.plugins"]
+# Register the plugin with the active CLI brand
+[project.entry-points."{entry_point_group}"]
 {display_name} = "{module_name}.cli:plugin"
 
 [tool.hatch.build.targets.wheel]
@@ -86,12 +90,15 @@ def get_cli_module_template(
     include_examples: bool = True,
 ) -> str:
     """Generate cli.py content for a new plugin."""
+    brand = get_brand()
+    cli_display_name = brand.cli_display_name
+    entry_point_group = brand.plugin_entry_point
 
     if include_examples:
         return f'''"""
 {description}
 
-This plugin adds commands to the Fenix CLI under the '{display_name}' namespace.
+This plugin adds commands to the {cli_display_name} under the '{display_name}' namespace.
 """
 
 import typer
@@ -114,9 +121,9 @@ def hello(
 ):
     """Say hello to someone."""
     if formal:
-        console.print(f"[bold blue]Greetings, {{name}}![/bold blue]")
+        console.print(f"[bold blue]Greetings, {name}![/bold blue]")
     else:
-        console.print(f"[bold green]Hello, {{name}}![/bold green]")
+        console.print(f"[bold green]Hello, {name}![/bold green]")
     console.print(f"This is the [cyan]{display_name}[/cyan] plugin speaking!")
 
 
@@ -156,11 +163,11 @@ def config(
         console.print("  example_key: example_value")
         console.print("  another_key: another_value")
     elif get:
-        console.print(f"[cyan]Getting config value for: {{get}}[/cyan]")
+        console.print(f"[cyan]Getting config value for: {get}[/cyan]")
         # In a real plugin, this would read from actual config
         console.print(f"Value: example_value")
     elif set_key and value:
-        console.print(f"[cyan]Setting {{set_key}} = {{value}}[/cyan]")
+        console.print(f"[cyan]Setting {set_key} = {value}[/cyan]")
         # In a real plugin, this would save to actual config
         console.print("[green]Configuration updated successfully![/green]")
     else:
@@ -173,8 +180,8 @@ def config(
 def plugin():
     """Entry point for the plugin.
 
-    This function is called by Fenix CLI to get the Typer app for this plugin.
-    It's registered in pyproject.toml under [project.entry-points."fenix.plugins"].
+    This function is called by {cli_display_name} to get the Typer app for this plugin.
+    It's registered in pyproject.toml under [project.entry-points."{entry_point_group}"].
 
     Returns:
         typer.Typer: The Typer app with all plugin commands
@@ -185,7 +192,7 @@ def plugin():
         return f'''"""
 {description}
 
-This plugin adds commands to the Fenix CLI under the '{display_name}' namespace.
+This plugin adds commands to the {cli_display_name} under the '{display_name}' namespace.
 """
 
 import typer
@@ -203,7 +210,7 @@ app = typer.Typer(
 @app.command()
 def hello(name: str = typer.Argument("World", help="Name to greet")):
     """A simple hello command."""
-    console.print(f"[bold green]Hello, {{name}}![/bold green]")
+    console.print(f"[bold green]Hello, {name}![/bold green]")
     console.print(f"Welcome to the [cyan]{display_name}[/cyan] plugin!")
 
 
@@ -217,8 +224,8 @@ def hello(name: str = typer.Argument("World", help="Name to greet")):
 def plugin():
     """Entry point for the plugin.
 
-    This function is called by Fenix CLI to get the Typer app for this plugin.
-    It's registered in pyproject.toml under [project.entry-points."fenix.plugins"].
+    This function is called by {cli_display_name} to get the Typer app for this plugin.
+    It's registered in pyproject.toml under [project.entry-points."{entry_point_group}"].
 
     Returns:
         typer.Typer: The Typer app with all plugin commands
@@ -234,13 +241,17 @@ def get_readme_template(
     author_name: str = "Your Name",
 ) -> str:
     """Generate README.md content for a new plugin."""
+    brand = get_brand()
+    cli_name = brand.cli_name
+    cli_display_name = brand.cli_display_name
+
     return f'''# {plugin_name}
 
 {description}
 
 ## Overview
 
-This is a Fenix CLI plugin that adds commands under the `fenix {display_name}` namespace.
+This is a {cli_display_name} plugin that adds commands under the `{cli_name} {display_name}` namespace.
 
 ## Installation
 
@@ -258,27 +269,27 @@ This is a Fenix CLI plugin that adds commands under the `fenix {display_name}` n
 
 3. Verify installation:
    ```bash
-   fenix {display_name} --help
+   {cli_name} {display_name} --help
    ```
 
 ### From Source
 
 ```bash
-fenix plugins install /path/to/{plugin_name}
+{cli_name} plugins install /path/to/{plugin_name}
 ```
 
 ## Usage
 
-After installation, the plugin commands are available under `fenix {display_name}`:
+After installation, the plugin commands are available under `{cli_name} {display_name}`:
 
 ```bash
 # Show help
-fenix {display_name} --help
+{cli_name} {display_name} --help
 
 # Example commands (if using the template)
-fenix {display_name} hello "Your Name"
-fenix {display_name} status --verbose
-fenix {display_name} config --list
+{cli_name} {display_name} hello "Your Name"
+{cli_name} {display_name} status --verbose
+{cli_name} {display_name} config --list
 ```
 
 ## Development
@@ -303,17 +314,17 @@ Edit `src/{sanitize_plugin_name(plugin_name)}/cli.py` and add new commands using
 @app.command()
 def my_new_command(arg: str = typer.Argument(..., help="Command argument")):
     """Description of your new command."""
-    console.print(f"Executing command with: {{arg}}")
+    console.print(f"Executing command with: {arg}")
 ```
 
 ### Testing
 
 ```bash
 # Run the plugin directly
-fenix {display_name} hello "Test"
+{cli_name} {display_name} hello "Test"
 
 # Check available commands
-fenix {display_name} --help
+{cli_name} {display_name} --help
 ```
 
 ## Author
@@ -325,7 +336,7 @@ fenix {display_name} --help
 Proprietary
 
 ---
-Created with Fenix CLI Plugin Creator on {datetime.now().strftime("%Y-%m-%d")}
+Created with {cli_display_name} Plugin Creator on {datetime.now().strftime("%Y-%m-%d")}
 '''
 
 
@@ -363,6 +374,8 @@ def create_plugin_structure(
     Returns:
         Path to the created plugin directory
     """
+    brand = get_brand()
+
     # Create the main plugin directory
     plugin_dir = base_path / plugin_name
     if plugin_dir.exists():
@@ -382,6 +395,7 @@ def create_plugin_structure(
         description=description,
         author_name=author_name,
         author_email=author_email,
+        entry_point_group=brand.plugin_entry_point,
     )
     (plugin_dir / "pyproject.toml").write_text(pyproject_content)
 
@@ -411,8 +425,7 @@ def create_plugin_structure(
 
 
 def copy_plugin_for_installation(plugin_dir: Path, plugin_name: str) -> None:
-    """
-    Copy the plugin to the Fenix CLI's installed_plugins directory.
+    """Copy the plugin to the CLI's installed_plugins directory.
 
     This is similar to what the install command does but for newly created plugins.
     """

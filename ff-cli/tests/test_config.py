@@ -26,7 +26,13 @@ class TestPluginConfig:
         config = PluginConfig(version="1.0.0", source="pypi")
 
         data = config.to_dict()
-        assert data == {"version": "1.0.0", "source": "pypi", "installed_at": ""}
+        assert data == {
+            "version": "1.0.0",
+            "source": "pypi",
+            "installed_at": "",
+            "package_name": "",
+            "source_path": "",
+        }
 
 
 class TestFenixConfig:

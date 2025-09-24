@@ -1,13 +1,11 @@
-"""
-Plugin management commands for Fenix CLI.
-"""
+"""Plugin management commands for the branded CLI."""
 
 import subprocess
 import sys
-import tomllib
 from datetime import datetime
 from pathlib import Path
 
+import tomllib
 import typer
 from rich.console import Console
 from rich.panel import Panel
@@ -15,9 +13,12 @@ from rich.prompt import Confirm, Prompt
 from rich.table import Table
 
 from ff_cli import plugin_creator, plugin_registry
+from ff_cli.branding import get_brand
 
 console = Console()
-app = typer.Typer(help="Manage Fenix CLI plugins")
+brand = get_brand()
+
+app = typer.Typer(help=f"Manage {brand.cli_display_name} plugins")
 
 
 @app.command("create")
@@ -29,9 +30,12 @@ def create_plugin(
         True, "--install/--no-install", help="Install plugin after creation"
     ),
 ):
-    """Create a new Fenix CLI plugin with interactive setup."""
-    console.print("\n[bold cyan]🚀 Fenix CLI Plugin Creator[/bold cyan]\n")
-    console.print("Let's create a new plugin for the Fenix CLI!")
+    """Create a new branded CLI plugin with interactive setup."""
+    brand = get_brand()
+    cli_name = brand.cli_name
+
+    console.print(f"\n[bold cyan]🚀 {brand.cli_display_name} Plugin Creator[/bold cyan]\n")
+    console.print(f"Let's create a new plugin for the {brand.cli_display_name}!")
     console.print("I'll guide you through the setup process.\n")
 
     # Get plugin name
@@ -46,13 +50,14 @@ def create_plugin(
         display_name = f"ff-{display_name}"
 
     display_name = Prompt.ask(
-        f"[cyan]CLI command namespace[/cyan] (e.g., 'fenix [bold]{display_name}[/bold] --help')",
+        f"[cyan]CLI command namespace[/cyan] (e.g., '{cli_name} [bold]{display_name}[/bold] --help')",
         default=display_name,
     )
 
     # Get description
     description = Prompt.ask(
-        "[cyan]Plugin description[/cyan]", default=f"A Fenix CLI plugin for {name}"
+        "[cyan]Plugin description[/cyan]",
+        default=f"A {brand.cli_display_name} plugin for {name}",
     )
 
     # Get author information
@@ -82,7 +87,7 @@ def create_plugin(
     summary_table.add_column("Property", style="dim")
     summary_table.add_column("Value", style="cyan")
     summary_table.add_row("Package Name", name)
-    summary_table.add_row("CLI Namespace", f"fenix {display_name}")
+    summary_table.add_row("CLI Namespace", f"{cli_name} {display_name}")
     summary_table.add_row("Description", description)
     summary_table.add_row("Author", f"{author_name} <{author_email}>")
     summary_table.add_row("Location", str(plugin_path))
@@ -151,7 +156,7 @@ def create_plugin(
             except Exception as e:
                 console.print(f"[yellow]⚠️ Could not auto-install: {e}[/yellow]")
                 console.print(
-                    f"[dim]Install manually with: [cyan]fenix plugins install {created_path}[/cyan][/dim]"
+                    f"[dim]Install manually with: [cyan]{cli_name} plugins install {created_path}[/cyan][/dim]"
                 )
 
         # Show next steps
@@ -162,7 +167,7 @@ def create_plugin(
 [bold]Next steps:[/bold]
 1. Navigate to your plugin: [cyan]cd {created_path}[/cyan]
 2. Edit the CLI commands: [cyan]{created_path}/src/{module_name}/cli.py[/cyan]
-3. Test your plugin: [cyan]fenix {display_name} --help[/cyan]
+3. Test your plugin: [cyan]{cli_name} {display_name} --help[/cyan]
 4. Add more commands as needed!
 
 [dim]Your plugin is ready for development![/dim]""",
@@ -182,12 +187,15 @@ def create_plugin(
 @app.command("list")
 def list_plugins():
     """List all installed plugins."""
+    brand = get_brand()
+    cli_name = brand.cli_name
+
     # Get plugins from registry
     installed = plugin_registry.list_installed_plugins()
 
     if not installed:
         console.print("[yellow]No plugins installed[/yellow]")
-        console.print("\nInstall a plugin with: [cyan]fenix plugins install <path>[/cyan]")
+        console.print(f"\nInstall a plugin with: [cyan]{cli_name} plugins install <path>[/cyan]")
         return
 
     table = Table(title="Installed Plugins")
@@ -225,12 +233,15 @@ def list_plugins():
     # Show upgrade hint if any sources are missing
     if any(not info["source_exists"] for info in installed.values()):
         console.print("\n[yellow]⚠️ Some plugins have missing source paths.[/yellow]")
-        console.print("Reinstall them with: [cyan]fenix plugins install <new-path>[/cyan]")
+        console.print(f"Reinstall them with: [cyan]{cli_name} plugins install <new-path>[/cyan]")
 
 
 @app.command("info")
 def plugin_info(name: str = typer.Argument(..., help="Plugin name")):
     """Show detailed information about a plugin."""
+    brand = get_brand()
+    cli_name = brand.cli_name
+
     info = plugin_registry.get_plugin_info(name)
 
     if not info:
@@ -251,8 +262,8 @@ def plugin_info(name: str = typer.Argument(..., help="Plugin name")):
 
     if source_exists:
         console.print("\n[bold]Commands:[/bold]")
-        console.print(f"  Upgrade: [cyan]fenix plugins upgrade {name}[/cyan]")
-        console.print(f"  Remove: [cyan]fenix plugins remove {name}[/cyan]")
+        console.print(f"  Upgrade: [cyan]{cli_name} plugins upgrade {name}[/cyan]")
+        console.print(f"  Remove: [cyan]{cli_name} plugins remove {name}[/cyan]")
 
 
 @app.command("install")
@@ -260,12 +271,15 @@ def install_plugin(
     source: str = typer.Argument(..., help="Plugin source (local path or git URL)"),
     upgrade: bool = typer.Option(False, "--upgrade", "-U", help="Upgrade if already installed"),
 ):
-    """Install a Fenix CLI plugin.
+    """Install a CLI plugin.
 
     Examples:
-        fenix plugins install ./local-plugin
-        fenix plugins install /absolute/path/to/plugin
+        <cli> plugins install ./local-plugin
+        <cli> plugins install /absolute/path/to/plugin
     """
+    brand = get_brand()
+    cli_name = brand.cli_name
+
     source_path = Path(source).resolve()
 
     if not source_path.exists():
@@ -288,7 +302,9 @@ def install_plugin(
         # Check if already installed
         if plugin_registry.is_plugin_installed(plugin_name) and not upgrade:
             console.print(f"[yellow]Plugin '{plugin_name}' is already installed[/yellow]")
-            console.print(f"Use --upgrade to reinstall or 'fenix plugins upgrade {plugin_name}'")
+            console.print(
+                f"Use --upgrade to reinstall or '{cli_name} plugins upgrade {plugin_name}'"
+            )
             raise typer.Exit(1)
 
         # Install plugin in editable mode using uv/pip
@@ -321,7 +337,7 @@ def install_plugin(
 
         console.print(f"[green]✅ Plugin '{plugin_name}' installed successfully![/green]")
         console.print(f"Source: {source_path}")
-        console.print(f"\nTry: [cyan]fenix {plugin_name} --help[/cyan]")
+        console.print(f"\nTry: [cyan]{cli_name} {plugin_name} --help[/cyan]")
 
     except Exception as e:
         console.print(f"[red]Installation failed: {e}[/red]")
@@ -333,6 +349,9 @@ def upgrade_plugin(
     name: str = typer.Argument(..., help="Plugin name to upgrade"),
 ):
     """Force upgrade a plugin from its original source."""
+    brand = get_brand()
+    cli_name = brand.cli_name
+
     info = plugin_registry.get_plugin_info(name)
 
     if not info:
@@ -344,7 +363,7 @@ def upgrade_plugin(
     if not source_path.exists():
         console.print(f"[red]❌ Original source {source_path} no longer exists[/red]")
         console.print(
-            "Please reinstall from new location: [cyan]fenix plugins install <path>[/cyan]"
+            f"Please reinstall from new location: [cyan]{cli_name} plugins install <path>[/cyan]"
         )
         raise typer.Exit(1)
 
@@ -359,7 +378,7 @@ def remove_plugin(
     name: str = typer.Argument(..., help="Plugin name to remove"),
     yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation"),
 ):
-    """Remove a Fenix CLI plugin."""
+    """Remove a branded CLI plugin."""
 
     if not plugin_registry.is_plugin_installed(name):
         console.print(f"[red]Plugin '{name}' not found[/red]")
@@ -424,15 +443,18 @@ def _find_plugin_info(source_path: Path) -> tuple[str, str, str]:
 
             # Look for entry points
             entry_points = data.get("project", {}).get("entry-points", {})
-            fenix_plugins = entry_points.get("fenix.plugins", {})
+            brand = get_brand()
+            groups = [brand.plugin_entry_point]
+            if "fenix.plugins" not in groups:
+                groups.append("fenix.plugins")
 
-            if fenix_plugins:
-                # Get first plugin
-                plugin_name = list(fenix_plugins.keys())[0]
-                entry_point = fenix_plugins[plugin_name]
-                module_name = entry_point.split(":")[0].split(".")[0]
-
-                return plugin_name, module_name, entry_point
+            for group in groups:
+                group_plugins = entry_points.get(group, {})
+                if group_plugins:
+                    plugin_name = next(iter(group_plugins))
+                    entry_point = group_plugins[plugin_name]
+                    module_name = entry_point.split(":")[0].split(".")[0]
+                    return plugin_name, module_name, entry_point
 
     # Fallback: look for common patterns
     # Check for directories that look like plugins

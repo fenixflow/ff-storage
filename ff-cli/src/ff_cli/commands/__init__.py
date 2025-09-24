@@ -1,1 +1,1 @@
-"""Command modules for Fenix CLI."""
+"""Command modules for the branded CLI."""

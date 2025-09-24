@@ -1,0 +1,16 @@
+name: rabbitmq
+image: rabbitmq:3-management-alpine
+ports:
+  - "5672:5672"    # AMQP port
+  - "15672:15672"  # Management UI
+environment:
+  RABBITMQ_DEFAULT_USER: ${FENIX_RABBITMQ_USER:-admin}
+  RABBITMQ_DEFAULT_PASS: ${FENIX_RABBITMQ_PASS:-admin}
+volumes:
+  - fenix-rabbitmq-data:/var/lib/rabbitmq
+healthcheck:
+  test: ["CMD", "rabbitmq-diagnostics", "ping"]
+  interval: 10s
+  timeout: 5s
+  retries: 5
+restart: unless-stopped

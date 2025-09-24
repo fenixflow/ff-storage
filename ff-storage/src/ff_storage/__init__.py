@@ -2,7 +2,7 @@
 ff-storage: Database and file storage operations for Fenixflow applications.
 """
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 # Database exports
 from .db.postgres import Postgres, PostgresPool

@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "ff-cli"
-version = "0.1.4"
+version = "0.2.0"
 description = "Fenix-wide CLI with plugin architecture for project-specific commands"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -18,6 +18,8 @@ classifiers = [
     "Intended Audience :: Developers",
     "License :: Other/Proprietary License",
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
 ]
 dependencies = [
@@ -26,6 +28,12 @@ dependencies = [
     "tomli-w>=1.0.0",
     "shellingham>=1.5.0",  # For shell detection
     "httpx>=0.27.0",  # For downloading plugins
+    "pydantic>=2.0.0",  # For configuration validation
+    "pydantic-settings>=2.0.0",  # For settings management
+    "pyyaml>=6.0.0",  # For YAML service definitions
+    "toml>=0.10.2",  # For TOML branding config
+    "jinja2>=3.1.0",  # For template scaffolding
+    "ff-logger>=0.1.0",  # For logging
 ]
 
 [project.optional-dependencies]
@@ -58,11 +66,11 @@ include = [
 
 [tool.black]
 line-length = 100
-target-version = ["py312"]
+target-version = ["py310"]
 
 [tool.ruff]
 line-length = 100
-target-version = "py312"
+target-version = "py310"
 
 [tool.ruff.lint]
 select = [
@@ -79,8 +87,11 @@ ignore = [
     "B008",  # do not perform function call in argument defaults (needed for Typer)
 ]
 
+[tool.ruff.lint.per-file-ignores]
+"src/ff_cli/plugin_creator.py" = ["F821"]  # Ignore undefined names in template strings
+
 [tool.mypy]
-python_version = "3.12"
+python_version = "3.10"
 warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = true

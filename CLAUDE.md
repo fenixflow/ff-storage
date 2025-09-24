@@ -2,6 +2,15 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Important Git Commit Guidelines
+
+When creating git commits:
+- NEVER add Claude as an author or co-author
+- NEVER include "Generated with Claude Code" or similar attribution
+- Use the existing git user configuration (Ben <ben@fenixflow.com> for this repository)
+- Write commit messages as if written by the human developer
+- Follow conventional commit format without AI attribution
+
 ## Project Overview
 
 Fenix-Packages is a monorepo containing reusable Python packages for Fenixflow applications. The repository follows a modular architecture with each package providing specific functionality that can be independently installed and versioned.
@@ -24,9 +33,12 @@ Fenix-Packages is a monorepo containing reusable Python packages for Fenixflow a
 
 **ff-cli**: Unified CLI for the Fenix ecosystem with plugin architecture:
 - Single `fenix` command entry point for all tools
+- Optional dynamic branding system for custom configurations
 - Plugin architecture allowing projects to add namespaced commands
+- Service management for Docker containers (PostgreSQL, Redis, RabbitMQ, MinIO)
+- Enhanced status command with health checks and recommendations
 - Dynamic plugin discovery via Python entry points
-- Configuration management in `~/.fenix/config.toml`
+- Configuration management in `~/.fenix/config.toml` (or custom branded directory)
 - uvx compatible for easy execution without installation
 
 **ff-parsers**: Document parsing utilities for various formats:
@@ -68,18 +80,36 @@ Instance-based logging architecture:
 
 ### ff-cli Package Structure
 
-Plugin-based CLI architecture:
+Plugin-based CLI architecture with enhanced features:
 
 **Core Components** (`src/ff_cli/`):
 - `main.py`: Main CLI entry point with plugin loading
+- `branding.py`: Dynamic branding configuration system
 - `plugin_manager.py`: Dynamic plugin discovery and registration
-- `config.py`: Configuration management with TOML
+- `plugin_base.py`: Base classes for plugin development with health checks
+- `plugin_creator.py`: Interactive plugin scaffolding tool
+- `config.py`: Enhanced configuration management with TOML
 - `commands/plugins.py`: Built-in plugin management commands
+- `commands/services.py`: Docker service management commands
+- `commands/status.py`: Unified status command with health aggregation
+- `commands/branding.py`: Branding configuration commands
+
+**Service Management** (`src/ff_cli/services/`):
+- `manager.py`: Docker Compose-based service orchestration
+- `models.py`: Service configuration models
+- Default service definitions for PostgreSQL, Redis, RabbitMQ, MinIO
+
+**Utilities** (`src/ff_cli/utils/`):
+- `docker.py`: Docker and OrbStack integration utilities
+- `shell.py`: Shell execution and environment management
+- `editor.py`: Interactive file editing support
+- `scaffold.py`: Template-based file generation
 
 **Plugin System**:
 - Plugins are Python packages with Typer apps
 - Register via entry points in pyproject.toml
 - Loaded as namespaced subcommands (e.g., `fenix ff-agents status`)
+- Enhanced base classes for status reporting and health checks
 
 ### ff-parsers Package Structure
 
@@ -223,12 +253,28 @@ def process_data(data, logger=NullLogger):
 # Install the CLI
 uv pip install git+https://gitlab.com/fenixflow/fenix-packages.git#subdirectory=ff-cli
 
+# Configure custom branding (optional)
+fenix branding configure
+fenix branding show
+
+# Manage services
+fenix services init
+fenix services up postgres
+fenix services list
+fenix services down --all
+
 # Install a plugin
 fenix plugins install git+https://gitlab.com/fenixflow/fenix-agents.git
+fenix plugins list
+fenix plugins create my-plugin
 
 # Use plugin commands
 fenix ff-agents status
 fenix ff-agents run workflow
+
+# Check overall system status
+fenix status
+fenix status --json
 
 # Run with uvx (no installation)
 uvx --from git+https://gitlab.com/fenixflow/fenix-packages.git#subdirectory=ff-cli fenix --help
@@ -303,7 +349,7 @@ uvx --from git+https://gitlab.com/fenixflow/fenix-packages.git@main#subdirectory
 
 ## Python Version Requirement
 
-All packages in this repository require **Python 3.12+** for stability and modern features.
+All packages in this repository require **Python 3.10+** for stability and modern features.
 
 ## CI/CD Pipeline
 
