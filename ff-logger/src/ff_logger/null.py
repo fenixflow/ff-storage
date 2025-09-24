@@ -30,7 +30,7 @@ class NullLogger:
     def __init__(
         self,
         name: str = "null",
-        level: Any = None,
+        level: int | str | None = None,
         context: dict[str, Any] | None = None,
         *args,
         **kwargs,

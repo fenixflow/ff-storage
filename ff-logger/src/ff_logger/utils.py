@@ -2,6 +2,32 @@
 Utility functions and constants for ff-logger.
 """
 
+import logging
+
+
+def normalize_level(level: int | str) -> int:
+    """
+    Convert string or int level to logging constant.
+
+    Args:
+        level: Log level as int or string (case-insensitive)
+
+    Returns:
+        Integer logging level constant
+    """
+    if isinstance(level, str):
+        level_map = {
+            "DEBUG": logging.DEBUG,
+            "INFO": logging.INFO,
+            "WARNING": logging.WARNING,
+            "WARN": logging.WARNING,  # Common alias
+            "ERROR": logging.ERROR,
+            "CRITICAL": logging.CRITICAL,
+        }
+        return level_map.get(level.upper(), logging.INFO)
+    return level
+
+
 # Standard logging fields to exclude from extra data when displaying
 # These are reserved by Python's logging module and cannot be overridden
 LOGGING_INTERNAL_FIELDS = {

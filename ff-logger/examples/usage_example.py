@@ -4,8 +4,6 @@ Example usage of ff-logger package showing different logger types
 and the scoped, instance-based pattern.
 """
 
-import logging
-
 from ff_logger import (
     ConsoleLogger,
     FileLogger,
@@ -13,17 +11,20 @@ from ff_logger import (
     NullLogger,
 )
 
+# Note: With v0.3.0+, you don't need to import logging for basic use!
+# You can use string levels like "INFO", "DEBUG", etc.
+
 
 def main():
     print("=" * 60)
     print("FF-LOGGER USAGE EXAMPLES")
     print("=" * 60)
 
-    # Example 1: Console Logger with colors
-    print("\n1. ConsoleLogger with colors and context:")
+    # Example 1: Console Logger with string levels (new in v0.3.0)
+    print("\n1. ConsoleLogger with string levels and context:")
     console_logger = ConsoleLogger(
         name="app.main",
-        level=logging.INFO,
+        level="INFO",  # String levels are now supported! (v0.3.0+)
         context={"service": "example-app", "environment": "development"},
     )
 
@@ -31,20 +32,24 @@ def main():
     console_logger.info("Processing request", request_id="req-123", user_id=42)
     console_logger.warning("Slow response time", duration=1500, endpoint="/api/users")
 
-    # Example 2: Binding context for request-scoped logging
-    print("\n2. Bound logger for request scope:")
-    request_logger = console_logger.bind(
-        request_id="req-456", user_id=100, ip_address="192.168.1.1"
-    )
+    # Example 2: Binding context (simplified in v0.3.0)
+    print("\n2. Context binding (now modifies in place):")
+    # bind() now modifies the logger in place and returns self for chaining
+    console_logger.bind(request_id="req-456", user_id=100, ip_address="192.168.1.1")
 
-    request_logger.info("Starting request processing")
-    request_logger.info("Database query executed", query_time=25)
-    request_logger.info("Request completed", status_code=200)
+    console_logger.info("Starting request processing")
+    console_logger.info("Database query executed", query_time=25)
+    console_logger.info("Request completed", status_code=200)
 
-    # Example 3: JSON Logger for structured logging
-    print("\n3. JSONLogger for structured output:")
+    # You can also chain bind() calls
+    console_logger.bind(session_id="xyz-789").info("Session established")
+
+    # Example 3: JSON Logger with case-insensitive string levels
+    print("\n3. JSONLogger with case-insensitive levels:")
     json_logger = JSONLogger(
-        name="app.api", level=logging.DEBUG, context={"service": "api", "version": "1.0.0"}
+        name="app.api",
+        level="debug",  # Case-insensitive! "debug" == "DEBUG"
+        context={"service": "api", "version": "1.0.0"},
     )
 
     json_logger.debug("Debug information", component="auth", action="validate_token")
@@ -74,12 +79,12 @@ def main():
     NullLogger.info("This message goes nowhere")
     NullLogger.error("Neither does this error")
 
-    # Example 5: File Logger with rotation
-    print("\n5. FileLogger with rotation:")
+    # Example 5: File Logger with string levels
+    print("\n5. FileLogger with string levels:")
     file_logger = FileLogger(
         name="app.file",
         filename="/tmp/example_app.log",
-        level=logging.INFO,
+        level="WARNING",  # String level
         context={"service": "file-example"},
         rotation_type="size",
         max_bytes=1024 * 1024,  # 1MB
@@ -96,8 +101,27 @@ def main():
     except ZeroDivisionError:
         console_logger.exception("Math error occurred", operation="division")
 
+    # Example 7: Flexible level formats (new in v0.3.0)
+    print("\n7. Different ways to specify log levels:")
+
+    # All of these are equivalent:
+    ConsoleLogger("test1", level="INFO")
+    ConsoleLogger("test2", level="info")  # Case-insensitive
+    ConsoleLogger("test3", level=20)  # Numeric value
+
+    # WARN is an alias for WARNING
+    logger4 = ConsoleLogger("test4", level="WARN")
+    logger4.warning("This works with WARN level")
+
+    print("  All loggers created successfully!")
+
     print("\n" + "=" * 60)
     print("Examples completed!")
+    print("\nNew in v0.3.0:")
+    print('  - String log levels ("INFO", "DEBUG", etc.)')
+    print('  - Case-insensitive levels ("info" == "INFO")')
+    print("  - Simplified bind() that modifies in place")
+    print("  - Context validation with helpful errors")
 
 
 if __name__ == "__main__":

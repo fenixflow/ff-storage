@@ -103,7 +103,7 @@ class JSONLogger(ScopedLogger):
     def __init__(
         self,
         name: str,
-        level: int = logging.DEBUG,
+        level: int | str = "DEBUG",
         context: dict[str, Any] | None = None,
         stream=None,
         show_hostname: bool = False,
@@ -114,7 +114,7 @@ class JSONLogger(ScopedLogger):
 
         Args:
             name: Logger name
-            level: Logging level
+            level: Logging level as int or string (default: "DEBUG")
             context: Permanent context fields
             stream: Output stream (default: sys.stdout)
             show_hostname: Whether to include hostname
@@ -125,7 +125,7 @@ class JSONLogger(ScopedLogger):
         # Set up the stream handler
         stream = stream or sys.stdout
         handler = logging.StreamHandler(stream)
-        handler.setLevel(level)
+        # No need to set handler level - inherits from logger
 
         # Set up the JSON formatter
         formatter = JSONFormatter(show_hostname=show_hostname, include_timestamp=include_timestamp)
@@ -134,31 +134,9 @@ class JSONLogger(ScopedLogger):
         # Add handler to logger
         self.logger.addHandler(handler)
 
-        # Store configuration for bind()
+        # Store configuration for local use
         self.stream = stream
         self.show_hostname = show_hostname
         self.include_timestamp = include_timestamp
 
-    def bind(self, **kwargs) -> "JSONLogger":
-        """
-        Create a new logger instance with additional context.
-
-        Args:
-            **kwargs: Additional context fields to bind
-
-        Returns:
-            A new JSONLogger instance with merged context
-        """
-        new_context = {**self.context, **kwargs}
-
-        # Create new instance with same configuration
-        new_logger = JSONLogger(
-            name=f"{self.name}.bound",
-            level=self.level,
-            context=new_context,
-            stream=self.stream,
-            show_hostname=self.show_hostname,
-            include_timestamp=self.include_timestamp,
-        )
-
-        return new_logger
+    # bind() method inherited from ScopedLogger base class

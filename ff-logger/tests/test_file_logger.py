@@ -160,7 +160,7 @@ def test_file_logger_get_current_log_file():
 
 
 def test_file_logger_bind():
-    """Test bind() creates new logger with merged context."""
+    """Test bind() updates context in place."""
     with tempfile.TemporaryDirectory() as tmpdir:
         log_file = os.path.join(tmpdir, "test_bind.log")
 
@@ -172,10 +172,12 @@ def test_file_logger_bind():
             rotation_type="none",
         )
 
-        # Bind creates a new file with .bound suffix
-        request_logger = logger.bind(request_id="abc123")
+        # Bind updates context in place
+        result = logger.bind(request_id="abc123")
 
-        # The bound logger should have a different filename
-        bound_file = request_logger.get_current_log_file()
-        assert bound_file != log_file
-        assert "bound" in bound_file
+        # Should return self
+        assert result is logger
+        # Context should be updated
+        assert logger.context == {"service": "api", "request_id": "abc123"}
+        # Filename should remain the same
+        assert logger.get_current_log_file() == log_file

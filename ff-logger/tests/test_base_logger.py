@@ -5,6 +5,7 @@ Tests for ScopedLogger base class.
 import io
 import logging
 
+import pytest
 from ff_logger import ScopedLogger
 
 
@@ -38,29 +39,30 @@ def test_scoped_logger_get_logger():
 
 
 def test_scoped_logger_bind():
-    """Test bind() creates new logger with merged context."""
+    """Test bind() updates context in place."""
     logger = ScopedLogger(name="test.bind", context={"service": "api"})
 
-    bound = logger.bind(request_id="abc123", user_id=42)
+    result = logger.bind(request_id="abc123", user_id=42)
 
-    assert isinstance(bound, ScopedLogger)
-    assert bound.name == "test.bind.bound"
-    assert bound.context == {"service": "api", "request_id": "abc123", "user_id": 42}
+    assert result is logger  # Returns self
+    assert logger.context == {"service": "api", "request_id": "abc123", "user_id": 42}
 
 
-def test_scoped_logger_bind_preserves_handlers():
-    """Test bind() preserves handlers from parent logger."""
-    logger = ScopedLogger(name="test.handlers")
+def test_scoped_logger_bind_validates_kwargs():
+    """Test bind() validates kwargs for reserved fields."""
+    logger = ScopedLogger(name="test.validate")
 
-    # Add a test handler
-    handler = logging.StreamHandler(io.StringIO())
-    logger.logger.addHandler(handler)
+    # Should work with valid fields
+    logger.bind(request_id="123", user_id=456)
 
-    bound = logger.bind(extra="value")
+    # Should reject reserved fields
 
-    # Bound logger should have the same handler
-    assert len(bound.logger.handlers) == 1
-    assert bound.logger.handlers[0] == handler
+    with pytest.raises(ValueError, match="Cannot bind reserved field"):
+        logger.bind(name="test")  # 'name' is reserved
+
+    # Should reject non-JSON-serializable values
+    with pytest.raises(TypeError, match="must be JSON-serializable"):
+        logger.bind(obj=object())  # object() is not JSON-serializable
 
 
 def test_scoped_logger_clears_existing_handlers():

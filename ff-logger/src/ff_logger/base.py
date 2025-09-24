@@ -5,6 +5,8 @@ Base ScopedLogger class for ff-logger.
 import logging
 from typing import Any
 
+from .utils import normalize_level
+
 
 class ScopedLogger:
     """
@@ -14,23 +16,23 @@ class ScopedLogger:
     """
 
     def __init__(
-        self, name: str, level: int = logging.DEBUG, context: dict[str, Any] | None = None
+        self, name: str, level: int | str = "DEBUG", context: dict[str, Any] | None = None
     ):
         """
         Initialize the scoped logger.
 
         Args:
             name: A unique name for the logger (e.g., the scope of the logger)
-            level: The logging level (default: DEBUG)
+            level: The logging level as int or string (default: "DEBUG")
             context: Permanent context fields to include in every log message
         """
         self.name = name
-        self.level = level
+        self.level = normalize_level(level)  # Normalize and store as int
         self.context = context or {}
 
         # Create a unique logger instance
         self.logger = logging.getLogger(name)
-        self.logger.setLevel(level)
+        self.logger.setLevel(self.level)
 
         # Clear any pre-existing handlers for this logger to avoid duplicates
         if self.logger.hasHandlers():
@@ -50,26 +52,34 @@ class ScopedLogger:
 
     def bind(self, **kwargs) -> "ScopedLogger":
         """
-        Create a new logger instance with additional context.
+        Add additional context fields to this logger instance.
 
         Args:
             **kwargs: Additional context fields to bind
 
         Returns:
-            A new ScopedLogger instance with merged context
+            Self for method chaining
         """
-        new_context = {**self.context, **kwargs}
+        from .utils import RESERVED_FIELDS
 
-        # Create a new instance of the same class
-        new_logger = self.__class__(
-            name=f"{self.name}.bound", level=self.level, context=new_context
-        )
+        # Validate kwargs
+        for key, value in kwargs.items():
+            # Check for reserved fields that would conflict with LogRecord
+            if key in RESERVED_FIELDS:
+                raise ValueError(
+                    f"Cannot bind reserved field '{key}'. "
+                    f"Reserved fields: {', '.join(sorted(RESERVED_FIELDS))}"
+                )
 
-        # Copy handlers from the current logger
-        for handler in self.logger.handlers:
-            new_logger.logger.addHandler(handler)
+            # Ensure values are JSON-serializable types
+            if value is not None and not isinstance(value, str | int | float | bool | list | dict):
+                raise TypeError(
+                    f"Context value for '{key}' must be JSON-serializable. "
+                    f"Got type: {type(value).__name__}"
+                )
 
-        return new_logger
+        self.context.update(kwargs)
+        return self
 
     def _log_with_context(self, level: int, message: str, exc_info: bool = False, **kwargs):
         """
