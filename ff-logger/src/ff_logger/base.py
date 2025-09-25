@@ -81,7 +81,14 @@ class ScopedLogger:
         self.context.update(kwargs)
         return self
 
-    def _log_with_context(self, level: int, message: str, exc_info: bool = False, **kwargs):
+    def _log_with_context(
+        self,
+        level: int,
+        message: str,
+        *args: Any,
+        exc_info: Any = False,
+        **kwargs,
+    ):
         """
         Internal method to log with context.
 
@@ -109,9 +116,16 @@ class ScopedLogger:
 
         # Use stacklevel=3 to get the correct line number from calling code
         # Stack: calling_code -> logger.info() -> _log_with_context() -> logger.log()
-        self.logger.log(level, message, extra=safe_extra, exc_info=exc_info, stacklevel=3)
+        self.logger.log(
+            level,
+            message,
+            *args,
+            extra=safe_extra,
+            exc_info=exc_info,
+            stacklevel=3,
+        )
 
-    def debug(self, message: str, **kwargs):
+    def debug(self, message: str, *args, **kwargs):
         """
         Log a debug message.
 
@@ -119,9 +133,9 @@ class ScopedLogger:
             message: The log message
             **kwargs: Additional context fields
         """
-        self._log_with_context(logging.DEBUG, message, **kwargs)
+        self._log_with_context(logging.DEBUG, message, *args, **kwargs)
 
-    def info(self, message: str, **kwargs):
+    def info(self, message: str, *args, **kwargs):
         """
         Log an info message.
 
@@ -129,9 +143,9 @@ class ScopedLogger:
             message: The log message
             **kwargs: Additional context fields
         """
-        self._log_with_context(logging.INFO, message, **kwargs)
+        self._log_with_context(logging.INFO, message, *args, **kwargs)
 
-    def warning(self, message: str, **kwargs):
+    def warning(self, message: str, *args, **kwargs):
         """
         Log a warning message.
 
@@ -139,9 +153,9 @@ class ScopedLogger:
             message: The log message
             **kwargs: Additional context fields
         """
-        self._log_with_context(logging.WARNING, message, **kwargs)
+        self._log_with_context(logging.WARNING, message, *args, **kwargs)
 
-    def error(self, message: str, **kwargs):
+    def error(self, message: str, *args, **kwargs):
         """
         Log an error message.
 
@@ -149,9 +163,9 @@ class ScopedLogger:
             message: The log message
             **kwargs: Additional context fields
         """
-        self._log_with_context(logging.ERROR, message, **kwargs)
+        self._log_with_context(logging.ERROR, message, *args, **kwargs)
 
-    def critical(self, message: str, **kwargs):
+    def critical(self, message: str, *args, **kwargs):
         """
         Log a critical message.
 
@@ -159,9 +173,9 @@ class ScopedLogger:
             message: The log message
             **kwargs: Additional context fields
         """
-        self._log_with_context(logging.CRITICAL, message, **kwargs)
+        self._log_with_context(logging.CRITICAL, message, *args, **kwargs)
 
-    def exception(self, message: str, **kwargs):
+    def exception(self, message: str, *args, **kwargs):
         """
         Log an exception with traceback.
 
@@ -169,4 +183,4 @@ class ScopedLogger:
             message: The log message
             **kwargs: Additional context fields
         """
-        self._log_with_context(logging.ERROR, message, exc_info=True, **kwargs)
+        self._log_with_context(logging.ERROR, message, *args, exc_info=True, **kwargs)
