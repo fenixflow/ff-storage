@@ -112,6 +112,21 @@ def test_scoped_logger_log_methods():
     assert "CRITICAL: Critical message" in output
 
 
+def test_scoped_logger_supports_format_args():
+    """Ensure positional args are forwarded for lazy string formatting."""
+    stream = io.StringIO()
+    logger = ScopedLogger(name="test.formatting", level=logging.ERROR)
+
+    handler = logging.StreamHandler(stream)
+    handler.setFormatter(logging.Formatter("%(levelname)s: %(message)s"))
+    logger.logger.addHandler(handler)
+
+    logger.error("Formatted %s %s", "message", 123)
+
+    output = stream.getvalue()
+    assert "ERROR: Formatted message 123" in output
+
+
 def test_scoped_logger_exception():
     """Test exception logging."""
     stream = io.StringIO()
