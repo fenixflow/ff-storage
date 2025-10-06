@@ -4,7 +4,7 @@
 [![Python Support](https://img.shields.io/pypi/pyversions/ff-storage.svg)](https://pypi.org/project/ff-storage/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-A comprehensive storage package for Fenixflow applications, providing database connections with pooling, object storage abstractions, migration management, and model utilities. Supports PostgreSQL, MySQL, local filesystem storage, and S3-compatible services.
+A comprehensive storage package for Fenixflow applications, providing database connections with pooling, object storage abstractions, migration management, and model utilities. Supports PostgreSQL, MySQL, Microsoft SQL Server, local filesystem storage, and S3-compatible services.
 
 Created by **Ben Moag** at **[Fenixflow](https://fenixflow.com)**
 
@@ -46,8 +46,8 @@ db.close_connection()
 ## Features
 
 ### Database Operations
-- **PostgreSQL & MySQL Support**: Connection pooling for production use
-- **Consistent API**: Same interface for both database types
+- **Multi-Database Support**: PostgreSQL, MySQL, and Microsoft SQL Server with connection pooling
+- **Consistent API**: Same interface across all database types
 - **Transaction Management**: Built-in support for transactions with rollback
 - **Batch Operations**: Execute many queries efficiently
 - **Query Builder**: SQL query construction utilities
@@ -126,6 +126,40 @@ db = MySQLPool(
 db.connect()
 results = db.read_query("SELECT * FROM documents WHERE status = %s", {"status": "active"})
 db.close_connection()
+```
+
+#### Microsoft SQL Server with Connection Pooling
+```python
+from ff_storage import SQLServerPool
+
+# Initialize pool
+db = SQLServerPool(
+    dbname="fenix_db",
+    user="sa",
+    password="YourPassword123",
+    host="localhost",
+    port=1433,
+    driver="ODBC Driver 18 for SQL Server",
+    pool_size=10
+)
+
+# Connect and execute queries
+db.connect()
+try:
+    # Read query
+    results = db.read_query("SELECT * FROM documents WHERE status = ?", {"status": "active"})
+
+    # Execute with OUTPUT clause
+    new_id = db.execute_query(
+        "INSERT INTO documents (title) OUTPUT INSERTED.id VALUES (?)",
+        {"title": "New Document"}
+    )
+
+    # Check table existence
+    if db.table_exists("users", schema="dbo"):
+        columns = db.get_table_columns("users", schema="dbo")
+finally:
+    db.close_connection()
 ```
 
 ### Object Storage
