@@ -3,11 +3,11 @@ Base model classes for database entities.
 Provides dataclass-based models with UUID primary keys and timestamps.
 """
 
-from dataclasses import dataclass, field, asdict
-from datetime import datetime, timezone
-from typing import Optional, Dict, Any, List, ClassVar
-from uuid import UUID, uuid4
 import json
+from dataclasses import asdict, dataclass, field
+from datetime import datetime, timezone
+from typing import Any, ClassVar, Dict, List, Optional
+from uuid import UUID, uuid4
 
 
 @dataclass

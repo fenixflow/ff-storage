@@ -5,9 +5,9 @@ Provides version tracking and execution of SQL migration files.
 
 import hashlib
 import logging
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import List, Optional, Tuple
-from datetime import datetime, timezone
 
 
 class MigrationManager:

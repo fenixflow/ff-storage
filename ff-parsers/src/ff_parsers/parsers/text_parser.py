@@ -2,14 +2,15 @@
 Plain text file parser implementation.
 """
 
+from datetime import datetime
 from pathlib import Path
 from typing import Optional, Union
-from datetime import datetime
+
 import chardet
 
 from ..base import BaseParser, ParseOptions
-from ..models import ExtractedDocument, ExtractedText, DocumentMetadata
 from ..exceptions import ExtractionError
+from ..models import DocumentMetadata, ExtractedDocument, ExtractedText
 from ..utils.cleaning import clean_text
 
 

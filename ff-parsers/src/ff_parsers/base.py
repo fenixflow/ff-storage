@@ -2,15 +2,15 @@
 Base parser interface for all document parsers.
 """
 
+import hashlib
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Optional, Union
-import hashlib
-from datetime import datetime
 
-from .models import ExtractedDocument, DocumentMetadata
 from .exceptions import FileNotFoundError, ParserError
+from .models import DocumentMetadata, ExtractedDocument
 
 
 @dataclass

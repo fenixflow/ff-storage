@@ -2,16 +2,17 @@
 Excel parser implementation using openpyxl.
 """
 
+import csv
 from pathlib import Path
-from typing import Optional, Union, List
+from typing import List, Optional, Union
+
+import chardet
 import openpyxl
 from openpyxl.utils import get_column_letter
-import csv
-import chardet
 
 from ..base import BaseParser, ParseOptions
-from ..models import ExtractedDocument, ExtractedText, ExtractedTable, DocumentMetadata
-from ..exceptions import ExtractionError, CorruptedFileError
+from ..exceptions import CorruptedFileError, ExtractionError
+from ..models import DocumentMetadata, ExtractedDocument, ExtractedTable, ExtractedText
 from ..utils.cleaning import clean_text, remove_extra_spaces_in_table
 
 

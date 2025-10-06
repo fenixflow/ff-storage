@@ -4,9 +4,11 @@ Provides both direct connections and connection pooling.
 """
 
 from dataclasses import dataclass
-from typing import Optional, Dict, Any, List
+from typing import Any, Dict, List, Optional
+
 import mysql.connector
-from mysql.connector import pooling, Error
+from mysql.connector import Error, pooling
+
 from .sql import SQL
 
 

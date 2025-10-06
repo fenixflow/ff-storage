@@ -4,6 +4,7 @@ Test PostgreSQL parameter handling to ensure no 'dict is not a sequence' errors.
 
 import unittest
 from unittest.mock import MagicMock
+
 from ff_storage.db.postgres import PostgresBase
 
 

@@ -3,12 +3,12 @@ Factory for creating appropriate parsers based on file type.
 """
 
 from pathlib import Path
-from typing import Union, Dict, Type
+from typing import Dict, Type, Union
 
 from .base import BaseParser
-from .parsers import PDFParser, ExcelParser, EmailParser, DocxParser, TextParser
 from .exceptions import UnsupportedFormatError
-from .utils.validation import get_mime_type, detect_file_type
+from .parsers import DocxParser, EmailParser, ExcelParser, PDFParser, TextParser
+from .utils.validation import detect_file_type, get_mime_type
 
 
 class ParserFactory:

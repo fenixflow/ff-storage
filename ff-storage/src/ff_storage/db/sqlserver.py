@@ -4,8 +4,10 @@ Provides both direct connections and connection pooling for Microsoft SQL Server
 """
 
 from dataclasses import dataclass
-from typing import Optional, Dict, Any, List
+from typing import Any, Dict, List, Optional
+
 import pyodbc
+
 from .sql import SQL
 
 

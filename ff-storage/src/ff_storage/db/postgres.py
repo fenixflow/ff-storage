@@ -4,9 +4,11 @@ Provides both direct connections and connection pooling.
 """
 
 from dataclasses import dataclass
-from typing import Optional, Dict, Any, List
+from typing import Any, Dict, List, Optional
+
 import psycopg2
-from psycopg2 import pool, OperationalError, DatabaseError
+from psycopg2 import DatabaseError, OperationalError, pool
+
 from .sql import SQL
 
 

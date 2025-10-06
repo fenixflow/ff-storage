@@ -2,21 +2,22 @@
 PDF parser implementation using pdfplumber.
 """
 
-from pathlib import Path
-from typing import Optional, Union, List
 from datetime import datetime
+from pathlib import Path
+from typing import List, Optional, Union
+
 import pdfplumber
 import pytesseract
 
 from ..base import BaseParser, ParseOptions
-from ..models import (
-    ExtractedDocument,
-    ExtractedText,
-    ExtractedTable,
-    ExtractedImage,
-    DocumentMetadata,
-)
 from ..exceptions import CorruptedFileError, OCRError
+from ..models import (
+    DocumentMetadata,
+    ExtractedDocument,
+    ExtractedImage,
+    ExtractedTable,
+    ExtractedText,
+)
 from ..utils.cleaning import clean_text, remove_extra_spaces_in_table
 
 

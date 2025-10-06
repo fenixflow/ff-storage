@@ -3,9 +3,11 @@ S3 and S3-compatible storage implementation of the ObjectStorage interface.
 Supports AWS S3, MinIO, and other S3-compatible services.
 """
 
-from typing import Optional, Dict, List, AsyncIterator, Any
+from typing import Any, AsyncIterator, Dict, List, Optional
+
 import aioboto3
 from botocore.exceptions import ClientError
+
 from .base import ObjectStorage
 
 

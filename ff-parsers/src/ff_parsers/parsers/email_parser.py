@@ -3,15 +3,15 @@ Email parser implementation for .eml and .msg files.
 """
 
 import email
-from email import policy
-from pathlib import Path
-from typing import Optional, Union, List
 import re
+from email import policy
 from html import unescape
+from pathlib import Path
+from typing import List, Optional, Union
 
 from ..base import BaseParser, ParseOptions
-from ..models import ExtractedDocument, ExtractedText, DocumentMetadata, EmailMetadata
 from ..exceptions import CorruptedFileError
+from ..models import DocumentMetadata, EmailMetadata, ExtractedDocument, ExtractedText
 from ..utils.cleaning import clean_text
 
 

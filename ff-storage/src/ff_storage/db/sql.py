@@ -3,9 +3,9 @@ Base SQL class providing flexible interface for database operations.
 Based on ff_connections patterns for maximum flexibility.
 """
 
-from dataclasses import dataclass, field
-from typing import Optional, List, Dict, Any
 import logging
+from dataclasses import dataclass, field
+from typing import Any, Dict, List, Optional
 
 
 @dataclass

@@ -2,10 +2,11 @@
 Pytest configuration and fixtures for ff-parsers tests.
 """
 
-import pytest
-from pathlib import Path
-import tempfile
 import shutil
+import tempfile
+from pathlib import Path
+
+import pytest
 
 
 @pytest.fixture
@@ -26,7 +27,7 @@ And some content for testing.
 
 This is a second paragraph.
 With more text content."""
-    
+
     file_path.write_text(content)
     return file_path
 
@@ -39,7 +40,7 @@ def sample_csv_file(temp_dir):
 John Doe,30,New York
 Jane Smith,25,Los Angeles
 Bob Johnson,35,Chicago"""
-    
+
     file_path.write_text(content)
     return file_path
 
@@ -61,7 +62,7 @@ This is a **sample** markdown file.
 ## Section 2
 
 Some more text here."""
-    
+
     file_path.write_text(content)
     return file_path
 

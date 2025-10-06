@@ -2,9 +2,9 @@
 File validation utilities for ff-parsers.
 """
 
+import mimetypes
 from pathlib import Path
 from typing import Optional, Union
-import mimetypes
 
 # Try to import magic, but make it optional
 try:

@@ -3,21 +3,22 @@ Word document parser implementation using python-docx.
 """
 
 from pathlib import Path
-from typing import Optional, Union, List
+from typing import List, Optional, Union
+
 import docx
 from docx.document import Document
 from docx.table import Table
 from docx.text.paragraph import Paragraph
 
 from ..base import BaseParser, ParseOptions
-from ..models import (
-    ExtractedDocument,
-    ExtractedText,
-    ExtractedTable,
-    ExtractedImage,
-    DocumentMetadata,
-)
 from ..exceptions import CorruptedFileError
+from ..models import (
+    DocumentMetadata,
+    ExtractedDocument,
+    ExtractedImage,
+    ExtractedTable,
+    ExtractedText,
+)
 from ..utils.cleaning import clean_text, remove_extra_spaces_in_table
 
 
@@ -174,8 +175,8 @@ class DocxParser(BaseParser):
         """
         Yield each paragraph and table in the document in order.
         """
-        from docx.oxml.text.paragraph import CT_P
         from docx.oxml.table import CT_Tbl
+        from docx.oxml.text.paragraph import CT_P
         from docx.table import Table
         from docx.text.paragraph import Paragraph
 
