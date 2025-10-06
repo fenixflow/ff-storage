@@ -6,6 +6,7 @@ import io
 import logging
 
 import pytest
+
 from ff_logger import ScopedLogger
 
 
@@ -55,10 +56,9 @@ def test_scoped_logger_bind_validates_kwargs():
     # Should work with valid fields
     logger.bind(request_id="123", user_id=456)
 
-    # Should reject reserved fields
-
+    # Should reject reserved fields (v0.4.0: level, message, time, logger, file, line, func)
     with pytest.raises(ValueError, match="Cannot bind reserved field"):
-        logger.bind(name="test")  # 'name' is reserved
+        logger.bind(level="test")  # 'level' is reserved
 
     # Should reject non-JSON-serializable values
     with pytest.raises(TypeError, match="must be JSON-serializable"):

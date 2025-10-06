@@ -2,7 +2,15 @@
 Utility functions and constants for ff-logger.
 """
 
+import inspect
+import json
 import logging
+from datetime import date, datetime
+from decimal import Decimal
+from enum import Enum
+from pathlib import Path
+from typing import Any
+from uuid import UUID
 
 
 def normalize_level(level: int | str) -> int:
@@ -57,28 +65,114 @@ LOGGING_INTERNAL_FIELDS = {
     "lineno",
 }
 
-# Fields that might conflict with LogRecord attributes
-# These will be prefixed with 'x_' to avoid conflicts
-RESERVED_FIELDS = {
-    "module",
-    "name",
-    "msg",
-    "args",
-    "created",
-    "filename",
-    "funcName",
-    "id",
-    "levelname",
-    "levelno",
-    "lineno",
-    "message",
-    "pathname",
-    "process",
-    "processName",
-    "relativeCreated",
-    "thread",
-    "threadName",
-}
+# Core reserved fields that will be prefixed with 'x_' to avoid conflicts
+RESERVED_FIELDS = ("level", "message", "time", "logger", "file", "line", "func")
+
+
+def _json_default(o: Any) -> Any:
+    """
+    JSON encoder default function for non-standard types.
+
+    Args:
+        o: Object to encode
+
+    Returns:
+        JSON-serializable representation of the object
+    """
+    if isinstance(o, datetime | date):
+        return o.isoformat()
+    if isinstance(o, Enum):
+        return o.value
+    if isinstance(o, UUID | Path):
+        return str(o)
+    if isinstance(o, Decimal):
+        return float(o)
+    try:
+        return str(o)
+    except Exception:
+        return repr(o)
+
+
+def _safe_json_dumps(obj: Any) -> str:
+    """
+    Safely dump object to JSON string, never raising exceptions.
+
+    Args:
+        obj: Object to serialize
+
+    Returns:
+        JSON string, or fallback error representation if serialization fails
+    """
+    try:
+        return json.dumps(obj, ensure_ascii=False, allow_nan=False, default=_json_default)
+    except Exception as e:
+        return json.dumps({"_ff_json_fallback": True, "error": repr(e), "payload": repr(obj)})
+
+
+def _resolve(v: Any) -> Any:
+    """
+    Resolve lazy values by calling callables.
+
+    Args:
+        v: Value to resolve (callable or non-callable)
+
+    Returns:
+        Resolved value
+    """
+    return v() if callable(v) else v
+
+
+def _format(msg: str, args: tuple) -> str:
+    """
+    Safely format message with args, catching format errors.
+
+    Args:
+        msg: Message format string
+        args: Arguments for formatting
+
+    Returns:
+        Formatted message, or message with error notation if formatting fails
+    """
+    if not args:
+        return msg
+    try:
+        return msg % args
+    except Exception as e:
+        return f"{msg} [format_error={e!r}]"
+
+
+def _caller_fields(stacklevel: int = 2) -> dict[str, Any]:
+    """
+    Extract caller metadata from the stack.
+
+    Args:
+        stacklevel: How many frames up the stack to look
+
+    Returns:
+        Dictionary with file, line, and func fields
+    """
+    try:
+        frame = inspect.stack()[stacklevel]
+        return {"file": frame.filename, "line": frame.lineno, "func": frame.function}
+    except Exception:
+        return {}
+
+
+def _sanitize_keys(d: dict[str, Any]) -> dict[str, Any]:
+    """
+    Sanitize dictionary keys by prefixing reserved fields.
+
+    Args:
+        d: Dictionary with potentially reserved keys
+
+    Returns:
+        Dictionary with reserved keys prefixed with 'x_'
+    """
+    out = {}
+    for k, v in d.items():
+        k2 = f"x_{k}" if k in RESERVED_FIELDS else k
+        out[k2] = v
+    return out
 
 
 def extract_extra_fields(record):

@@ -7,6 +7,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2025-01-XX
+
+### Added
+- **Thread-safe context management**: Added `threading.RLock` to `ScopedLogger` for safe concurrent context updates
+- **Temporary context manager**: New `temp_context(**kv)` context manager for scoped temporary fields that auto-restore
+  ```python
+  with logger.temp_context(request_id="123"):
+      logger.info("Processing")  # Includes request_id
+  # request_id automatically removed after context
+  ```
+- **Lazy evaluation support**: Log method kwargs can now be callables that are only evaluated when the log level is enabled
+  ```python
+  logger.debug("Debug", expensive_field=lambda: expensive_computation())
+  # Callable only invoked if DEBUG level is enabled
+  ```
+- **Robust JSON serialization**: JSON logger now safely handles complex Python types without crashing
+  - Automatic serialization for `datetime`, `Decimal`, `UUID`, `Path`, `Enum`
+  - Fallback to `str()` or `repr()` for unknown types
+  - Never raises exceptions during serialization
+- **Performance optimizations**: Fast level guard prevents unnecessary work when log level is disabled
+  - Early return in `_log_with_context` if level is below threshold
+  - Callables and formatting only executed when needed
+
+### Changed
+- **Updated RESERVED_FIELDS**: Simplified to core fields: `("level", "message", "time", "logger", "file", "line", "func")`
+- **Improved key sanitization**: Replaced manual loop with dedicated `_sanitize_keys()` utility function
+- **Enhanced bind() method**: Now thread-safe with lock protection
+
+### Performance
+- **Zero-cost disabled logs**: Log statements at disabled levels now skip all processing
+- **Lazy value resolution**: Expensive computations in log kwargs deferred until needed
+- **Thread-safe without overhead**: Lock only held during context updates, not during logging
+
+### Reliability
+- **JSON never crashes**: Safe JSON encoder with comprehensive type support and fallback handling
+- **Thread-safe context**: No race conditions when multiple threads update logger context
+- **Temporary context isolation**: Context manager properly restores previous state even on exceptions
+
+### Developer Experience
+- **Better performance**: Disabled logs have near-zero overhead
+- **Safer threading**: No manual locking needed for concurrent logging
+- **Cleaner temporary context**: Use `with logger.temp_context()` instead of manual bind/unbind
+- **Type-safe JSON**: Common Python types automatically serialize correctly
+- **Parameter conflict protection**: Fields named "level", "message", or "exc_info" are silently filtered to prevent method parameter conflicts
+
 ## [0.3.0] - 2024-01-23
 
 ### Added
