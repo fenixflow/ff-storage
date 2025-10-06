@@ -6,11 +6,9 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-from rich.console import Console
-
 from ff_cli.config import get_logger, get_settings
+from ff_cli.utils.common import console
 
-console = Console()
 logger = get_logger("editor")
 
 

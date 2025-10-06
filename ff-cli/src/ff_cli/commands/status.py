@@ -4,7 +4,6 @@ import json
 from typing import Any
 
 import typer
-from rich.console import Console
 from rich.table import Table
 
 from ..branding import get_brand
@@ -15,9 +14,8 @@ from ..plugin_base import (
     get_plugin_status,
 )
 from ..plugin_manager import PluginManager
+from ..utils.common import console
 from ..utils.docker import DockerManager
-
-console = Console()
 
 app = typer.Typer()
 
@@ -75,6 +73,7 @@ def get_service_statuses() -> list[dict[str, Any]]:
         # Build comprehensive service list
         service_list = []
         all_healthy = True
+        critical_services = ["postgres"]  # Only critical services affect overall health
 
         # Process all defined services
         for service_name in sorted(defined_services.keys()):
@@ -91,15 +90,21 @@ def get_service_statuses() -> list[dict[str, Any]]:
                 # Determine health status
                 if not running:
                     health_status = "stopped"
-                    all_healthy = False
+                    # Only mark unhealthy if this is a critical service
+                    if service_name in critical_services:
+                        all_healthy = False
                 elif health == "healthy":
                     health_status = "healthy"
                 elif health == "unhealthy":
                     health_status = "unhealthy"
-                    all_healthy = False
+                    # Only mark unhealthy if this is a critical service
+                    if service_name in critical_services:
+                        all_healthy = False
                 elif health == "starting":
                     health_status = "starting"
-                    all_healthy = False
+                    # Only mark unhealthy if this is a critical service
+                    if service_name in critical_services:
+                        all_healthy = False
                 else:
                     health_status = "running"  # No healthcheck
 
@@ -127,7 +132,9 @@ def get_service_statuses() -> list[dict[str, Any]]:
                 running = False
                 health_status = "not_created"
                 container_status = "Not created"
-                all_healthy = False
+                # Only mark unhealthy if this is a critical service
+                if service_name in critical_services:
+                    all_healthy = False
                 port_list = []
                 url = ""
 
@@ -216,7 +223,8 @@ def display_core_services_table(services: list[dict[str, Any]], title: str, mess
         return
 
     # Create table header
-    console.print(f"\n[bold]{title}[/bold] ({message})")
+    brand = get_brand()
+    console.print(f"\n[bold]{brand.icon} {title}[/bold] ({message})")
     console.print("─" * 80)
 
     # Create Rich table
@@ -224,7 +232,7 @@ def display_core_services_table(services: list[dict[str, Any]], title: str, mess
     table.add_column("SERVICE", style="cyan", width=12)
     table.add_column("STATUS", width=18)
     table.add_column("PORTS", width=25)
-    table.add_column("ORBSTACK DOMAIN", style="magenta")
+    table.add_column("OrbStack Domain", style="magenta")
 
     # Add service rows
     for service in services:
@@ -312,15 +320,19 @@ def status(
         # Display formatted output
         brand = get_brand()
 
-        console.print(f"\n[bold cyan]{brand.cli_display_name} System Status[/bold cyan]")
+        console.print(
+            f"\n[bold cyan]{brand.icon} {brand.cli_display_name} System Status[/bold cyan]"
+        )
         console.print("=" * 40)
 
         # Docker status
         docker_info = system_status["docker"]
         if docker_info.get("running"):
-            orbstack = "OrbiStack detected" if docker_info.get("orbstack") else "Docker"
             version = docker_info.get("version", "unknown")
-            console.print(f"🐳 Docker: [green]✅ Running[/green] ({orbstack}) v{version}")
+            if docker_info.get("orbstack"):
+                console.print(f"🔮 OrbStack: [green]✅ Running[/green] v{version}")
+            else:
+                console.print(f"🐳 Docker: [green]✅ Running[/green] v{version}")
         else:
             console.print("🐳 Docker: [red]❌ Not running[/red]")
             error = docker_info.get("error", "")
@@ -421,5 +433,4 @@ def status(
                 console.print(f"  • {rec}")
 
 
-# For backward compatibility, allow this to be imported
 __all__ = ["status", "app"]

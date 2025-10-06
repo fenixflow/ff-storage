@@ -5,12 +5,11 @@ from pathlib import Path
 from typing import Any
 
 from jinja2 import Template
-from rich.console import Console
 
 from ff_cli.branding import get_brand
 from ff_cli.config import get_logger
+from ff_cli.utils.common import console
 
-console = Console()
 logger = get_logger("scaffold")
 
 

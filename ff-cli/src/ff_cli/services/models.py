@@ -103,7 +103,7 @@ class ServiceConfig(BaseModel):
         if not self.container_name:
             self.container_name = f"{brand.container_prefix}-{self.name}"
 
-        # Add OrbiStack labels
+        # Add OrbStack labels
         orbstack_labels = {
             "com.docker.compose.project": brand.docker_project,
             "com.docker.compose.service": self.name,

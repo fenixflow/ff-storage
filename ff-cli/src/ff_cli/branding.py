@@ -20,7 +20,7 @@ class BrandConfig:
     cli_name: str = "fenix"
     cli_display_name: str = "Fenix CLI"
     cli_description: str = "Unified command-line interface"
-    icon: str = "🐦‍🔥"
+    icon: str = "🐦‍🔥 "
 
     # Version and metadata
     version_prefix: str = "Fenix CLI"
@@ -110,7 +110,7 @@ BRANDS = {
         cli_name="fenix",
         cli_display_name="Fenix CLI",
         cli_description="Unified command-line interface for the Fenix ecosystem",
-        icon="🔥",
+        icon="🐦‍🔥",
         version_prefix="Fenix CLI",
         company_name="Fenixflow",
         config_dir_name=".fenix",

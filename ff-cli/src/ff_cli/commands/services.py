@@ -3,11 +3,11 @@
 from pathlib import Path
 
 import typer
-from rich.console import Console
 from rich.table import Table
 
 from ..branding import get_brand
 from ..services import ServiceManager
+from ..utils.common import console
 
 brand = get_brand()
 
@@ -16,8 +16,6 @@ app = typer.Typer(
     help=f"Manage Docker services for {brand.cli_display_name}",
     no_args_is_help=True,
 )
-
-console = Console()
 
 
 @app.command()
@@ -50,12 +48,18 @@ def list_services():
         table.add_column("Source", style="green")
         table.add_column("Path")
 
+        source_labels = {
+            "user": "✓ user",
+            "default": "default",
+            "plugin": "plugin",
+        }
+
         for name, source in services.items():
             path = manager.which_service(name)
             display_path = path.replace(str(Path.home()), "~") if path else ""
             table.add_row(
                 name,
-                "✓ user" if source == "user" else "default",
+                source_labels.get(source, source),
                 display_path,
             )
 
@@ -91,7 +95,11 @@ def up(
 def down(
     service: str | None = typer.Argument(None, help="Service name to stop"),
     all: bool = typer.Option(False, "--all", help="Stop all services"),
-    volumes: bool = typer.Option(False, "--volumes", help="Remove volumes too"),
+    volumes: bool = typer.Option(
+        False,
+        "--volumes",
+        help="Retained for compatibility; volumes remain intact",
+    ),
 ):
     """Stop and remove service(s)."""
     try:

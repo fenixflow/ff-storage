@@ -5,14 +5,12 @@ from pathlib import Path
 from typing import Any
 
 import typer
-from rich.console import Console
 from rich.table import Table
 
 from . import plugin_registry
 from .branding import get_brand
 from .plugin_base import get_plugin_status, has_status_support
-
-console = Console()
+from .utils.common import console
 
 
 @dataclass

@@ -13,11 +13,9 @@ import tomllib
 from ff_logger import ConsoleLogger
 from pydantic import BaseModel, Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from rich.console import Console
 
 from ff_cli.branding import get_brand
-
-console = Console()
+from ff_cli.utils.common import console
 
 
 @dataclass
