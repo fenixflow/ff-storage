@@ -307,12 +307,26 @@ except Exception:
 
 ### Reserved Fields
 
-Some field names are reserved by Python's logging module. If you use them, they'll be automatically prefixed with `x_`:
+Python's logging module reserves 23+ field names for LogRecord internals. If you use these as context fields in log calls, they're automatically prefixed with `x_` to prevent conflicts:
 
 ```python
-# "module" is reserved, becomes "x_module"
-logger.info("Message", module="auth")
+# Constructor 'name' parameter - this works as expected
+logger = ConsoleLogger("my_app")  # ✅ Sets logger name
+
+# Log method 'name' kwarg - automatically prefixed to avoid conflict
+logger.info("Message", name="custom")  # Becomes x_name="custom"
+
+# Other reserved fields also prefixed
+logger.info("Event",
+    module="auth",      # Becomes x_module="auth"
+    process="worker",   # Becomes x_process="worker"
+    thread="t-1"        # Becomes x_thread="t-1"
+)
 ```
+
+**Reserved fields include:** `name`, `module`, `pathname`, `funcName`, `process`, `thread`, `levelname`, `msg`, `args`, and 15+ more. See [Python logging documentation](https://docs.python.org/3/library/logging.html#logrecord-attributes) for the complete list.
+
+**Why?** These fields are used internally by Python's LogRecord class. Overwriting them would cause crashes like "Attempt to overwrite 'name' in LogRecord".
 
 ## Testing
 

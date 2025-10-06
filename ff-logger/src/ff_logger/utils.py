@@ -65,8 +65,9 @@ LOGGING_INTERNAL_FIELDS = {
     "lineno",
 }
 
-# Core reserved fields that will be prefixed with 'x_' to avoid conflicts
-RESERVED_FIELDS = ("level", "message", "time", "logger", "file", "line", "func")
+# Reserved LogRecord fields that will be prefixed with 'x_' to avoid conflicts
+# Uses LOGGING_INTERNAL_FIELDS for comprehensive coverage of all Python logging internals
+RESERVED_FIELDS = frozenset(LOGGING_INTERNAL_FIELDS)
 
 
 def _json_default(o: Any) -> Any:
