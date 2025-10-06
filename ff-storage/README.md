@@ -4,9 +4,13 @@
 [![Python Support](https://img.shields.io/pypi/pyversions/ff-storage.svg)](https://pypi.org/project/ff-storage/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-A comprehensive storage package for Fenixflow applications, providing database connections with pooling, object storage abstractions, migration management, and model utilities. Supports PostgreSQL, MySQL, Microsoft SQL Server, local filesystem storage, and S3-compatible services.
+A comprehensive storage package for Fenixflow applications, providing **async connection pools** for modern Python applications, database connections, object storage abstractions, migration management, and model utilities. Supports PostgreSQL, MySQL, Microsoft SQL Server, local filesystem storage, and S3-compatible services.
 
 Created by **Ben Moag** at **[Fenixflow](https://fenixflow.com)**
+
+## 🚨 Version 1.0.0 - Async Pools
+
+**Breaking Change**: All connection pools are now async for better performance and scalability. Use direct connections for synchronous code.
 
 ## Quick Start
 
@@ -22,32 +26,123 @@ pip install ff-storage
 pip install git+https://gitlab.com/fenixflow/fenix-packages.git#subdirectory=ff-storage
 ```
 
-### Basic Usage
+### Async Pool (FastAPI, Production)
 
 ```python
-from ff_storage import PostgresPool
+from ff_storage.db import PostgresPool
 
-# Create a connection pool
-db = PostgresPool(
+# Create async connection pool
+pool = PostgresPool(
     dbname="fenix_db",
     user="fenix",
     password="password",
     host="localhost",
     port=5432,
-    pool_size=20
+    min_size=10,
+    max_size=20
 )
 
-# Connect and execute queries
+# Connect once at startup
+await pool.connect()
+
+# Use many times - pool handles connections internally
+# Returns dictionaries by default for easy access
+results = await pool.fetch_all("SELECT id, title, status FROM documents WHERE status = $1", "active")
+# results = [{'id': 1, 'title': 'Doc 1', 'status': 'active'}, ...]
+
+print(results[0]['title'])  # Access by column name - intuitive!
+
+# Fetch single row
+user = await pool.fetch_one("SELECT id, name, email FROM users WHERE id = $1", 123)
+# user = {'id': 123, 'name': 'Alice', 'email': 'alice@example.com'}
+
+# Disconnect once at shutdown
+await pool.disconnect()
+```
+
+### Sync Connection (Scripts, Simple Apps)
+
+```python
+from ff_storage.db import Postgres
+
+# Create direct connection
+db = Postgres(
+    dbname="fenix_db",
+    user="fenix",
+    password="password",
+    host="localhost",
+    port=5432
+)
+
+# Connect and query - returns dicts by default
 db.connect()
-results = db.read_query("SELECT * FROM documents WHERE status = %s", {"status": "active"})
+results = db.read_query("SELECT id, title, status FROM documents WHERE status = %(status)s", {"status": "active"})
+# results = [{'id': 1, 'title': 'Doc 1', 'status': 'active'}, ...]
+
+print(results[0]['title'])  # Easy access by column name
+
 db.close_connection()
 ```
+
+### FastAPI Integration
+
+```python
+from fastapi import FastAPI
+from ff_storage.db import PostgresPool
+
+app = FastAPI()
+
+# Create pool once
+app.state.db = PostgresPool(
+    dbname="fenix_db",
+    user="fenix",
+    password="password",
+    host="localhost",
+    min_size=10,
+    max_size=20
+)
+
+@app.on_event("startup")
+async def startup():
+    await app.state.db.connect()
+
+@app.on_event("shutdown")
+async def shutdown():
+    await app.state.db.disconnect()
+
+@app.get("/users/{user_id}")
+async def get_user(user_id: int):
+    # Pool handles connection automatically
+    user = await app.state.db.fetch_one(
+        "SELECT * FROM users WHERE id = $1", user_id
+    )
+    return user
+```
+
+## Migration Guide (v0.3.0 → v1.0.0)
+
+### Breaking Changes
+
+**Pools are now async** - all `*Pool` classes require `await`:
+
+| v0.3.0 (Sync) | v1.0.0 (Async) |
+|---------------|----------------|
+| `pool.connect()` | `await pool.connect()` |
+| `pool.read_query()` | `await pool.fetch_all()` |
+| `pool.execute()` | `await pool.execute()` |
+| `pool.close_connection()` | `await pool.disconnect()` |
+
+**For sync code**, use direct connections (no breaking changes):
+- `Postgres` (sync) - unchanged
+- `MySQL` (sync) - unchanged
+- `SQLServer` (sync) - unchanged
 
 ## Features
 
 ### Database Operations
-- **Multi-Database Support**: PostgreSQL, MySQL, and Microsoft SQL Server with connection pooling
-- **Consistent API**: Same interface across all database types
+- **Async Connection Pools**: High-performance async pools for PostgreSQL, MySQL, and SQL Server
+- **Sync Direct Connections**: Simple sync connections for scripts and non-async code
+- **Multi-Database Support**: Uniform interface across PostgreSQL, MySQL, and Microsoft SQL Server
 - **Transaction Management**: Built-in support for transactions with rollback
 - **Batch Operations**: Execute many queries efficiently
 - **Query Builder**: SQL query construction utilities
@@ -82,17 +177,20 @@ db = PostgresPool(
     pool_size=20
 )
 
-# Use connection from pool
+# Use connection from pool - returns dicts by default
 db.connect()
 try:
-    # Execute queries
-    results = db.read_query("SELECT * FROM documents WHERE status = %s", {"status": "active"})
+    # Execute queries - returns list of dicts
+    results = db.read_query("SELECT id, title, status FROM documents WHERE status = %s", {"status": "active"})
+    # results = [{'id': 1, 'title': 'Doc 1', 'status': 'active'}, ...]
+    print(results[0]['title'])  # Easy access by column name
 
     # Execute with RETURNING
     new_id = db.execute_query(
         "INSERT INTO documents (title) VALUES (%s) RETURNING id",
         {"title": "New Document"}
     )
+    # new_id = [{'id': 123}]
 
     # Transaction example
     db.begin_transaction()
@@ -122,9 +220,11 @@ db = MySQLPool(
     pool_size=10
 )
 
-# Similar usage pattern as PostgreSQL
+# Similar usage pattern as PostgreSQL - returns dicts by default
 db.connect()
-results = db.read_query("SELECT * FROM documents WHERE status = %s", {"status": "active"})
+results = db.read_query("SELECT id, title, status FROM documents WHERE status = %s", {"status": "active"})
+# results = [{'id': 1, 'title': 'Doc 1', 'status': 'active'}, ...]
+print(results[0]['title'])  # Easy access by column name
 db.close_connection()
 ```
 
@@ -143,17 +243,20 @@ db = SQLServerPool(
     pool_size=10
 )
 
-# Connect and execute queries
+# Connect and execute queries - returns dicts by default
 db.connect()
 try:
-    # Read query
-    results = db.read_query("SELECT * FROM documents WHERE status = ?", {"status": "active"})
+    # Read query - returns list of dicts
+    results = db.read_query("SELECT id, title, status FROM documents WHERE status = ?", {"status": "active"})
+    # results = [{'id': 1, 'title': 'Doc 1', 'status': 'active'}, ...]
+    print(results[0]['title'])  # Easy access by column name
 
     # Execute with OUTPUT clause
     new_id = db.execute_query(
         "INSERT INTO documents (title) OUTPUT INSERTED.id VALUES (?)",
         {"title": "New Document"}
     )
+    # new_id = [{'id': 123}]
 
     # Check table existence
     if db.table_exists("users", schema="dbo"):

@@ -1,9 +1,10 @@
 """
 SQL Server implementation of the SQL base class.
-Provides both direct connections and connection pooling for Microsoft SQL Server.
+Provides both direct connections and async connection pooling for Microsoft SQL Server.
 """
 
-from dataclasses import dataclass
+import logging
+from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
 import pyodbc
@@ -24,13 +25,16 @@ class SQLServerBase(SQL):
     db_type = "sqlserver"
     driver: str = "ODBC Driver 18 for SQL Server"
 
-    def read_query(self, query: str, params: Optional[Dict[str, Any]] = None) -> List[Any]:
+    def read_query(
+        self, query: str, params: Optional[Dict[str, Any]] = None, as_dict: bool = True
+    ) -> List[Any]:
         """
         Execute a read-only SQL query and fetch all rows.
 
         :param query: The SELECT SQL query.
         :param params: Optional dictionary of query parameters.
-        :return: A list of tuples representing the query results.
+        :param as_dict: If True, return list of dicts. If False, return list of tuples.
+        :return: A list of dicts (default) or tuples representing the query results.
         :raises RuntimeError: If query execution fails.
         """
         if not self.connection:
@@ -45,6 +49,14 @@ class SQLServerBase(SQL):
                 cursor.execute(query)
 
             results = cursor.fetchall()
+
+            # Convert to dicts if requested
+            if as_dict and cursor.description:
+                columns = [col[0] for col in cursor.description]
+                dict_results = [dict(zip(columns, row)) for row in results]
+                cursor.close()
+                return dict_results
+
             cursor.close()
             return results
         except Exception as e:
@@ -257,44 +269,55 @@ class SQLServer(SQLServerBase):
 
 
 @dataclass
-class SQLServerPool(SQLServerBase):
+class SQLServerPool:
     """
-    SQL Server connection using a connection pool.
+    Async SQL Server connection pool using aioodbc.
 
-    Note: pyodbc doesn't have built-in connection pooling like psycopg2.
-    This implementation manages a simple pool of connections manually.
+    This provides a high-performance async connection pool for SQL Server,
+    suitable for FastAPI and other async Python applications.
 
-    For production use with Azure SQL, consider using connection pooling
-    at the application level or Azure SQL's built-in connection pooling.
+    Pool handles connection acquisition internally - users just call fetch/execute methods.
 
     :param dbname: Database name.
     :param user: Database username.
     :param password: Database password.
     :param host: Database host.
     :param port: Database port (default: 1433).
-    :param driver: ODBC driver name.
-    :param pool_name: The name of the connection pool (default: sqlserver_pool).
-    :param pool_size: Maximum number of connections (advisory, not enforced).
+    :param driver: ODBC driver name (default: ODBC Driver 18 for SQL Server).
+    :param min_size: Minimum number of connections in the pool (default: 10).
+    :param max_size: Maximum number of connections in the pool (default: 20).
     """
 
-    pool_name: str = "sqlserver_pool"
-    pool_size: int = 10
+    dbname: str
+    user: str
+    password: str
+    host: str
+    port: int = 1433
+    driver: str = "ODBC Driver 18 for SQL Server"
+    min_size: int = 10
+    max_size: int = 20
 
-    def connect(self) -> None:
+    # Pool instance
+    pool: Optional[Any] = None
+
+    # Logging
+    logger: logging.Logger = field(default_factory=lambda: logging.getLogger(__name__))
+
+    async def connect(self) -> None:
         """
-        Acquire a connection.
+        Create async connection pool.
 
-        Note: pyodbc doesn't provide connection pooling out of the box.
-        This creates a single connection. For true pooling, use an external
-        library or connection pool manager.
+        Call once at application startup (e.g., FastAPI startup event).
 
-        :raises RuntimeError: If acquiring a connection fails.
+        :raises RuntimeError: If pool creation fails.
         """
-        if self.connection:
-            return
+        if self.pool:
+            return  # Pool already created
 
         try:
-            connection_string = (
+            import aioodbc
+
+            dsn = (
                 f"Driver={{{self.driver}}};"
                 f"Server=tcp:{self.host},{self.port};"
                 f"Database={self.dbname};"
@@ -302,24 +325,118 @@ class SQLServerPool(SQLServerBase):
                 f"Pwd={self.password};"
                 f"Encrypt=yes;"
                 f"TrustServerCertificate=no;"
-                f"Connection Timeout=30;"
-                f"MARS_Connection=yes;"  # Enable Multiple Active Result Sets
             )
-            self.connection = pyodbc.connect(connection_string, pooling=True)
+
+            self.pool = await aioodbc.create_pool(
+                dsn=dsn, minsize=self.min_size, maxsize=self.max_size
+            )
             self.logger.info(
-                f"Connected to SQL Server pool '{self.pool_name}' (size: {self.pool_size})"
+                f"Created aioodbc pool for {self.dbname} (min={self.min_size}, max={self.max_size})"
             )
         except Exception as e:
-            self.logger.error(f"Failed to connect to SQL Server pool: {e}")
-            raise RuntimeError(f"Error acquiring pooled connection: {e}")
+            self.logger.error(f"Failed to create aioodbc pool: {e}")
+            raise RuntimeError(f"Error creating async pool: {e}")
 
-    def close_connection(self) -> None:
+    async def disconnect(self) -> None:
         """
-        Close the connection.
+        Close the connection pool.
 
-        With pyodbc pooling enabled, this returns the connection to the pool.
+        Call once at application shutdown (e.g., FastAPI shutdown event).
         """
-        if self.connection:
-            self.connection.close()
-            self.connection = None
-            self.logger.debug("Returned connection to pool")
+        if self.pool:
+            self.pool.close()
+            await self.pool.wait_closed()
+            self.pool = None
+            self.logger.info("Closed aioodbc connection pool")
+
+    async def fetch_one(self, query: str, params: dict = None, as_dict: bool = True):
+        """
+        Fetch single row from database.
+
+        Pool handles connection acquisition internally.
+
+        :param query: SQL query (use ? for parameters).
+        :param params: Dictionary of query parameters.
+        :param as_dict: If True, return dict. If False, return tuple.
+        :return: Single row as dict (default) or tuple, or None if no results.
+        """
+        if not self.pool:
+            raise RuntimeError("Pool not connected. Call await pool.connect() first.")
+
+        async with self.pool.acquire() as conn:
+            async with conn.cursor() as cursor:
+                param_values = list((params or {}).values()) if params else None
+                await cursor.execute(query, param_values)
+                result = await cursor.fetchone()
+
+                if result is None:
+                    return None
+
+                if as_dict and cursor.description:
+                    columns = [col[0] for col in cursor.description]
+                    return dict(zip(columns, result))
+
+                return result
+
+    async def fetch_all(self, query: str, params: dict = None, as_dict: bool = True):
+        """
+        Fetch all rows from database.
+
+        Pool handles connection acquisition internally.
+
+        :param query: SQL query (use ? for parameters).
+        :param params: Dictionary of query parameters.
+        :param as_dict: If True, return list of dicts. If False, return list of tuples.
+        :return: List of dicts (default) or tuples.
+        """
+        if not self.pool:
+            raise RuntimeError("Pool not connected. Call await pool.connect() first.")
+
+        async with self.pool.acquire() as conn:
+            async with conn.cursor() as cursor:
+                param_values = list((params or {}).values()) if params else None
+                await cursor.execute(query, param_values)
+                results = await cursor.fetchall()
+
+                if as_dict and cursor.description:
+                    columns = [col[0] for col in cursor.description]
+                    return [dict(zip(columns, row)) for row in results]
+
+                return results
+
+    async def execute(self, query: str, params: dict = None):
+        """
+        Execute query without returning results (INSERT, UPDATE, DELETE).
+
+        Pool handles connection acquisition internally.
+
+        :param query: SQL query (use ? for parameters).
+        :param params: Dictionary of query parameters.
+        :return: Row count.
+        """
+        if not self.pool:
+            raise RuntimeError("Pool not connected. Call await pool.connect() first.")
+
+        async with self.pool.acquire() as conn:
+            async with conn.cursor() as cursor:
+                param_values = list((params or {}).values()) if params else None
+                await cursor.execute(query, param_values)
+                await conn.commit()
+                return cursor.rowcount
+
+    async def execute_many(self, query: str, params_list: list):
+        """
+        Execute query with multiple parameter sets (batch operation).
+
+        :param query: SQL query (use ? for parameters).
+        :param params_list: List of parameter dictionaries.
+        """
+        if not self.pool:
+            raise RuntimeError("Pool not connected. Call await pool.connect() first.")
+
+        async with self.pool.acquire() as conn:
+            async with conn.cursor() as cursor:
+                # Convert list of dicts to list of tuples
+                param_tuples = [list(p.values()) for p in params_list]
+                await cursor.executemany(query, param_tuples)
+                await conn.commit()

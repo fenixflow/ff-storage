@@ -27,7 +27,7 @@ class TestPostgresParameterHandling(unittest.TestCase):
         query = "SELECT * FROM users"
         self.mock_cursor.fetchall.return_value = [("test",)]
 
-        result = self.postgres.read_query(query, None)
+        result = self.postgres.read_query(query, None, as_dict=False)
 
         # Verify cursor.execute was called with None (not {})
         self.mock_cursor.execute.assert_called_once_with(query, None)
@@ -38,7 +38,7 @@ class TestPostgresParameterHandling(unittest.TestCase):
         query = "SELECT * FROM users"
         self.mock_cursor.fetchall.return_value = [("test",)]
 
-        result = self.postgres.read_query(query)
+        result = self.postgres.read_query(query, as_dict=False)
 
         # Verify cursor.execute was called with None (not {})
         self.mock_cursor.execute.assert_called_once_with(query, None)
@@ -50,7 +50,7 @@ class TestPostgresParameterHandling(unittest.TestCase):
         params = {"id": 123}
         self.mock_cursor.fetchall.return_value = [("test",)]
 
-        result = self.postgres.read_query(query, params)
+        result = self.postgres.read_query(query, params, as_dict=False)
 
         # Verify cursor.execute was called with the dict
         self.mock_cursor.execute.assert_called_once_with(query, params)
@@ -143,7 +143,7 @@ class TestPostgresParameterHandling(unittest.TestCase):
         self.mock_cursor.fetchall.return_value = []
 
         # This should NOT raise an error because we pass None, not {}
-        result = self.postgres.read_query(query)
+        result = self.postgres.read_query(query, as_dict=False)
 
         # Should have been called with None, avoiding the error
         self.mock_cursor.execute.assert_called_once_with(query, None)
