@@ -1,13 +1,14 @@
 """
 PostgreSQL implementation of the SQL base class.
-Provides both direct connections and connection pooling.
+Provides both direct connections and async connection pooling.
 """
 
-from dataclasses import dataclass
+import logging
+from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
 import psycopg2
-from psycopg2 import DatabaseError, OperationalError, pool
+from psycopg2 import DatabaseError, OperationalError
 
 from .sql import SQL
 
@@ -24,13 +25,16 @@ class PostgresBase(SQL):
 
     db_type = "postgres"
 
-    def read_query(self, query: str, params: Optional[Dict[str, Any]] = None) -> List[Any]:
+    def read_query(
+        self, query: str, params: Optional[Dict[str, Any]] = None, as_dict: bool = True
+    ) -> List[Any]:
         """
         Execute a read-only SQL query and fetch all rows.
 
         :param query: The SELECT SQL query.
         :param params: Optional dictionary of query parameters.
-        :return: A list of tuples representing the query results.
+        :param as_dict: If True, return list of dicts. If False, return list of tuples.
+        :return: A list of dicts (default) or tuples representing the query results.
         :raises RuntimeError: If query execution fails.
         """
         if not self.connection:
@@ -39,7 +43,14 @@ class PostgresBase(SQL):
         try:
             with self.connection.cursor() as cursor:
                 cursor.execute(query, params)
-                return cursor.fetchall()
+                results = cursor.fetchall()
+
+                # Convert to dicts if requested
+                if as_dict and cursor.description:
+                    columns = [col[0] for col in cursor.description]
+                    return [dict(zip(columns, row)) for row in results]
+
+                return results
         except DatabaseError as e:
             self.logger.error(f"Database query error: {e}")
             return []
@@ -260,95 +271,148 @@ class Postgres(PostgresBase):
 
 
 @dataclass
-class PostgresPool(PostgresBase):
+class PostgresPool:
     """
-    PostgreSQL connection using a connection pool.
+    Async PostgreSQL connection pool using asyncpg.
 
-    This implementation acquires connections from a PostgreSQL pool,
-    ensuring efficient resource management. Connections are returned
-    to the pool rather than closed, allowing for reuse.
+    This provides a high-performance async connection pool for PostgreSQL,
+    suitable for FastAPI and other async Python applications.
 
-    Suitable for production applications with multiple concurrent database operations.
+    Pool handles connection acquisition internally - users just call fetch/execute methods.
 
     :param dbname: Database name.
     :param user: Database username.
     :param password: Database password.
     :param host: Database host.
     :param port: Database port.
-    :param pool_name: The name of the connection pool (default: postgres_pool).
-    :param pool_size: Maximum number of connections in the pool (default: 10).
+    :param min_size: Minimum number of connections in the pool (default: 10).
+    :param max_size: Maximum number of connections in the pool (default: 20).
     """
 
-    pool_name: str = "postgres_pool"
-    pool_size: int = 10
+    dbname: str
+    user: str
+    password: str
+    host: str
+    port: int = 5432
+    min_size: int = 10
+    max_size: int = 20
 
-    def connect(self) -> None:
+    # Pool instance
+    pool: Optional[Any] = None
+
+    # Logging
+    logger: logging.Logger = field(default_factory=lambda: logging.getLogger(__name__))
+
+    async def connect(self) -> None:
         """
-        Acquire a connection from the pool.
+        Create async connection pool.
 
-        If the pool does not exist, it is created. If the database doesn't exist,
-        it will be created automatically.
+        Call once at application startup (e.g., FastAPI startup event).
 
-        :raises RuntimeError: If acquiring a connection fails.
+        :raises RuntimeError: If pool creation fails.
         """
-        # Create pool if it doesn't exist
-        if not hasattr(self, "pool") or self.pool is None:
-            try:
-                self.pool = pool.SimpleConnectionPool(
-                    minconn=1,
-                    maxconn=self.pool_size,
-                    dbname=self.dbname,
-                    user=self.user,
-                    password=self.password,
-                    host=self.host,
-                    port=self.port,
-                )
-                self.logger.info(
-                    f"Created connection pool '{self.pool_name}' with size {self.pool_size}"
-                )
-            except OperationalError as e:
-                if "does not exist" in str(e):
-                    self.logger.info(f"Database {self.dbname} does not exist, creating...")
-                    self._create_database()
-                    # Retry pool creation
-                    self.pool = pool.SimpleConnectionPool(
-                        minconn=1,
-                        maxconn=self.pool_size,
-                        dbname=self.dbname,
-                        user=self.user,
-                        password=self.password,
-                        host=self.host,
-                        port=self.port,
-                    )
-                else:
-                    raise
+        if self.pool:
+            return  # Pool already created
 
-        # Acquire connection from pool if not already connected
-        if not self.connection:
-            try:
-                self.connection = self.pool.getconn()
-                self.logger.debug(f"Acquired connection from pool: {self.connection}")
-            except OperationalError as e:
-                raise RuntimeError(f"Error acquiring pooled connection: {e}")
+        try:
+            import asyncpg
 
-    def close_connection(self) -> None:
+            self.pool = await asyncpg.create_pool(
+                host=self.host,
+                port=self.port,
+                user=self.user,
+                password=self.password,
+                database=self.dbname,
+                min_size=self.min_size,
+                max_size=self.max_size,
+            )
+            self.logger.info(
+                f"Created asyncpg pool for {self.dbname} (min={self.min_size}, max={self.max_size})"
+            )
+        except Exception as e:
+            self.logger.error(f"Failed to create asyncpg pool: {e}")
+            raise RuntimeError(f"Error creating async pool: {e}")
+
+    async def disconnect(self) -> None:
         """
-        Return the connection to the pool instead of closing it.
+        Close the connection pool.
 
-        This allows the connection to be reused by other operations.
+        Call once at application shutdown (e.g., FastAPI shutdown event).
         """
-        if self.connection and hasattr(self, "pool") and self.pool:
-            self.pool.putconn(self.connection)
-            self.connection = None
-            self.logger.debug("Returned connection to pool")
-
-    def close_pool(self) -> None:
-        """
-        Close all connections in the pool.
-
-        This should only be called when shutting down the application.
-        """
-        if hasattr(self, "pool") and self.pool:
-            self.pool.closeall()
+        if self.pool:
+            await self.pool.close()
             self.pool = None
-            self.logger.info(f"Closed connection pool '{self.pool_name}'")
+            self.logger.info("Closed asyncpg connection pool")
+
+    async def fetch_one(self, query: str, *args, as_dict: bool = True):
+        """
+        Fetch single row from database.
+
+        Pool handles connection acquisition internally.
+
+        :param query: SQL query (use $1, $2 for parameters).
+        :param args: Query parameters.
+        :param as_dict: If True, return dict. If False, return tuple.
+        :return: Single row as dict (default) or tuple, or None if no results.
+        """
+        if not self.pool:
+            raise RuntimeError("Pool not connected. Call await pool.connect() first.")
+
+        async with self.pool.acquire() as conn:
+            result = await conn.fetchrow(query, *args)
+            if result is None:
+                return None
+            if as_dict:
+                return dict(result)
+            else:
+                return tuple(result)
+
+    async def fetch_all(self, query: str, *args, as_dict: bool = True):
+        """
+        Fetch all rows from database.
+
+        Pool handles connection acquisition internally.
+
+        :param query: SQL query (use $1, $2 for parameters).
+        :param args: Query parameters.
+        :param as_dict: If True, return list of dicts. If False, return list of tuples.
+        :return: List of dicts (default) or tuples.
+        """
+        if not self.pool:
+            raise RuntimeError("Pool not connected. Call await pool.connect() first.")
+
+        async with self.pool.acquire() as conn:
+            results = await conn.fetch(query, *args)
+            if as_dict:
+                return [dict(record) for record in results]
+            else:
+                return [tuple(record) for record in results]
+
+    async def execute(self, query: str, *args):
+        """
+        Execute query without returning results (INSERT, UPDATE, DELETE).
+
+        Pool handles connection acquisition internally.
+
+        :param query: SQL query (use $1, $2 for parameters).
+        :param args: Query parameters.
+        :return: Status string (e.g., "INSERT 0 1").
+        """
+        if not self.pool:
+            raise RuntimeError("Pool not connected. Call await pool.connect() first.")
+
+        async with self.pool.acquire() as conn:
+            return await conn.execute(query, *args)
+
+    async def execute_many(self, query: str, args_list: list):
+        """
+        Execute query with multiple parameter sets (batch operation).
+
+        :param query: SQL query (use $1, $2 for parameters).
+        :param args_list: List of argument tuples.
+        """
+        if not self.pool:
+            raise RuntimeError("Pool not connected. Call await pool.connect() first.")
+
+        async with self.pool.acquire() as conn:
+            await conn.executemany(query, args_list)

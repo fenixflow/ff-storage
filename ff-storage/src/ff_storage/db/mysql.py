@@ -1,15 +1,22 @@
 """
 MySQL implementation of the SQL base class.
-Provides both direct connections and connection pooling.
+Provides both direct connections and async connection pooling.
 """
 
-from dataclasses import dataclass
+import logging
+from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
 import mysql.connector
-from mysql.connector import Error, pooling
+from mysql.connector import Error
 
 from .sql import SQL
+
+# Async pool requires aiomysql
+try:
+    import aiomysql
+except ImportError:
+    aiomysql = None
 
 
 @dataclass
@@ -24,13 +31,16 @@ class MySQLBase(SQL):
 
     db_type = "mysql"
 
-    def read_query(self, query: str, params: Optional[Dict[str, Any]] = None) -> List[Any]:
+    def read_query(
+        self, query: str, params: Optional[Dict[str, Any]] = None, as_dict: bool = True
+    ) -> List[Any]:
         """
         Execute a read-only SQL query and fetch all rows.
 
         :param query: The SELECT SQL query.
         :param params: Optional dictionary of query parameters.
-        :return: A list of tuples representing the query results.
+        :param as_dict: If True, return list of dicts. If False, return list of tuples.
+        :return: A list of dicts (default) or tuples representing the query results.
         :raises RuntimeError: If query execution fails.
         """
         if self.connection is None or self.cursor is None:
@@ -39,7 +49,14 @@ class MySQLBase(SQL):
 
         try:
             self.cursor.execute(query, params or {})
-            return self.cursor.fetchall()
+            results = self.cursor.fetchall()
+
+            # Convert to dicts if requested
+            if as_dict and self.cursor.description:
+                columns = [col[0] for col in self.cursor.description]
+                return [dict(zip(columns, row)) for row in results]
+
+            return results
         except Exception as e:
             self.logger.error(f"Database query error: {e}")
             return []
@@ -293,105 +310,151 @@ class MySQL(MySQLBase):
 
 
 @dataclass
-class MySQLPool(MySQLBase):
+class MySQLPool:
     """
-    MySQL connection using a connection pool.
+    Async MySQL connection pool using aiomysql.
 
-    This implementation acquires connections from a MySQL pool,
-    ensuring efficient resource management. Connections are returned
-    to the pool rather than closed, allowing for reuse.
+    This provides a high-performance async connection pool for MySQL,
+    suitable for FastAPI and other async Python applications.
 
-    Suitable for production applications with multiple concurrent database operations.
+    Pool handles connection acquisition internally - users just call fetch/execute methods.
 
     :param dbname: Database name.
     :param user: Database username.
     :param password: Database password.
     :param host: Database host.
     :param port: Database port.
-    :param pool_name: The name of the connection pool (default: mysql_pool).
-    :param pool_size: Number of connections in the pool (default: 5).
+    :param min_size: Minimum number of connections in the pool (default: 5).
+    :param max_size: Maximum number of connections in the pool (default: 10).
     """
 
-    pool_name: str = "mysql_pool"
-    pool_size: int = 5
+    dbname: str
+    user: str
+    password: str
+    host: str
+    port: int = 3306
+    min_size: int = 5
+    max_size: int = 10
 
-    def connect(self) -> None:
+    # Pool instance
+    pool: Optional[Any] = None
+
+    # Logging
+    logger: logging.Logger = field(default_factory=lambda: logging.getLogger(__name__))
+
+    async def connect(self) -> None:
         """
-        Acquire a connection from the pool.
+        Create async connection pool.
 
-        If the pool does not exist, it is created. If the database doesn't exist,
-        it will be created automatically.
+        Call once at application startup (e.g., FastAPI startup event).
 
-        :raises RuntimeError: If acquiring a connection fails.
-        """
-        # Create pool if it doesn't exist
-        if not self.pool:
-            cnx_config = {
-                "user": self.user,
-                "password": self.password,
-                "host": self.host,
-                "port": self.port,
-                "database": self.dbname,
-                "allow_local_infile": True,
-                "pool_name": self.pool_name,
-                "pool_size": self.pool_size,
-                "pool_reset_session": True,
-                "auth_plugin": "mysql_native_password",
-            }
-
-            try:
-                self.pool = pooling.MySQLConnectionPool(**cnx_config)
-                self.logger.info(
-                    f"Created connection pool '{self.pool_name}' with size {self.pool_size}"
-                )
-            except Error as e:
-                if "1049" in str(e) or "Unknown database" in str(e):
-                    self.logger.info(f"Database {self.dbname} does not exist, creating...")
-                    self._create_database()
-                    # Retry pool creation
-                    self.pool = pooling.MySQLConnectionPool(**cnx_config)
-                else:
-                    raise
-
-        # Acquire connection from pool if not already connected
-        if not self.connection or not self.connection.is_connected() or self.cursor is None:
-            try:
-                self.connection = self.pool.get_connection()
-                self.cursor = self.connection.cursor()
-
-                # Log connection status
-                open_connections = self.get_open_connections()
-                self.logger.debug(
-                    f"Acquired connection from pool. Open connections: {open_connections}"
-                )
-            except Error as e:
-                raise RuntimeError(f"Error acquiring pooled connection: {e}")
-
-    def close_connection(self) -> None:
-        """
-        Return the connection to the pool without closing it.
-
-        This allows the connection to be reused by other operations.
-        """
-        if self.cursor:
-            self.cursor.close()
-            self.cursor = None
-
-        # Connection is automatically returned to pool when it goes out of scope
-        # But we can explicitly set it to None to release the reference
-        if self.connection:
-            self.connection = None
-            self.logger.debug("Returned connection to pool")
-
-    def close_pool(self) -> None:
-        """
-        Close all connections in the pool.
-
-        This should only be called when shutting down the application.
+        :raises RuntimeError: If pool creation fails.
         """
         if self.pool:
-            # Close all connections in the pool
-            # Note: mysql-connector-python doesn't have a direct closeall method
-            # Connections will be closed when the pool is garbage collected
+            return  # Pool already created
+
+        try:
+            import aiomysql
+
+            self.pool = await aiomysql.create_pool(
+                host=self.host,
+                port=self.port,
+                user=self.user,
+                password=self.password,
+                db=self.dbname,
+                minsize=self.min_size,
+                maxsize=self.max_size,
+                autocommit=True,
+            )
+            self.logger.info(
+                f"Created aiomysql pool for {self.dbname} (min={self.min_size}, max={self.max_size})"
+            )
+        except Exception as e:
+            self.logger.error(f"Failed to create aiomysql pool: {e}")
+            raise RuntimeError(f"Error creating async pool: {e}")
+
+    async def disconnect(self) -> None:
+        """
+        Close the connection pool.
+
+        Call once at application shutdown (e.g., FastAPI shutdown event).
+        """
+        if self.pool:
+            self.pool.close()
+            await self.pool.wait_closed()
             self.pool = None
-            self.logger.info(f"Closed connection pool '{self.pool_name}'")
+            self.logger.info("Closed aiomysql connection pool")
+
+    async def fetch_one(self, query: str, params: dict = None, as_dict: bool = True):
+        """
+        Fetch single row from database.
+
+        Pool handles connection acquisition internally.
+
+        :param query: SQL query (use %(name)s for named parameters).
+        :param params: Dictionary of query parameters.
+        :param as_dict: If True, return dict. If False, return tuple.
+        :return: Single row as dict (default) or tuple, or None if no results.
+        """
+        if not self.pool:
+            raise RuntimeError("Pool not connected. Call await pool.connect() first.")
+
+        async with self.pool.acquire() as conn:
+            cursor_class = aiomysql.DictCursor if as_dict else None
+            async with conn.cursor(cursor_class) as cursor:
+                await cursor.execute(query, params or {})
+                return await cursor.fetchone()
+
+    async def fetch_all(self, query: str, params: dict = None, as_dict: bool = True):
+        """
+        Fetch all rows from database.
+
+        Pool handles connection acquisition internally.
+
+        :param query: SQL query (use %(name)s for named parameters).
+        :param params: Dictionary of query parameters.
+        :param as_dict: If True, return list of dicts. If False, return list of tuples.
+        :return: List of dicts (default) or tuples.
+        """
+        if not self.pool:
+            raise RuntimeError("Pool not connected. Call await pool.connect() first.")
+
+        async with self.pool.acquire() as conn:
+            cursor_class = aiomysql.DictCursor if as_dict else None
+            async with conn.cursor(cursor_class) as cursor:
+                await cursor.execute(query, params or {})
+                return await cursor.fetchall()
+
+    async def execute(self, query: str, params: dict = None):
+        """
+        Execute query without returning results (INSERT, UPDATE, DELETE).
+
+        Pool handles connection acquisition internally.
+
+        :param query: SQL query (use %(name)s for named parameters).
+        :param params: Dictionary of query parameters.
+        :return: Number of affected rows.
+        """
+        if not self.pool:
+            raise RuntimeError("Pool not connected. Call await pool.connect() first.")
+
+        async with self.pool.acquire() as conn:
+            async with conn.cursor() as cursor:
+                result = await cursor.execute(query, params or {})
+                await conn.commit()
+                return result
+
+    async def execute_many(self, query: str, params_list: list):
+        """
+        Execute query with multiple parameter sets (batch operation).
+
+        :param query: SQL query (use %(name)s for named parameters).
+        :param params_list: List of parameter dictionaries.
+        """
+        if not self.pool:
+            raise RuntimeError("Pool not connected. Call await pool.connect() first.")
+
+        async with self.pool.acquire() as conn:
+            async with conn.cursor() as cursor:
+                await cursor.executemany(query, params_list)
+                await conn.commit()
