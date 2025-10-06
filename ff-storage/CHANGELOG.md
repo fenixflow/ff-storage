@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2025-10-06
+
+### Added
+- Microsoft SQL Server support with `SQLServer`, `SQLServerPool`, and `SQLServerBase` classes
+- Full SQL Server operations using pyodbc with ODBC Driver 18
+- Connection pooling support for SQL Server with MARS (Multiple Active Result Sets)
+- Schema introspection for SQL Server (table existence, column information)
+- Encrypted connections with TrustServerCertificate configuration
+- SQL Server-specific query methods with OUTPUT clause support
+- Added `pyodbc>=5.0` dependency for SQL Server connectivity
+
+### Changed
+- Updated package keywords to include "sqlserver"
+- Version bump: 0.2.3 → 0.3.0 (minor release for new database support)
+
 ## [0.2.0] - 2024-12-16
 
 ### Added
@@ -66,7 +81,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Maintained by **Ben Moag** ([Fenixflow](https://fenixflow.com))
 
-[Unreleased]: https://gitlab.com/fenixflow/fenix-packages/-/compare/ff-storage-v0.2.0...HEAD
+[Unreleased]: https://gitlab.com/fenixflow/fenix-packages/-/compare/ff-storage-v0.3.0...HEAD
+[0.3.0]: https://gitlab.com/fenixflow/fenix-packages/-/compare/ff-storage-v0.2.0...ff-storage-v0.3.0
 [0.2.0]: https://gitlab.com/fenixflow/fenix-packages/-/compare/ff-storage-v0.1.4...ff-storage-v0.2.0
 [0.1.4]: https://gitlab.com/fenixflow/fenix-packages/-/compare/ff-storage-v0.1.3...ff-storage-v0.1.4
 [0.1.3]: https://gitlab.com/fenixflow/fenix-packages/-/compare/ff-storage-v0.1.2...ff-storage-v0.1.3
