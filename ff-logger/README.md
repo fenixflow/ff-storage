@@ -153,9 +153,75 @@ logger = DatabaseLogger(
 )
 ```
 
-## Key Features (v0.3.0)
+## Key Features
 
-### Flexible Log Levels
+### v0.4.0 Features
+
+#### Temporary Context Manager
+Use the `temp_context()` context manager to add temporary fields that are automatically removed:
+
+```python
+logger = ConsoleLogger("app")
+
+with logger.temp_context(request_id="123", user_id=456):
+    logger.info("Processing request")  # Includes request_id and user_id
+    logger.info("Request complete")    # Still includes the fields
+
+# Fields automatically removed after context
+logger.info("Next request")  # request_id and user_id no longer present
+```
+
+#### Lazy Evaluation for Performance
+Pass callables as kwargs to defer expensive computations until needed:
+
+```python
+logger = ConsoleLogger("app", level="ERROR")  # Only ERROR and above
+
+# This callable is NEVER executed (DEBUG is disabled)
+logger.debug("Debug info", expensive_data=lambda: compute_expensive_data())
+
+# This callable IS executed (ERROR is enabled)
+logger.error("Error occurred", context=lambda: gather_error_context())
+```
+
+#### Robust JSON Serialization
+JSON logger now handles complex Python types without crashing:
+
+```python
+from datetime import datetime
+from decimal import Decimal
+from uuid import uuid4
+from pathlib import Path
+
+logger = JSONLogger("app")
+
+# All of these work automatically
+logger.info("Event",
+    timestamp=datetime.now(),      # → ISO format string
+    user_id=uuid4(),                # → string representation
+    price=Decimal("19.99"),         # → float
+    file_path=Path("/tmp/file"),    # → string
+    status=Status.ACTIVE            # → enum value
+)
+```
+
+#### Thread-Safe Context Updates
+All context operations are now thread-safe:
+
+```python
+logger = ConsoleLogger("app")
+
+# Safe to call from multiple threads
+def worker(worker_id):
+    logger.bind(worker_id=worker_id)
+    logger.info("Worker started")
+
+threads = [Thread(target=worker, args=(i,)) for i in range(10)]
+```
+
+### v0.3.0 Features
+
+#### Flexible Log Levels
 Accepts both string and integer log levels for better developer experience:
 - Strings: `"DEBUG"`, `"INFO"`, `"WARNING"`, `"ERROR"`, `"CRITICAL"`
 - Case-insensitive: `"info"` works the same as `"INFO"`

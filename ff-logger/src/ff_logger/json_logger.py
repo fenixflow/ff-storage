@@ -2,7 +2,6 @@
 JSON logger implementation for structured logging.
 """
 
-import json
 import logging
 import socket
 import sys
@@ -10,7 +9,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from .base import ScopedLogger
-from .utils import extract_extra_fields
+from .utils import _safe_json_dumps, extract_extra_fields
 
 
 class JSONFormatter(logging.Formatter):
@@ -90,8 +89,8 @@ class JSONFormatter(logging.Formatter):
                 if key not in log_entry:
                     log_entry[key] = value
 
-        # Return as compact JSON (no extra whitespace)
-        return json.dumps(log_entry, ensure_ascii=False, separators=(",", ":"))
+        # Return as compact JSON using safe serializer (never raises)
+        return _safe_json_dumps(log_entry)
 
 
 class JSONLogger(ScopedLogger):
