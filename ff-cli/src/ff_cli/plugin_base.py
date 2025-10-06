@@ -144,7 +144,7 @@ def generate_recommendations(
 
     # Check Docker status
     if not docker_info.get("running", False):
-        recommendations.append("Start Docker: Check if Docker Desktop or OrbiStack is running")
+        recommendations.append("Start Docker: Check if Docker Desktop or OrbStack is running")
         return recommendations  # No point in other recommendations if Docker isn't running
 
     # Check network status

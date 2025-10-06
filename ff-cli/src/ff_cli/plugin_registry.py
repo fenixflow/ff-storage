@@ -5,11 +5,9 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from rich.console import Console
-
 from ff_cli.config import get_logger, get_settings
+from ff_cli.utils.common import console
 
-console = Console()
 logger = get_logger("plugin_registry")
 
 
@@ -34,10 +32,6 @@ def load_registry() -> dict[str, Any]:
     try:
         with open(registry_file) as f:
             data = json.load(f)
-            # Handle old format (flat structure)
-            if "plugins" not in data:
-                # Convert old format to new
-                return {"plugins": data, "version": "1.0"}
             return data
     except Exception as e:
         logger.error(f"Failed to load registry: {e}")
@@ -69,33 +63,12 @@ def save_registry(registry: dict[str, Any]) -> bool:
         return False
 
 
-def add_plugin_to_registry(
-    name: str,
-    source_path: str,
-    plugin_module: str,
-    entry_point: str,
-    package_name: str = "",
-    description: str = "",
-) -> None:
-    """Add a plugin to the registry (backward compatibility)."""
-    register_plugin(
-        name=name,
-        source_path=source_path,
-        package_name=package_name or plugin_module,
-        description=description,
-        plugin_module=plugin_module,
-        entry_point=entry_point,
-    )
-
-
 def register_plugin(
     name: str,
     source_path: str,
     package_name: str | None = None,
     version: str = "unknown",
     description: str = "",
-    plugin_module: str | None = None,
-    entry_point: str | None = None,
 ) -> bool:
     """Register a plugin in the registry.
 
@@ -105,8 +78,6 @@ def register_plugin(
         package_name: Python package name
         version: Plugin version
         description: Plugin description
-        plugin_module: Plugin module (for backward compatibility)
-        entry_point: Entry point (for backward compatibility)
 
     Returns:
         True if successful
@@ -117,8 +88,8 @@ def register_plugin(
     registry["plugins"][name] = {
         "source_path": str(Path(source_path).resolve()),
         "package_name": package_name or name,
-        "plugin_module": plugin_module or name,
-        "entry_point": entry_point or f"{name}.cli:plugin",
+        "plugin_module": package_name or name,
+        "entry_point": f"{package_name or name}.cli:plugin",
         "version": version,
         "description": description,
         "install_date": datetime.now().isoformat(),
@@ -126,11 +97,6 @@ def register_plugin(
     }
 
     return save_registry(registry)
-
-
-def remove_plugin_from_registry(name: str) -> bool:
-    """Remove a plugin from the registry (backward compatibility)."""
-    return unregister_plugin(name)
 
 
 def unregister_plugin(name: str) -> bool:

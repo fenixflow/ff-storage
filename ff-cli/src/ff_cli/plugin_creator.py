@@ -8,11 +8,7 @@ import re
 from datetime import datetime
 from pathlib import Path
 
-from rich.console import Console
-
 from ff_cli.branding import get_brand
-
-console = Console()
 
 
 def sanitize_plugin_name(name: str) -> str:
@@ -121,9 +117,9 @@ def hello(
 ):
     """Say hello to someone."""
     if formal:
-        console.print(f"[bold blue]Greetings, {name}![/bold blue]")
+        console.print(f"[bold blue]Greetings, {{name}}![/bold blue]")
     else:
-        console.print(f"[bold green]Hello, {name}![/bold green]")
+        console.print(f"[bold green]Hello, {{name}}![/bold green]")
     console.print(f"This is the [cyan]{display_name}[/cyan] plugin speaking!")
 
 
@@ -163,11 +159,11 @@ def config(
         console.print("  example_key: example_value")
         console.print("  another_key: another_value")
     elif get:
-        console.print(f"[cyan]Getting config value for: {get}[/cyan]")
+        console.print(f"[cyan]Getting config value for: {{get}}[/cyan]")
         # In a real plugin, this would read from actual config
         console.print(f"Value: example_value")
     elif set_key and value:
-        console.print(f"[cyan]Setting {set_key} = {value}[/cyan]")
+        console.print(f"[cyan]Setting {{set_key}} = {{value}}[/cyan]")
         # In a real plugin, this would save to actual config
         console.print("[green]Configuration updated successfully![/green]")
     else:
@@ -210,7 +206,7 @@ app = typer.Typer(
 @app.command()
 def hello(name: str = typer.Argument("World", help="Name to greet")):
     """A simple hello command."""
-    console.print(f"[bold green]Hello, {name}![/bold green]")
+    console.print(f"[bold green]Hello, {{name}}![/bold green]")
     console.print(f"Welcome to the [cyan]{display_name}[/cyan] plugin!")
 
 
@@ -314,7 +310,7 @@ Edit `src/{sanitize_plugin_name(plugin_name)}/cli.py` and add new commands using
 @app.command()
 def my_new_command(arg: str = typer.Argument(..., help="Command argument")):
     """Description of your new command."""
-    console.print(f"Executing command with: {arg}")
+    console.print(f"Executing command with: {{arg}}")
 ```
 
 ### Testing
@@ -422,20 +418,3 @@ def create_plugin_structure(
     (src_dir / "cli.py").write_text(cli_content)
 
     return plugin_dir
-
-
-def copy_plugin_for_installation(plugin_dir: Path, plugin_name: str) -> None:
-    """Copy the plugin to the CLI's installed_plugins directory.
-
-    This is similar to what the install command does but for newly created plugins.
-    """
-    from ff_cli import plugin_registry
-
-    module_name = sanitize_plugin_name(plugin_name)
-    src_module_path = plugin_dir / "src" / module_name
-
-    if not src_module_path.exists():
-        raise FileNotFoundError(f"Plugin module not found at {src_module_path}")
-
-    # Copy to installed plugins directory
-    plugin_registry.copy_plugin_files(plugin_dir, module_name, plugin_name)

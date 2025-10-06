@@ -5,7 +5,6 @@ import shutil
 from pathlib import Path
 
 import typer
-from rich.console import Console
 from rich.table import Table
 
 from ff_cli.branding import (
@@ -18,8 +17,8 @@ from ff_cli.branding import (
     set_brand,
     user_brand_exists,
 )
+from ff_cli.utils.common import console
 
-console = Console()
 app = typer.Typer(help="Configure CLI branding", no_args_is_help=True)
 
 

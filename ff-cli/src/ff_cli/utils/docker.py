@@ -9,12 +9,10 @@ from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
-from rich.console import Console
-
 from ff_cli.branding import get_brand
 from ff_cli.config import get_logger
+from ff_cli.utils.common import console
 
-console = Console()
 logger = get_logger("docker")
 
 
@@ -373,7 +371,7 @@ class DockerManager:
         try:
             result = self._run_docker(cmd)
             if result.returncode != 0:
-                logger.error("Failed to run container %s: %s", config.container_name, result.stderr)
+                logger.error(f"Failed to run container {config.container_name}: {result.stderr}")
             return result.returncode == 0
         except RuntimeError:
             return False

@@ -7,15 +7,13 @@ import subprocess
 from pathlib import Path
 
 import yaml
-from rich.console import Console
 from rich.table import Table
 
 from ..branding import get_brand
 from ..config import ConfigManager, get_settings
+from ..utils.common import console
 from ..utils.docker import DockerManager
 from .models import ServiceConfig, ServiceDefinition
-
-console = Console()
 
 
 class ServiceManager:
@@ -30,6 +28,7 @@ class ServiceManager:
             Path(__file__).parent.parent.parent.parent / "services" / "defaults"
         )
         self.user_services_path = self.config_manager.config_dir / "services"
+        self.plugin_services_path = self.user_services_path / "plugins"
 
     def initialize(self) -> None:
         """Initialize Fenix directory structure."""
@@ -53,6 +52,11 @@ class ServiceManager:
         if user_file.exists():
             return self._load_yaml(user_file)
 
+        # Check plugin registrations
+        plugin_file = self._get_plugin_service_file(name)
+        if plugin_file:
+            return self._load_yaml(plugin_file)
+
         # Check repo defaults
         repo_file = self.repo_services_path / f"{name}.yaml"
         if repo_file.exists():
@@ -70,6 +74,19 @@ class ServiceManager:
             console.print(f"[red]Error loading {path}: {e}[/red]")
             return None
 
+    def _get_plugin_service_file(self, name: str) -> Path | None:
+        """Locate a registered plugin service definition."""
+        if not self.plugin_services_path.exists():
+            return None
+
+        for plugin_dir in self.plugin_services_path.iterdir():
+            if not plugin_dir.is_dir():
+                continue
+            candidate = plugin_dir / f"{name}.yaml"
+            if candidate.exists():
+                return candidate
+        return None
+
     def list_services(self) -> dict[str, str]:
         """List all available services with their sources."""
         services = {}
@@ -86,6 +103,15 @@ class ServiceManager:
                 name = yaml_file.stem
                 services[name] = "user"
 
+        # Get plugin-provided services
+        if self.plugin_services_path.exists():
+            for plugin_dir in self.plugin_services_path.iterdir():
+                if not plugin_dir.is_dir():
+                    continue
+                for yaml_file in plugin_dir.glob("*.yaml"):
+                    name = yaml_file.stem
+                    services[name] = "plugin"
+
         return services
 
     def which_service(self, name: str) -> str | None:
@@ -93,6 +119,10 @@ class ServiceManager:
         user_file = self.user_services_path / f"{name}.yaml"
         if user_file.exists():
             return str(user_file)
+
+        plugin_file = self._get_plugin_service_file(name)
+        if plugin_file:
+            return str(plugin_file)
 
         repo_file = self.repo_services_path / f"{name}.yaml"
         if repo_file.exists():
@@ -145,11 +175,17 @@ class ServiceManager:
         if not user_file.exists():
             # Copy from default if exists
             repo_file = self.repo_services_path / f"{name}.yaml"
+            plugin_file = self._get_plugin_service_file(name)
             if repo_file.exists():
                 import shutil
 
                 shutil.copy(repo_file, user_file)
                 console.print(f"[yellow]Copied default to {user_file}[/yellow]")
+            elif plugin_file and Path(plugin_file).exists():
+                import shutil
+
+                shutil.copy(plugin_file, user_file)
+                console.print(f"[yellow]Copied plugin definition to {user_file}[/yellow]")
             else:
                 raise ValueError(f"Service {name} not found")
 
@@ -234,13 +270,37 @@ class ServiceManager:
 
     def down_service(self, name: str, volumes: bool = False) -> None:
         """Stop and remove a service."""
-        container_name = f"{self.brand.container_prefix}-{name}"
+        definition = self.get_service_definition(name)
+        config = ServiceConfig.from_definition(definition) if definition else None
 
-        if self.docker.container_exists(container_name):
-            self.docker.stop_container(container_name)
-            self.docker.remove_container(container_name, volumes=volumes)
-        else:
+        container_name = (
+            config.container_name
+            if config and config.container_name
+            else f"{self.brand.container_prefix}-{name}"
+        )
+
+        if not self.docker.container_exists(container_name):
             console.print(f"[yellow]Container {container_name} not found[/yellow]")
+            return
+
+        console.print(f"[cyan]Stopping {name}...[/cyan]")
+        stopped = self.docker.stop_container(container_name)
+
+        removed = False
+        if stopped:
+            removed = self.docker.remove_container(container_name)
+        if not removed:
+            removed = self.docker.remove_container(container_name, force=True)
+
+        if removed:
+            console.print(f"[green]✅ {name} stopped and removed[/green]")
+        else:
+            console.print(f"[red]Failed to remove {name}[/red]")
+
+        if volumes:
+            console.print(
+                f"[yellow]Volume retention is enforced; persistent data for {name} was left intact.[/yellow]"
+            )
 
     def restart_service(self, name: str) -> None:
         """Restart a service."""

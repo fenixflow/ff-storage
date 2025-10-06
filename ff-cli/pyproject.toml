@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "ff-cli"
-version = "0.2.0"
+version = "0.4.0"
 description = "Fenix-wide CLI with plugin architecture for project-specific commands"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -33,7 +33,7 @@ dependencies = [
     "pyyaml>=6.0.0",  # For YAML service definitions
     "toml>=0.10.2",  # For TOML branding config
     "jinja2>=3.1.0",  # For template scaffolding
-    "ff-logger>=0.1.0",  # For logging
+    "ff-logger>=0.3.0",  # For logging
 ]
 
 [project.optional-dependencies]

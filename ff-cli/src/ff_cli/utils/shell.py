@@ -5,11 +5,9 @@ import shutil
 import subprocess
 from pathlib import Path
 
-from rich.console import Console
-
 from ff_cli.config import get_logger
+from ff_cli.utils.common import console
 
-console = Console()
 logger = get_logger("shell")
 
 

@@ -1,5 +1,6 @@
 """Plugin management commands for the branded CLI."""
 
+import shutil
 import subprocess
 import sys
 from datetime import datetime
@@ -7,15 +8,14 @@ from pathlib import Path
 
 import tomllib
 import typer
-from rich.console import Console
 from rich.panel import Panel
 from rich.prompt import Confirm, Prompt
 from rich.table import Table
 
 from ff_cli import plugin_creator, plugin_registry
 from ff_cli.branding import get_brand
+from ff_cli.utils.common import HAS_UV, console, get_git_config
 
-console = Console()
 brand = get_brand()
 
 app = typer.Typer(help=f"Manage {brand.cli_display_name} plugins")
@@ -60,9 +60,12 @@ def create_plugin(
         default=f"A {brand.cli_display_name} plugin for {name}",
     )
 
-    # Get author information
-    author_name = Prompt.ask("[cyan]Author name[/cyan]", default="Your Name")
-    author_email = Prompt.ask("[cyan]Author email[/cyan]", default="you@example.com")
+    # Get author information from git config or use defaults
+    default_author = get_git_config("user.name", "Your Name")
+    default_email = get_git_config("user.email", "you@example.com")
+
+    author_name = Prompt.ask("[cyan]Author name[/cyan]", default=default_author)
+    author_email = Prompt.ask("[cyan]Author email[/cyan]", default=default_email)
 
     # Ask about examples
     if not no_examples:
@@ -78,8 +81,19 @@ def create_plugin(
         path_str = Prompt.ask("[cyan]Where to create the plugin?[/cyan]", default=str(default_path))
         path = Path(path_str)
 
-    # Create full plugin path
-    plugin_path = path / name
+    # Create full plugin path with _plugin suffix for the folder
+    plugin_folder_name = f"{name}_plugin" if not name.endswith("_plugin") else name
+    plugin_path = (path / plugin_folder_name).resolve()  # Always use absolute path
+
+    # Check if plugin path already exists
+    force_delete = False
+    if plugin_path.exists():
+        console.print(f"\n[yellow]⚠️ Directory already exists: {plugin_path}[/yellow]")
+        if Confirm.ask("[cyan]Delete existing directory and continue?[/cyan]", default=False):
+            force_delete = True
+        else:
+            console.print("[red]Plugin creation cancelled.[/red]")
+            raise typer.Exit(0)
 
     # Show summary
     console.print("\n[bold]Plugin Configuration:[/bold]")
@@ -92,6 +106,8 @@ def create_plugin(
     summary_table.add_row("Author", f"{author_name} <{author_email}>")
     summary_table.add_row("Location", str(plugin_path))
     summary_table.add_row("Include Examples", "Yes" if include_examples else "No")
+    if force_delete:
+        summary_table.add_row("Force Delete", "Yes" if force_delete else "No")
     console.print(summary_table)
 
     if not Confirm.ask("\n[cyan]Create plugin with these settings?[/cyan]", default=True):
@@ -101,9 +117,15 @@ def create_plugin(
     # Create the plugin
     try:
         console.print("\n[cyan]Creating plugin structure...[/cyan]")
+
+        # Delete existing directory if force_delete is True
+        if force_delete and plugin_path.exists():
+            console.print(f"[cyan]Deleting existing directory: {plugin_path}[/cyan]")
+            shutil.rmtree(plugin_path)
+
         created_path = plugin_creator.create_plugin_structure(
             base_path=path,
-            plugin_name=name,
+            plugin_name=plugin_folder_name,  # This will be the folder name
             display_name=display_name,
             description=description,
             author_name=author_name,
@@ -112,7 +134,7 @@ def create_plugin(
         )
         console.print(f"[green]✅ Plugin created at: {created_path}[/green]")
 
-        # Get module name for later use
+        # Get module name for later use (based on original name, not folder name)
         module_name = plugin_creator.sanitize_plugin_name(name)
 
         # Install the plugin if requested
@@ -120,24 +142,19 @@ def create_plugin(
             console.print("\n[cyan]Installing plugin...[/cyan]")
             try:
                 # Find plugin info from the created structure
-                entry_point = f"{module_name}.cli:plugin"
-
-                # Copy plugin files
-                plugin_creator.copy_plugin_for_installation(created_path, name)
+                # entry_point would be f"{module_name}.cli:plugin"
 
                 # Add to registry
-                plugin_registry.add_plugin_to_registry(
+                plugin_registry.register_plugin(
                     name=display_name,
                     source_path=str(created_path),
-                    plugin_module=module_name,
-                    entry_point=entry_point,
+                    package_name=module_name,
                     description=description,
                 )
 
                 # Also install in editable mode for development
                 console.print("[cyan]Installing in editable mode for development...[/cyan]")
-                use_uv = subprocess.run(["which", "uv"], capture_output=True).returncode == 0
-                if use_uv:
+                if HAS_UV:
                     cmd = ["uv", "pip", "install", "-e", str(created_path)]
                 else:
                     cmd = [sys.executable, "-m", "pip", "install", "-e", str(created_path)]
@@ -302,16 +319,16 @@ def install_plugin(
         # Check if already installed
         if plugin_registry.is_plugin_installed(plugin_name) and not upgrade:
             console.print(f"[yellow]Plugin '{plugin_name}' is already installed[/yellow]")
-            console.print(
-                f"Use --upgrade to reinstall or '{cli_name} plugins upgrade {plugin_name}'"
-            )
-            raise typer.Exit(1)
+            if Confirm.ask("[cyan]Upgrade?[/cyan]", default=True):
+                upgrade = True
+            else:
+                console.print("[yellow]Installation cancelled.[/yellow]")
+                raise typer.Exit(0)
 
         # Install plugin in editable mode using uv/pip
         console.print("Installing plugin in editable mode...")
-        use_uv = subprocess.run(["which", "uv"], capture_output=True).returncode == 0
 
-        if use_uv:
+        if HAS_UV:
             cmd = ["uv", "pip", "install", "-e", str(source_path), "--python", sys.executable]
             if upgrade:
                 cmd.append("--force-reinstall")
@@ -326,11 +343,9 @@ def install_plugin(
             raise typer.Exit(1)
 
         # Add to registry
-        plugin_registry.add_plugin_to_registry(
+        plugin_registry.register_plugin(
             name=plugin_name,
             source_path=str(source_path),
-            plugin_module=plugin_module,
-            entry_point=entry_point,
             package_name=package_name,
             description=_get_plugin_description(source_path),
         )
@@ -400,9 +415,8 @@ def remove_plugin(
     package_name = info.get("package_name", info.get("plugin_module", name))
 
     # Uninstall plugin using uv/pip
-    use_uv = subprocess.run(["which", "uv"], capture_output=True).returncode == 0
 
-    if use_uv:
+    if HAS_UV:
         cmd = ["uv", "pip", "uninstall", package_name, "--python", sys.executable]
     else:
         cmd = [sys.executable, "-m", "pip", "uninstall", "-y", package_name]
@@ -414,7 +428,7 @@ def remove_plugin(
         console.print(f"[yellow]⚠️ Could not uninstall package: {result.stderr}[/yellow]")
 
     # Remove from registry
-    if plugin_registry.remove_plugin_from_registry(name):
+    if plugin_registry.unregister_plugin(name):
         console.print("✅ Plugin unregistered")
 
     console.print(f"[green]Plugin '{name}' removed successfully![/green]")

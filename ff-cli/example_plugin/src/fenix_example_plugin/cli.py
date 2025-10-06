@@ -42,7 +42,7 @@ def config(
     if get:
         console.print(f"[cyan]Getting config value for: {get}[/cyan]")
         # In a real plugin, this would read from actual config
-        console.print(f"Value: example_value")
+        console.print("Value: example_value")
     elif set_key and value:
         console.print(f"[cyan]Setting {set_key} = {value}[/cyan]")
         # In a real plugin, this would save to actual config
@@ -58,22 +58,22 @@ def run(
 ):
     """Run an example task."""
     console.print(f"[cyan]Running task: {task}[/cyan]")
-    
+
     if verbose:
         console.print("[dim]Verbose mode enabled[/dim]")
         console.print("[dim]Step 1: Initializing...[/dim]")
         console.print("[dim]Step 2: Processing...[/dim]")
         console.print("[dim]Step 3: Completing...[/dim]")
-    
+
     console.print(f"[green]✅ Task '{task}' completed successfully![/green]")
 
 
 def plugin():
     """Entry point for the plugin.
-    
+
     This function is called by Fenix CLI to get the Typer app for this plugin.
     It's registered in pyproject.toml under [project.entry-points."fenix.plugins"].
-    
+
     Returns:
         typer.Typer: The Typer app with all plugin commands
     """
