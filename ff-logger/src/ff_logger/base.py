@@ -70,8 +70,10 @@ class ScopedLogger:
             # Check for reserved fields that would conflict with LogRecord
             if key in RESERVED_FIELDS:
                 raise ValueError(
-                    f"Cannot bind reserved field '{key}'. "
-                    f"Reserved fields: {', '.join(sorted(RESERVED_FIELDS))}"
+                    f"Cannot bind reserved LogRecord field '{key}'. "
+                    f"This field is reserved by Python's logging module. "
+                    f"See https://docs.python.org/3/library/logging.html"
+                    f"#logrecord-attributes for all reserved fields."
                 )
 
             # Ensure values are JSON-serializable types

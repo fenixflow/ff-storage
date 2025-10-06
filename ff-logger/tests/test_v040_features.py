@@ -204,18 +204,21 @@ def test_json_serialization_never_crashes():
 
 # Test 5: Reserved key sanitization
 def test_reserved_key_sanitization():
-    """Test that reserved keys are prefixed with x_."""
+    """Test that reserved LogRecord fields are prefixed with x_ and still appear."""
     stream = io.StringIO()
     logger = ConsoleLogger(name="test.reserved", level="INFO", stream=stream)
 
-    # Use reserved keys as context (avoiding 'message' which is a positional parameter)
-    logger.info("Test message", level="custom_level", time="custom_time", logger="custom_logger")
+    # Use reserved keys as context (v0.4.1: all LogRecord internals are reserved)
+    # 'name' is the most critical one as it causes "Attempt to overwrite 'name' in LogRecord"
+    logger.info("Test message", name="custom_name", module="custom_module")
 
     output = stream.getvalue()
-    # The original 'level' from LogRecord should be INFO, not 'custom_level'
+    # The original LogRecord fields should be unaffected
     assert "INFO" in output
-    # Custom fields should be prefixed
-    assert "x_level" in output or "x_time" in output or "x_logger" in output
+    assert "test.reserved" in output  # Original logger name
+    # Custom fields should be prefixed to avoid conflicts
+    assert "x_name" in output
+    assert "x_module" in output
 
 
 # Test 6: Nested context managers

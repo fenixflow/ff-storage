@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.1] - 2025-01-XX
+
+### Fixed
+- **Comprehensive reserved field protection**: Fixed LogRecord conflicts with user-provided context fields
+  - `RESERVED_FIELDS` now includes all 23+ Python LogRecord attributes (was only 7 in v0.4.0)
+  - Fixes "Attempt to overwrite 'name' in LogRecord" errors when using `name=` in log method calls
+  - Automatically prefixes all reserved fields (`name` → `x_name`, `module` → `x_module`, etc.)
+  - Uses `frozenset(LOGGING_INTERNAL_FIELDS)` for O(1) lookup performance and single source of truth
+- **Improved error messages**: `bind()` now provides clearer errors with link to Python logging documentation when attempting to bind reserved fields
+
+### Note
+- Logger constructor `name` parameter is unaffected - this fix only applies to runtime context fields passed in log method calls (e.g., `logger.info("msg", name="value")`)
+
 ## [0.4.0] - 2025-01-XX
 
 ### Added
