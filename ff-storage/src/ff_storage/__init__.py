@@ -2,7 +2,7 @@
 ff-storage: Database and file storage operations for Fenixflow applications.
 """
 
-__version__ = "0.2.0"
+__version__ = "1.1.0"
 
 from .db.migrations import MigrationManager
 from .db.mysql import MySQL, MySQLPool
@@ -11,7 +11,7 @@ from .db.mysql import MySQL, MySQLPool
 from .db.postgres import Postgres, PostgresPool
 
 # Object storage exports
-from .object import LocalObjectStorage, ObjectStorage, S3ObjectStorage
+from .object import AzureBlobObjectStorage, LocalObjectStorage, ObjectStorage, S3ObjectStorage
 
 __all__ = [
     # PostgreSQL
@@ -26,4 +26,5 @@ __all__ = [
     "ObjectStorage",
     "LocalObjectStorage",
     "S3ObjectStorage",
+    "AzureBlobObjectStorage",
 ]
