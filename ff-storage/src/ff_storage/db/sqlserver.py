@@ -365,12 +365,8 @@ class SQLServerPool:
 
         async with self.pool.acquire() as conn:
             async with conn.cursor() as cursor:
-                # Only pass parameters if they exist and are not empty
-                if params:
-                    param_values = list(params.values())
-                    await cursor.execute(query, param_values)
-                else:
-                    await cursor.execute(query)
+                param_values = list((params or {}).values()) if params else None
+                await cursor.execute(query, param_values)
                 result = await cursor.fetchone()
 
                 if result is None:
@@ -398,12 +394,8 @@ class SQLServerPool:
 
         async with self.pool.acquire() as conn:
             async with conn.cursor() as cursor:
-                # Only pass parameters if they exist and are not empty
-                if params:
-                    param_values = list(params.values())
-                    await cursor.execute(query, param_values)
-                else:
-                    await cursor.execute(query)
+                param_values = list((params or {}).values()) if params else None
+                await cursor.execute(query, param_values)
                 results = await cursor.fetchall()
 
                 if as_dict and cursor.description:
@@ -427,12 +419,8 @@ class SQLServerPool:
 
         async with self.pool.acquire() as conn:
             async with conn.cursor() as cursor:
-                # Only pass parameters if they exist and are not empty
-                if params:
-                    param_values = list(params.values())
-                    await cursor.execute(query, param_values)
-                else:
-                    await cursor.execute(query)
+                param_values = list((params or {}).values()) if params else None
+                await cursor.execute(query, param_values)
                 await conn.commit()
                 return cursor.rowcount
 
@@ -452,92 +440,3 @@ class SQLServerPool:
                 param_tuples = [list(p.values()) for p in params_list]
                 await cursor.executemany(query, param_tuples)
                 await conn.commit()
-
-    async def execute_query(self, query: str, params: dict = None):
-        """
-        Execute a query with OUTPUT clause and fetch the result.
-
-        This method is for queries where SQL Server needs to return values
-        after an INSERT, UPDATE, or DELETE operation using OUTPUT.
-
-        :param query: The SQL query containing OUTPUT.
-        :param params: Dictionary of query parameters.
-        :return: A list of dictionaries with the returned values.
-        :raises RuntimeError: If the query execution fails.
-        """
-        if not self.pool:
-            raise RuntimeError("Pool not connected. Call await pool.connect() first.")
-
-        async with self.pool.acquire() as conn:
-            async with conn.cursor() as cursor:
-                # Only pass parameters if they exist and are not empty
-                if params:
-                    param_values = list(params.values())
-                    await cursor.execute(query, param_values)
-                else:
-                    await cursor.execute(query)
-
-                results = []
-                if "OUTPUT" in query.upper():
-                    results = await cursor.fetchall()
-                    if cursor.description:
-                        columns = [col[0] for col in cursor.description]
-                        results = [dict(zip(columns, row)) for row in results]
-
-                await conn.commit()
-                return results
-
-    async def table_exists(self, table_name: str, schema: str = None) -> bool:
-        """
-        Check if a table exists in the database.
-
-        :param table_name: Name of the table.
-        :param schema: Optional schema name (default: dbo).
-        :return: True if table exists, False otherwise.
-        """
-        schema = schema or "dbo"
-        query = """
-            SELECT CASE WHEN EXISTS (
-                SELECT * FROM INFORMATION_SCHEMA.TABLES
-                WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?
-            ) THEN 1 ELSE 0 END
-        """
-        result = await self.fetch_one(query, {"schema": schema, "table": table_name}, as_dict=False)
-        return result[0] == 1 if result else False
-
-    async def get_table_columns(self, table_name: str, schema: str = None):
-        """
-        Get column information for a table.
-
-        :param table_name: Name of the table.
-        :param schema: Optional schema name (default: dbo).
-        :return: List of column information dictionaries.
-        """
-        schema = schema or "dbo"
-        query = """
-            SELECT
-                COLUMN_NAME,
-                DATA_TYPE,
-                IS_NULLABLE,
-                COLUMN_DEFAULT,
-                CHARACTER_MAXIMUM_LENGTH,
-                ORDINAL_POSITION
-            FROM INFORMATION_SCHEMA.COLUMNS
-            WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?
-            ORDER BY ORDINAL_POSITION
-        """
-        results = await self.fetch_all(
-            query, {"schema": schema, "table": table_name}, as_dict=False
-        )
-
-        return [
-            {
-                "name": row[0],
-                "type": row[1],
-                "nullable": row[2] == "YES",
-                "default": row[3],
-                "max_length": row[4],
-                "position": row[5],
-            }
-            for row in results
-        ]
