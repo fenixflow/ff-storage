@@ -4,13 +4,14 @@ A lightweight document parsing library for extracting content from various file 
 
 ## Features
 
-- **Multiple Format Support**: PDF, Excel (xlsx/xls/csv), Word (docx), Email (eml), and plain text files
-- **Simple Provenance**: Track page numbers, sheet names, and paragraph locations
-- **Table Extraction**: Extract structured table data from documents
-- **Metadata Extraction**: Get document properties and metadata
-- **OCR Support**: Optional OCR for scanned PDFs using pytesseract
-- **Encoding Detection**: Automatic encoding detection for text files
-- **Clean API**: Simple, consistent interface across all parsers
+- **Markdown + Manifest Bundles**: Produce clean Markdown alongside a manifest describing attachments, hashes, and storage locations.
+- **Attachment Awareness**: Recursively extract email attachments (including nested `.eml` files) and persist assets deterministically.
+- **Configurable Pipeline**: Single entry point (`DocumentIngestionPipeline`) that handles parser selection, rendering, and persistence.
+- **Multiple Format Support**: PDF, Excel (xlsx/xls/csv), Word (docx), Email (eml), and plain text files.
+- **Structured Models**: Pydantic models for everything (documents, metadata, bundles) ready for JSON serialisation.
+- **OCR & Handwriting Toggles**: Propagate OCR/handwriting preferences through parsers and renderers.
+- **CLI & Adapter**: Run `python -m ff_parsers.ingest` for manual ingestion or use the fenix-agents adapter to stay API-compatible.
+- **MarkItDown Fallback**: Optionally defer to the `markitdown` package when no native parser is available.
 
 ## Installation
 
@@ -42,27 +43,93 @@ brew install tesseract
 
 ## Quick Start
 
-### Basic Usage
+### Document Ingestion Pipeline
 
 ```python
-from ff_parsers import ParserFactory
+from pathlib import Path
 
-# Create factory
+from ff_parsers import DocumentIngestionPipeline, ParseOptions
+
+pipeline = DocumentIngestionPipeline()
+bundle = pipeline.ingest(
+    Path("reports/monthly.pdf"),
+    ParseOptions(renderer="auto", ocr_enabled=True),
+    output_dir=Path("output/monthly_report"),
+)
+
+print(bundle.markdown[:400])  # Clean Markdown ready for chunking
+print(bundle.attachments_dir)  # Directory where assets were persisted
+
+# Serialise manifest for storage or downstream processing
+manifest = bundle.to_manifest()
+```
+
+Each ingestion returns a `DocumentBundle`:
+
+- `document`: root `BundleNode` containing primary Markdown and metadata.
+- `attachments_dir`: path where attachments were written (or `None` when no attachments).
+- `options`: normalised options used for parsing/rendering.
+- `iter_attachments()`: iterate through every attachment node in the tree.
+
+See [`ff_parsers.models`](src/ff_parsers/models.py) for the full Pydantic model definitions.
+
+### CLI Usage
+
+```bash
+python -m ff_parsers.ingest path/to/file.eml --out ./bundle --ocr --renderer auto
+```
+
+The CLI writes three things into `--out`:
+
+- `<name>.md` – the rendered Markdown.
+- `<name>_manifest.json` – serialisable manifest (document + attachments).
+- `attachments/` – deterministic filenames for every extracted asset.
+
+Use `--handwriting` to enable handwriting inference (implies OCR) and `--include-binary` to keep attachment bytes in the manifest payload.
+
+> **Tip:** install the optional [`markitdown`](https://github.com/microsoft/markitdown) package to enable fallback rendering for formats that lack native parsers. Configure `ParseOptions(renderer="markitdown")` to force the fallback.
+
+### Manual Testing Script
+
+For ad-hoc validation outside the CLI, a helper script is provided:
+
+```bash
+python scripts/manual_run_pipeline.py /path/to/file1 /path/to/file2 --out ./bundles --renderer auto --ocr
+```
+
+It prints a compact summary for each file (markdown length, attachment counts) and, unless `--summary-only` is supplied, writes markdown, manifest, and attachments to the output directory.
+
+### fenix-agents Adapter
+
+The package includes a thin adapter that returns a `ParsedDocument`-compatible payload for fenix-agents:
+
+```python
+from ff_parsers import FenixAgentsPipelineAdapter, ParseOptions
+
+adapter = FenixAgentsPipelineAdapter()
+parsed = adapter.ingest("/path/to/file.eml", ParseOptions())
+
+print(parsed.content)               # Markdown content
+print(parsed.manifest["document"]) # Access manifest/attachments metadata
+```
+
+`ParsedDocumentAdapter` mirrors the fenix-agents `ParsedDocument` fields and adds `manifest` + `attachments_dir` for downstream ingestion.
+
+### Using the Parser Factory Directly
+
+```python
+from ff_parsers import ParserFactory, ParseOptions
+
 factory = ParserFactory()
 
-# Auto-detect file type and parse
 parser = factory.get_parser_for_file("document.pdf")
-result = parser.parse("document.pdf")
+result = parser.parse("document.pdf", ParseOptions(ocr_enabled=True))
 
-# Access extracted content
 print(result.text)  # Full text
 print(f"Pages: {result.page_count}")
 print(f"Tables: {result.table_count}")
-
-# Access metadata
 print(f"Title: {result.metadata.title}")
 print(f"Author: {result.metadata.author}")
-print(f"Created: {result.metadata.created_date}")
 ```
 
 ### Parse Specific File Types
@@ -158,6 +225,8 @@ options = ParseOptions(
     # Text processing
     preserve_whitespace=False,  # Preserve original whitespace
     include_formatting=False,   # Include formatting information
+    renderer="auto",            # auto | markdownit | native | markitdown
+    extract_links=False,        # Extract hyperlinks when supported
     
     # Selective extraction
     page_numbers=[1, 2, 3],     # Extract specific pages only
@@ -165,6 +234,13 @@ options = ParseOptions(
     
     # Text encoding (for text files)
     encoding=None,              # Auto-detect if None
+
+    # Attachments
+    attachment_root="./bundle/attachments",  # Persist attachments under this path
+    include_binary_payloads=False,           # Retain attachment bytes in the returned bundle
+
+    # Handwriting
+    handwriting_enabled=False,  # Toggle handwriting models (implies OCR is enabled)
 )
 
 result = parser.parse("document.pdf", options)
@@ -191,57 +267,49 @@ for name, info in factory.list_parsers().items():
     print(f"{name}: {info['extensions']}")
 ```
 
-## Data Models
+## Data Models & Manifest
 
-### ExtractedDocument
-
-The main result object containing all extracted content:
+- **ExtractedDocument** – parser output containing raw text, tables, metadata, email metadata, and attachment nodes.
+- **BundleNode** – Pydantic model describing each document/attachment node (`name`, `file_type`, `markdown`, `location`, `children`).
+- **DocumentBundle** – wrapper returned by the pipeline; includes the root node, attachment directory, serialisable manifest, and resolved options.
 
 ```python
-@dataclass
-class ExtractedDocument:
-    text: str                           # Full extracted text
-    pages: List[ExtractedText]          # Page/section-wise text
-    tables: List[ExtractedTable]        # Extracted tables
-    images: List[ExtractedImage]        # Image metadata
-    metadata: DocumentMetadata          # Document metadata
-    email_metadata: Optional[EmailMetadata]  # Email-specific metadata
-    file_path: Optional[str]            # Original file path
-    file_hash: Optional[str]            # SHA-256 hash
-    extraction_timestamp: Optional[datetime]
-    parser_version: Optional[str]
-    errors: List[str]                   # Non-fatal errors
-    warnings: List[str]                 # Warnings
+from ff_parsers.models import BundleNode, DocumentBundle
+
+bundle = pipeline.ingest("memo.eml", ParseOptions())
+root: BundleNode = bundle.document
+manifest = bundle.to_manifest()
+
+print(root.markdown)  # Markdown for the main document
+for attachment in bundle.iter_attachments():
+    print(attachment.name, attachment.location)
 ```
 
-### ExtractedText
+Manifests follow the shape:
 
-Text with location information:
-
-```python
-@dataclass
-class ExtractedText:
-    content: str                # The text content
-    page: Optional[int]         # Page number (1-indexed)
-    paragraph: Optional[int]    # Paragraph number
-    line: Optional[int]         # Line number
-    sheet: Optional[str]        # Excel sheet name
-    confidence: float = 1.0     # Confidence score (0.0-1.0)
-```
-
-### ExtractedTable
-
-Structured table data:
-
-```python
-@dataclass
-class ExtractedTable:
-    headers: List[str]          # Column headers
-    rows: List[List[str]]       # Data rows
-    page: Optional[int]         # Page where table appears
-    sheet: Optional[str]        # Excel sheet name
-    name: Optional[str]         # Table name/identifier
-    cell_range: Optional[str]   # Excel cell range (e.g., "A1:D10")
+```json
+{
+  "created_at": "...",
+  "source_path": "/absolute/path/to/file.eml",
+  "attachments_dir": "/absolute/path/to/bundle/attachments",
+  "document": {
+    "id": "...",
+    "name": "file.eml",
+    "markdown": "# Email ...",
+    "location": null,
+    "file_type": ".eml",
+    "mime_type": "message/rfc822",
+    "sub_files": [
+      {
+        "id": "...",
+        "name": "invoice.pdf",
+        "location": "memo_attachments/invoice.pdf",
+        "markdown": "Attachment: invoice.pdf (application/pdf)",
+        "sub_files": []
+      }
+    ]
+  }
+}
 ```
 
 ## Supported Formats
@@ -251,7 +319,7 @@ class ExtractedTable:
 | PDF | .pdf | Text, tables, images, OCR support |
 | Excel | .xlsx, .xls, .csv | Sheets, tables, formulas |
 | Word | .docx | Text, tables, images, metadata |
-| Email | .eml | Headers, body, attachments list |
+| Email | .eml | Headers, body, manifest + attachment payloads |
 | Text | .txt, .md, .rst, .log | Encoding detection, line tracking |
 
 ## Error Handling

@@ -1,14 +1,31 @@
 """
-Data models for the ff-parsers package.
+Core Pydantic models used by ff-parsers.
+
+These models describe the extracted document payloads as well as the bundle
+structure returned by the ingestion pipeline.
 """
 
-from dataclasses import dataclass, field
+from __future__ import annotations
+
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Iterable, Iterator, List, Optional
+from uuid import uuid4
+
+from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator
 
 
-@dataclass
-class ExtractedText:
+class FFBaseModel(BaseModel):
+    """Base Pydantic configuration shared by all ff-parsers models."""
+
+    model_config = ConfigDict(
+        arbitrary_types_allowed=True,
+        validate_assignment=True,
+        populate_by_name=True,
+        extra="ignore",
+    )
+
+
+class ExtractedText(FFBaseModel):
     """
     Represents extracted text with location information.
 
@@ -26,15 +43,17 @@ class ExtractedText:
     paragraph: Optional[int] = None
     line: Optional[int] = None
     sheet: Optional[str] = None
-    confidence: float = 1.0
+    confidence: float = Field(default=1.0, ge=0.0, le=1.0)
 
-    def __post_init__(self):
-        if not 0.0 <= self.confidence <= 1.0:
-            raise ValueError(f"Confidence must be between 0.0 and 1.0, got {self.confidence}")
+    @field_validator("content")
+    @classmethod
+    def _validate_content(cls, value: str) -> str:
+        if value is None or value == "":
+            raise ValueError("ExtractedText.content must be a non-empty string")
+        return value
 
 
-@dataclass
-class ExtractedTable:
+class ExtractedTable(FFBaseModel):
     """
     Represents an extracted table with its data and location.
 
@@ -54,14 +73,16 @@ class ExtractedTable:
     name: Optional[str] = None
     cell_range: Optional[str] = None
 
+    @computed_field
     @property
     def row_count(self) -> int:
-        """Get the number of data rows (excluding headers)."""
+        """Number of data rows (excluding headers)."""
         return len(self.rows)
 
+    @computed_field
     @property
     def column_count(self) -> int:
-        """Get the number of columns."""
+        """Number of columns."""
         return len(self.headers)
 
     def to_dict(self) -> List[Dict[str, str]]:
@@ -69,8 +90,7 @@ class ExtractedTable:
         return [dict(zip(self.headers, row)) for row in self.rows]
 
 
-@dataclass
-class ExtractedImage:
+class ExtractedImage(FFBaseModel):
     """
     Represents metadata about an extracted image.
 
@@ -93,8 +113,7 @@ class ExtractedImage:
     image_data: Optional[bytes] = None
 
 
-@dataclass
-class DocumentMetadata:
+class DocumentMetadata(FFBaseModel):
     """
     Document-level metadata extracted from the file.
 
@@ -124,11 +143,10 @@ class DocumentMetadata:
     language: Optional[str] = None
     file_size: Optional[int] = None
     mime_type: Optional[str] = None
-    custom_properties: Dict[str, Any] = field(default_factory=dict)
+    custom_properties: Dict[str, Any] = Field(default_factory=dict)
 
 
-@dataclass
-class EmailMetadata:
+class EmailMetadata(FFBaseModel):
     """
     Email-specific metadata.
 
@@ -145,18 +163,141 @@ class EmailMetadata:
     """
 
     from_address: Optional[str] = None
-    to_addresses: List[str] = field(default_factory=list)
-    cc_addresses: List[str] = field(default_factory=list)
-    bcc_addresses: List[str] = field(default_factory=list)
+    to_addresses: List[str] = Field(default_factory=list)
+    cc_addresses: List[str] = Field(default_factory=list)
+    bcc_addresses: List[str] = Field(default_factory=list)
     subject: Optional[str] = None
     date: Optional[datetime] = None
     message_id: Optional[str] = None
     in_reply_to: Optional[str] = None
-    attachments: List[str] = field(default_factory=list)
+    attachments: List[str] = Field(default_factory=list)
 
 
-@dataclass
-class ExtractedDocument:
+class BundleNode(FFBaseModel):
+    """
+    Represents a node in the document bundle manifest.
+
+    A node can be the primary document or a nested attachment. Each node can
+    contain Markdown output, metadata, binary payloads, and child nodes.
+    """
+
+    node_id: str = Field(default_factory=lambda: uuid4().hex)
+    name: str
+    file_type: Optional[str] = None
+    location: Optional[str] = Field(
+        default=None,
+        description="Relative path to persisted asset within the bundle",
+    )
+    markdown: Optional[str] = None
+    binary: Optional[bytes] = Field(
+        default=None,
+        description="Raw binary payload when the caller requests in-memory delivery.",
+    )
+    mime_type: Optional[str] = None
+    sha256: Optional[str] = None
+    size_bytes: Optional[int] = None
+    source_path: Optional[str] = None
+    content_id: Optional[str] = None
+    disposition: Optional[str] = None
+    is_inline: bool = False
+    depth: int = 0
+    parent_id: Optional[str] = None
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+    children: List["BundleNode"] = Field(default_factory=list)
+
+    kind: str = Field(
+        default="document",
+        description="Semantic category for the node (document|attachment|inline|archive).",
+    )
+
+    def add_child(self, child: "BundleNode") -> "BundleNode":
+        """Attach a child node and return it for fluent usage."""
+        child.parent_id = self.node_id
+        child.depth = self.depth + 1
+        self.children.append(child)
+        return child
+
+    def iter_nodes(self) -> Iterator["BundleNode"]:
+        """Depth-first iteration over the node and all descendants."""
+        yield self
+        for child in self.children:
+            yield from child.iter_nodes()
+
+    def to_manifest(self, include_binary: bool = False) -> Dict[str, Any]:
+        """
+        Convert the node (and its subtree) into a serialisable manifest.
+
+        Args:
+            include_binary: Whether to include binary payloads. Defaults to False.
+        """
+        payload: Dict[str, Any] = {
+            "id": self.node_id,
+            "name": self.name,
+            "location": self.location,
+            "file_type": self.file_type,
+            "markdown": self.markdown,
+            "mime_type": self.mime_type,
+            "sha256": self.sha256,
+            "size_bytes": self.size_bytes,
+            "source_path": self.source_path,
+            "content_id": self.content_id,
+            "disposition": self.disposition,
+            "is_inline": self.is_inline,
+            "kind": self.kind,
+            "metadata": self.metadata,
+            "sub_files": [
+                child.to_manifest(include_binary=include_binary) for child in self.children
+            ],
+        }
+
+        if include_binary and self.binary is not None:
+            payload["binary"] = self.binary
+
+        return payload
+
+
+class DocumentBundle(FFBaseModel):
+    """
+    Result returned by the DocumentIngestionPipeline.
+
+    Attributes:
+        document: Root node representing the primary document.
+        attachments_dir: Path where attachments were persisted (if any).
+        created_at: Timestamp when the bundle was produced.
+        source_path: Original source path when available.
+        options: Normalised parse/renderer options used for ingestion.
+    """
+
+    document: BundleNode
+    attachments_dir: Optional[str] = None
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    source_path: Optional[str] = None
+    options: Dict[str, Any] = Field(default_factory=dict)
+
+    def to_manifest(self, include_binary: bool = False) -> Dict[str, Any]:
+        """Serialise the bundle into a nested manifest dictionary."""
+        return {
+            "created_at": self.created_at.isoformat(),
+            "source_path": self.source_path,
+            "attachments_dir": self.attachments_dir,
+            "document": self.document.to_manifest(include_binary=include_binary),
+        }
+
+    @computed_field
+    @property
+    def markdown(self) -> str:
+        """Primary document markdown (empty string when unavailable)."""
+        return self.document.markdown or ""
+
+    def iter_attachments(self) -> Iterable[BundleNode]:
+        """Yield only attachment nodes (excluding the root document)."""
+        for node in self.document.iter_nodes():
+            if node is self.document:
+                continue
+            yield node
+
+
+class ExtractedDocument(FFBaseModel):
     """
     Complete extracted document with all content and metadata.
 
@@ -173,57 +314,66 @@ class ExtractedDocument:
         parser_version: Version of the parser used
         errors: List of non-fatal errors encountered during parsing
         warnings: List of warnings (e.g., "Some pages required OCR")
+        attachments: Attachment nodes collected during parsing
     """
 
-    text: str
-    pages: List[ExtractedText] = field(default_factory=list)
-    tables: List[ExtractedTable] = field(default_factory=list)
-    images: List[ExtractedImage] = field(default_factory=list)
-    metadata: DocumentMetadata = field(default_factory=DocumentMetadata)
+    text: str = ""
+    pages: List[ExtractedText] = Field(default_factory=list)
+    tables: List[ExtractedTable] = Field(default_factory=list)
+    images: List[ExtractedImage] = Field(default_factory=list)
+    metadata: DocumentMetadata = Field(default_factory=DocumentMetadata)
     email_metadata: Optional[EmailMetadata] = None
     file_path: Optional[str] = None
     file_hash: Optional[str] = None
     extraction_timestamp: Optional[datetime] = None
     parser_version: Optional[str] = None
-    errors: List[str] = field(default_factory=list)
-    warnings: List[str] = field(default_factory=list)
+    errors: List[str] = Field(default_factory=list)
+    warnings: List[str] = Field(default_factory=list)
+    attachments: List[BundleNode] = Field(default_factory=list)
 
+    @computed_field
     @property
     def has_errors(self) -> bool:
         """Check if any errors occurred during extraction."""
-        return len(self.errors) > 0
+        return bool(self.errors)
 
+    @computed_field
     @property
     def has_warnings(self) -> bool:
         """Check if any warnings were generated during extraction."""
-        return len(self.warnings) > 0
+        return bool(self.warnings)
 
+    @computed_field
     @property
     def page_count(self) -> int:
-        """Get the number of pages extracted."""
+        """Number of pages extracted."""
         return len(self.pages)
 
+    @computed_field
     @property
     def table_count(self) -> int:
-        """Get the number of tables extracted."""
+        """Number of tables extracted."""
         return len(self.tables)
 
+    @computed_field
     @property
     def image_count(self) -> int:
-        """Get the number of images found."""
+        """Number of images extracted."""
         return len(self.images)
 
+    def add_attachment(self, node: BundleNode) -> BundleNode:
+        """Register an attachment node on the document."""
+        self.attachments.append(node)
+        return node
+
     def get_page_text(self, page_number: int) -> Optional[str]:
-        """
-        Get text for a specific page.
-
-        Args:
-            page_number: 1-indexed page number
-
-        Returns:
-            Text content of the page or None if page doesn't exist
-        """
+        """Return the text content for a specific page when available."""
         for page in self.pages:
             if page.page == page_number:
                 return page.content
         return None
+
+
+# Rebuild forward references now that the classes are defined.
+BundleNode.model_rebuild()
+DocumentBundle.model_rebuild()

@@ -4,6 +4,7 @@ Tests for data models.
 
 import pytest
 from ff_parsers.models import (
+    BundleNode,
     DocumentMetadata,
     EmailMetadata,
     ExtractedDocument,
@@ -103,6 +104,16 @@ class TestExtractedDocument:
         assert doc.get_page_text(1) == "Page 1"
         assert doc.get_page_text(2) == "Page 2"
         assert doc.get_page_text(3) is None
+
+    def test_add_attachment(self):
+        """Ensure attachments can be registered."""
+        doc = ExtractedDocument(text="")
+        node = BundleNode(name="report.pdf", file_type=".pdf")
+
+        doc.add_attachment(node)
+
+        assert len(doc.attachments) == 1
+        assert doc.attachments[0].name == "report.pdf"
 
 
 class TestDocumentMetadata:

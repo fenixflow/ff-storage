@@ -2,6 +2,12 @@
 Utility functions for ff-parsers.
 """
 
+from .attachments import (
+    compute_sha256,
+    normalise_filename,
+    persist_attachment_bytes,
+    split_extension,
+)
 from .cleaning import clean_text, normalize_whitespace, remove_control_characters
 from .validation import detect_file_type, get_mime_type, is_valid_file
 
@@ -12,4 +18,8 @@ __all__ = [
     "is_valid_file",
     "detect_file_type",
     "get_mime_type",
+    "compute_sha256",
+    "normalise_filename",
+    "persist_attachment_bytes",
+    "split_extension",
 ]

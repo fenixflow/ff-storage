@@ -23,6 +23,7 @@ class ParseOptions:
         extract_images: Whether to extract images from the document
         extract_metadata: Whether to extract document metadata
         ocr_enabled: Whether to use OCR for scanned pages/images
+        handwriting_enabled: Whether to enable handwriting models (requires OCR)
         ocr_language: Language code for OCR (e.g., 'eng', 'fra', 'deu')
         ocr_timeout: Timeout in seconds for OCR operations
         include_formatting: Whether to preserve text formatting information
@@ -31,12 +32,16 @@ class ParseOptions:
         encoding: Text encoding to use (None = auto-detect)
         preserve_whitespace: Whether to preserve original whitespace
         extract_links: Whether to extract hyperlinks
+        renderer: Markdown renderer selection ('auto', 'markdownit', 'native', 'markitdown')
+        attachment_root: Directory where attachments should be persisted
+        include_binary_payloads: Whether to keep attachment bytes in memory
     """
 
     extract_tables: bool = True
     extract_images: bool = True
     extract_metadata: bool = True
     ocr_enabled: bool = False
+    handwriting_enabled: bool = False
     ocr_language: str = "eng"
     ocr_timeout: int = 30
     include_formatting: bool = False
@@ -45,6 +50,9 @@ class ParseOptions:
     encoding: Optional[str] = None
     preserve_whitespace: bool = False
     extract_links: bool = False
+    renderer: str = "auto"
+    attachment_root: Optional[str] = None
+    include_binary_payloads: bool = False
 
 
 class BaseParser(ABC):
