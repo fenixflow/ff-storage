@@ -4,13 +4,15 @@
 [![Python Support](https://img.shields.io/pypi/pyversions/ff-storage.svg)](https://pypi.org/project/ff-storage/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-A comprehensive storage package for Fenixflow applications, providing **async connection pools** for modern Python applications, database connections, object storage abstractions, migration management, and model utilities. Supports PostgreSQL, MySQL, Microsoft SQL Server, local filesystem storage, and S3-compatible services.
+A comprehensive storage package for Fenixflow applications, providing **async connection pools** for modern Python applications, database connections, object storage abstractions, migration management, and model utilities. Supports PostgreSQL, MySQL, Microsoft SQL Server, local filesystem storage, S3-compatible services, and Azure Blob Storage.
 
 Created by **Ben Moag** at **[Fenixflow](https://fenixflow.com)**
 
-## 🚨 Version 1.0.0 - Async Pools
+## 🚨 Version 1.1.0 - Azure Blob Storage + Async Pools
 
-**Breaking Change**: All connection pools are now async for better performance and scalability. Use direct connections for synchronous code.
+**New in 1.1.0**: Added Azure Blob Storage backend with support for both Azurite (local development) and production Azure Blob Storage.
+
+**Breaking Change in 1.0.0**: All connection pools are now async for better performance and scalability. Use direct connections for synchronous code.
 
 ## Quick Start
 
@@ -148,7 +150,7 @@ async def get_user(user_id: int):
 - **Query Builder**: SQL query construction utilities
 
 ### Object Storage
-- **Multiple Backends**: Local filesystem and S3/S3-compatible services
+- **Multiple Backends**: Local filesystem, S3/S3-compatible services, and Azure Blob Storage
 - **Async Operations**: Non-blocking I/O for better performance
 - **Streaming Support**: Handle large files without memory overhead
 - **Atomic Writes**: Safe file operations with temp file + rename
@@ -330,6 +332,57 @@ async def main():
 
 asyncio.run(main())
 ```
+
+#### Azure Blob Storage
+```python
+from ff_storage import AzureBlobObjectStorage
+import asyncio
+
+async def main():
+    # Azurite (local development)
+    storage = AzureBlobObjectStorage(
+        connection_string="DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;BlobEndpoint=http://127.0.0.1:10000/devstoreaccount1;",
+        container_name="fenix-documents"
+    )
+
+    # Production Azure Blob Storage
+    storage = AzureBlobObjectStorage(
+        connection_string="DefaultEndpointsProtocol=https;AccountName=myaccount;AccountKey=...;EndpointSuffix=core.windows.net",
+        container_name="fenix-documents",
+        prefix="documents/"  # Optional prefix for all keys
+    )
+
+    # Write file with metadata
+    await storage.write(
+        "reports/2025/quarterly.pdf",
+        pdf_bytes,
+        metadata={"content-type": "application/pdf", "author": "system"}
+    )
+
+    # Read file
+    data = await storage.read("reports/2025/quarterly.pdf")
+
+    # Stream large files
+    async for chunk in storage.read_stream("large_file.bin", chunk_size=8192):
+        await process_chunk(chunk)
+
+    # Check existence
+    exists = await storage.exists("reports/2025/quarterly.pdf")
+
+    # List blobs with prefix
+    files = await storage.list_keys(prefix="reports/2025/")
+
+    # Get metadata
+    metadata = await storage.get_metadata("reports/2025/quarterly.pdf")
+    print(metadata["content-type"])
+
+    # Delete blob
+    await storage.delete("reports/2025/quarterly.pdf")
+
+asyncio.run(main())
+```
+
+**Note**: Azure Blob Storage has restrictions on metadata keys (must be valid C# identifiers). The implementation automatically converts hyphens to underscores (e.g., `content-type` becomes `content_type`) when storing and converts them back when retrieving.
 
 ### Migration Management
 

@@ -119,7 +119,7 @@ async def test_fetch_one_no_params(pool_config, mock_aioodbc_pool):
 
     result = await pool.fetch_one("SELECT TOP 1 * FROM users", as_dict=False)
 
-    mock_cursor.execute.assert_called_once_with("SELECT TOP 1 * FROM users", None)
+    mock_cursor.execute.assert_called_once_with("SELECT TOP 1 * FROM users")
     assert result == (1,)
 
 
@@ -165,7 +165,7 @@ async def test_fetch_all_no_params(pool_config, mock_aioodbc_pool):
 
     result = await pool.fetch_all("SELECT * FROM users")
 
-    mock_cursor.execute.assert_called_once_with("SELECT * FROM users", None)
+    mock_cursor.execute.assert_called_once_with("SELECT * FROM users")
     assert len(result) == 1
 
 
@@ -198,7 +198,7 @@ async def test_execute_no_params(pool_config, mock_aioodbc_pool):
 
     result = await pool.execute("DELETE FROM expired_sessions")
 
-    mock_cursor.execute.assert_called_once_with("DELETE FROM expired_sessions", None)
+    mock_cursor.execute.assert_called_once_with("DELETE FROM expired_sessions")
     mock_conn.commit.assert_called_once()
     assert result == 5
 
