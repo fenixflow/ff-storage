@@ -2,7 +2,13 @@
 ff-storage: Database and file storage operations for Fenixflow applications.
 """
 
-__version__ = "1.1.1"
+# Version is read from package metadata (pyproject.toml is the single source of truth)
+try:
+    from importlib.metadata import version
+
+    __version__ = version("ff-storage")
+except Exception:
+    __version__ = "0.0.0+unknown"
 
 from .db.migrations import MigrationManager
 from .db.mysql import MySQL, MySQLPool

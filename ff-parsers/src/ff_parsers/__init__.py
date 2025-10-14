@@ -2,7 +2,13 @@
 ff-parsers: Lightweight document parsing library for extracting content from various file formats.
 """
 
-__version__ = "1.0.0"
+# Version is read from package metadata (pyproject.toml is the single source of truth)
+try:
+    from importlib.metadata import version
+
+    __version__ = version("ff-parsers")
+except Exception:
+    __version__ = "0.0.0+unknown"
 
 from .base import BaseParser, ParseOptions
 from .exceptions import ExtractionError, ParserError, UnsupportedFormatError

@@ -12,7 +12,13 @@ from .file import FileLogger
 from .json_logger import JSONLogger
 from .null import NullLogger
 
-__version__ = "0.1.0"
+# Version is read from package metadata (pyproject.toml is the single source of truth)
+try:
+    from importlib.metadata import version
+
+    __version__ = version("ff-logger")
+except Exception:
+    __version__ = "0.0.0+unknown"
 
 __all__ = [
     # Base class
