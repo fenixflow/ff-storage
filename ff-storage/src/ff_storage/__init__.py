@@ -2,7 +2,7 @@
 ff-storage: Database and file storage operations for Fenixflow applications.
 """
 
-__version__ = "1.1.0"
+__version__ = "1.1.1"
 
 from .db.migrations import MigrationManager
 from .db.mysql import MySQL, MySQLPool
