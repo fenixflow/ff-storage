@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ff-storage"
-version = "1.1.0"
+version = "1.1.1"
 description = "Fenixflow storage package for database and file operations with async connection pools"
 readme = "README.md"
 requires-python = ">=3.10"

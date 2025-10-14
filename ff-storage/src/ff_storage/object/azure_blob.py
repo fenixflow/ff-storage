@@ -64,8 +64,16 @@ class AzureBlobObjectStorage(ObjectStorage):
         # Create container if it doesn't exist (sync during init)
         try:
             self._sync_container_client.create_container()
-        except Exception:
-            pass  # Container already exists
+        except Exception as e:
+            error_msg = str(e).lower()
+            # Only ignore if container already exists
+            if "containeralreadyexists" in error_msg or "already exists" in error_msg:
+                pass  # Container already exists - this is fine
+            else:
+                # Other errors (connectivity, permissions, etc.) should be raised
+                raise IOError(
+                    f"Failed to create or access Azure Blob container '{container_name}': {e}"
+                ) from e
 
     def _get_full_key(self, key: str) -> str:
         """Get the full blob name including prefix."""
