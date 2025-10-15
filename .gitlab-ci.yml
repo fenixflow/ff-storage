@@ -78,15 +78,15 @@ default:
       fi
 
       echo "Publishing ${PACKAGE} ${VERSION} to GitLab registry..."
-      cat > ~/.pypirc << EOF
-[distutils]
-index-servers = gitlab
-
-[gitlab]
-repository = ${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/pypi
-username = gitlab-ci-token
-password = ${CI_JOB_TOKEN}
-EOF
+      printf '%s\n' \
+        "[distutils]" \
+        "index-servers = gitlab" \
+        "" \
+        "[gitlab]" \
+        "repository = ${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/pypi" \
+        "username = gitlab-ci-token" \
+        "password = ${CI_JOB_TOKEN}" \
+        > ~/.pypirc
 
       uv pip install --system twine
       python -m twine upload --repository gitlab dist/* --verbose
@@ -113,13 +113,7 @@ EOF
       echo "Building wheel with uv..."
       uv build
 
-      VERSION=$(python - <<'PY'
-import tomllib
-from pathlib import Path
-data = tomllib.loads(Path("pyproject.toml").read_text())
-print(data["project"]["version"])
-PY
-)
+      VERSION=$(python3 -c 'import tomllib; from pathlib import Path; print(tomllib.loads(Path("pyproject.toml").read_text())["project"]["version"])')
       echo "Package version: ${VERSION}"
 
       echo "Verifying ${PACKAGE} ${VERSION} does not already exist on PyPI..."
