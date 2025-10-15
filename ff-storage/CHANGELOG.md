@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.1] - 2025-10-15
+
+### Fixed
+
+- **PostgreSQL SQL Parser**: Fixed regex pattern in `PostgresSQLParser.parse_columns_from_sql()` to correctly parse column definitions containing:
+  - Multi-word types like `TIMESTAMP WITH TIME ZONE`
+  - Foreign key constraints with `REFERENCES` clauses
+  - Complex column definitions with multiple constraints
+- Previously, columns with these patterns were not detected, causing SchemaManager to incorrectly report them as needing to be dropped
+- This fix ensures SchemaManager accurately compares model definitions with actual database schema
+
 ## [2.0.0] - 2025-10-15
 
 ### 🚨 BREAKING CHANGES
@@ -322,7 +333,8 @@ db.close_connection()
 
 Maintained by **Ben Moag** ([Fenixflow](https://fenixflow.com))
 
-[Unreleased]: https://gitlab.com/fenixflow/fenix-packages/-/compare/ff-storage-v2.0.0...HEAD
+[Unreleased]: https://gitlab.com/fenixflow/fenix-packages/-/compare/ff-storage-v2.0.1...HEAD
+[2.0.1]: https://gitlab.com/fenixflow/fenix-packages/-/compare/ff-storage-v2.0.0...ff-storage-v2.0.1
 [2.0.0]: https://gitlab.com/fenixflow/fenix-packages/-/compare/ff-storage-v1.0.0...ff-storage-v2.0.0
 [1.0.0]: https://gitlab.com/fenixflow/fenix-packages/-/compare/ff-storage-v0.3.0...ff-storage-v1.0.0
 [0.3.0]: https://gitlab.com/fenixflow/fenix-packages/-/compare/ff-storage-v0.2.0...ff-storage-v0.3.0
