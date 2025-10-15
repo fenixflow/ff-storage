@@ -74,7 +74,14 @@ PY
       WHEEL_NAME=$(basename "${WHEEL_FILE}")
 
       PACKAGE_UNDERSCORE="${PACKAGE//-/_}"
-      CHECK_URL="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/pypi/files/${PACKAGE_UNDERSCORE}/${VERSION}/${WHEEL_NAME}"
+      PACKAGE_NORMALIZED=$(python - "$PACKAGE" <<'PY'
+import re
+import sys
+name = sys.argv[1]
+print(re.sub(r"[-_.]+", "-", name).lower())
+PY
+)
+      CHECK_URL="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/pypi/files/${PACKAGE_NORMALIZED}/${VERSION}/${WHEEL_NAME}"
 
       echo "Checking for existing artifact in GitLab registry..."
       if curl -s -o /dev/null -w "%{http_code}" --head --header "JOB-TOKEN: ${CI_JOB_TOKEN}" "${CHECK_URL}" | grep -qE "^(200|302)$"; then
