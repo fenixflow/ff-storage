@@ -53,7 +53,7 @@ version = "0.1.0"
 description = "{description}"
 readme = "README.md"
 requires-python = ">=3.12"
-license = {{text = "Proprietary"}}
+license = "LicenseRef-Proprietary"
 authors = [
     {{name = "{author_name}", email = "{author_email}"}}
 ]

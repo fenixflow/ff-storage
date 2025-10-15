@@ -8,7 +8,7 @@ version = "1.1.0"
 description = "Lightweight document parsing library for extracting content from various file formats"
 readme = "README.md"
 requires-python = ">=3.10"
-license = {text = "Proprietary"}
+license = {file = "LICENSE"}
 authors = [
     {name = "Fenixflow", email = "dev@fenixflow.com"}
 ]
