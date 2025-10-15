@@ -78,14 +78,10 @@ default:
       fi
 
       echo "Publishing ${PACKAGE} ${VERSION} to GitLab registry..."
-      printf '%s\n' \
-        "[distutils]" \
-        "index-servers = gitlab" \
-        "" \
-        "[gitlab]" \
-        "repository = ${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/pypi" \
-        "username = gitlab-ci-token" \
-        "password = ${CI_JOB_TOKEN}" \
+      printf '[distutils]\nindex-servers = gitlab\n\n[gitlab]\nrepository = %s/projects/%s/packages/pypi\nusername = gitlab-ci-token\npassword = %s\n' \
+        "${CI_API_V4_URL}" \
+        "${CI_PROJECT_ID}" \
+        "${CI_JOB_TOKEN}" \
         > ~/.pypirc
 
       uv pip install --system twine
