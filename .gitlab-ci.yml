@@ -1,30 +1,34 @@
-# Simple GitLab CI/CD Pipeline for Fenix Packages
-# 
-# This pipeline:
-# - Builds and tests all packages in parallel for merge requests
-# - Publishes packages to GitLab Package Registry when merged to main
-# - Requires developers to manually update versions in pyproject.toml
-#
-# No automatic version bumping - keep it simple!
+# Targeted GitLab CI/CD pipeline for Fenix packages
+# - Pipelines run automatically only when a package version file changes
+# - Builds rely on `uv build` for reproducible wheels
+# - ff-cli and ff-parsers publish to the GitLab Package Registry when their versions bump
+# - ff-logger and ff-storage provide manual gates for publishing to GitLab and PyPI
+
+workflow:
+  rules:
+    - changes:
+        - ff-logger/pyproject.toml
+        - ff-storage/pyproject.toml
+        - ff-cli/pyproject.toml
+        - ff-parsers/pyproject.toml
+    - if: '$CI_PIPELINE_SOURCE == "web"'
+    - when: never
 
 stages:
-  - build
-  - test
-  - publish
-  - publish-pypi
-  - mirror-github
+  - publish_gitlab
+  - publish_pypi
 
 variables:
   PIP_CACHE_DIR: "$CI_PROJECT_DIR/.cache/pip"
   UV_CACHE_DIR: "$CI_PROJECT_DIR/.cache/uv"
   PYTHON_VERSION: "3.12"
+  GIT_DEPTH: "0"
 
 cache:
   paths:
     - .cache/pip
     - .cache/uv
 
-# Default configuration for all jobs
 default:
   image: python:${PYTHON_VERSION}-slim
   before_script:
@@ -35,502 +39,184 @@ default:
     - uv --version
     - python --version
 
-# ============================================================================
-# BUILD STAGE - Build all packages in parallel
-# ============================================================================
-
-build:packages:
-  stage: build
-  parallel:
-    matrix:
-      - PACKAGE: [ff-storage, ff-logger, ff-cli, ff-parsers]
+.publish_gitlab_template: &publish_gitlab_template
+  stage: publish_gitlab
   script:
     - |
+      set -euo pipefail
       echo "========================================"
-      echo "Building: $PACKAGE"
+      echo "GitLab publish for: ${PACKAGE}"
       echo "========================================"
-      
-      cd "$PACKAGE"
-      
-      # Clean previous builds
-      rm -rf dist/ build/ *.egg-info src/*.egg-info 2>/dev/null || true
-      
-      # Install build dependencies
-      uv pip install --system build
-      
-      # Build the package
-      python -m build
-      
-      # Verify the build
-      if ls dist/*.whl 1>/dev/null 2>&1; then
-        echo "✅ Build successful for $PACKAGE"
-        ls -la dist/
-      else
-        echo "❌ Build failed for $PACKAGE - no wheel file created"
+
+      PACKAGE_DIR="${CI_PROJECT_DIR}/${PACKAGE}"
+      cd "${PACKAGE_DIR}"
+
+      echo "Cleaning previous build artifacts..."
+      rm -rf dist build *.egg-info src/*.egg-info 2>/dev/null || true
+
+      echo "Building wheel with uv..."
+      uv build
+
+      VERSION=$(python - <<'PY'
+import tomllib
+from pathlib import Path
+data = tomllib.loads(Path("pyproject.toml").read_text())
+print(data["project"]["version"])
+PY
+)
+      echo "Package version: ${VERSION}"
+
+      WHEEL_FILE=$(find dist -maxdepth 1 -name "*.whl" -print -quit)
+      if [ -z "${WHEEL_FILE}" ]; then
+        echo "❌ No wheel artifact produced for ${PACKAGE}"
         exit 1
       fi
-  artifacts:
-    paths:
-      - "$PACKAGE/dist/"
-    expire_in: 1 hour
+      WHEEL_NAME=$(basename "${WHEEL_FILE}")
 
-# ============================================================================
-# TEST STAGE - Test all packages in parallel
-# ============================================================================
-
-test:packages:
-  stage: test
-  parallel:
-    matrix:
-      - PACKAGE: [ff-storage, ff-logger, ff-cli, ff-parsers]
-  needs:
-    - job: build:packages
-      artifacts: true
-  script:
-    - |
-      echo "========================================"
-      echo "Testing: $PACKAGE"
-      echo "========================================"
-      
-      cd "$PACKAGE"
-      
-      # Install the built package
-      uv pip install --system dist/*.whl
-      
-      # Install test dependencies
-      uv pip install --system pytest pytest-cov
-      
-      # Run tests if they exist
-      if [ -d tests ]; then
-        echo "Running tests for $PACKAGE..."
-        python -m pytest tests/ -v --tb=short || {
-          echo "⚠️  Tests failed for $PACKAGE (continuing anyway)"
-          # Don't fail the job for now - tests are not yet comprehensive
-          true
-        }
-      else
-        echo "⚠️  No tests directory found for $PACKAGE"
-      fi
-      
-      echo "Test stage completed for $PACKAGE"
-
-# ============================================================================
-# PUBLISH STAGE - Publish packages to GitLab Package Registry (main only)
-# ============================================================================
-
-publish:packages:
-  stage: publish
-  parallel:
-    matrix:
-      - PACKAGE: [ff-storage, ff-logger, ff-cli, ff-parsers]
-  needs:
-    - job: test:packages
-      artifacts: false
-    - job: build:packages
-      artifacts: true
-  script:
-    - |
-      echo "========================================"
-      echo "Publishing: $PACKAGE"
-      echo "========================================"
-      
-      # Get package version
-      VERSION=$(python3 -c "
-      import tomllib
-      with open('$PACKAGE/pyproject.toml', 'rb') as f:
-          data = tomllib.load(f)
-      print(data['project']['version'])
-      ")
-      
-      echo "Package: $PACKAGE"
-      echo "Version: $VERSION"
-      
-      # Check if version already exists in registry
       PACKAGE_UNDERSCORE="${PACKAGE//-/_}"
-      WHEEL_FILE="${PACKAGE_UNDERSCORE}-${VERSION}-py3-none-any.whl"
-      CHECK_URL="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/pypi/files/${PACKAGE_UNDERSCORE}/${VERSION}/${WHEEL_FILE}"
-      
-      echo "Checking if version exists in registry..."
-      
-      if curl -s -o /dev/null -w "%{http_code}" --head \
-         --header "JOB-TOKEN: ${CI_JOB_TOKEN}" \
-         "${CHECK_URL}" | grep -q "200\|302"; then
-        echo "✅ Version $VERSION already published for $PACKAGE - skipping"
+      CHECK_URL="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/pypi/files/${PACKAGE_UNDERSCORE}/${VERSION}/${WHEEL_NAME}"
+
+      echo "Checking for existing artifact in GitLab registry..."
+      if curl -s -o /dev/null -w "%{http_code}" --head --header "JOB-TOKEN: ${CI_JOB_TOKEN}" "${CHECK_URL}" | grep -qE "^(200|302)$"; then
+        echo "✅ ${PACKAGE} ${VERSION} already exists in GitLab registry. Skipping upload."
         exit 0
       fi
-      
-      echo "Version $VERSION not found in registry - publishing..."
-      
-      # Install twine
-      uv pip install --system twine
-      
-      # Configure PyPI repository for GitLab
+
+      echo "Publishing ${PACKAGE} ${VERSION} to GitLab registry..."
       cat > ~/.pypirc << EOF
-      [distutils]
-      index-servers = gitlab
-      
-      [gitlab]
-      repository = ${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/pypi
-      username = gitlab-ci-token
-      password = ${CI_JOB_TOKEN}
-      EOF
-      
-      # Upload to GitLab Package Registry
-      cd "$PACKAGE"
+[distutils]
+index-servers = gitlab
+
+[gitlab]
+repository = ${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/pypi
+username = gitlab-ci-token
+password = ${CI_JOB_TOKEN}
+EOF
+
+      uv pip install --system twine
       python -m twine upload --repository gitlab dist/* --verbose
-      
-      echo "✅ Successfully published $PACKAGE version $VERSION"
-  rules:
-    # Only run on main branch
-    - if: '$CI_COMMIT_BRANCH == "main"'
-      when: on_success
-    # Skip for merge requests and other branches
-    - when: never
+      echo "✅ GitLab publish complete for ${PACKAGE} ${VERSION}"
 
-# ============================================================================
-# PUBLISH TO PYPI - Manual publishing to PyPI.org
-# ============================================================================
-
-# Shared template for PyPI publishing
-.pypi_publish_template: &pypi_publish_template
-  stage: publish-pypi
-  image: python:${PYTHON_VERSION}-slim
-  needs: []  # Don't wait for previous stages
-  before_script:
-    - apt-get update && apt-get install -y git curl
-    - python --version
-  script:
-    - |
-      echo "========================================"
-      echo "Publishing $PACKAGE to PyPI"
-      echo "========================================"
-
-      # Safety check - warn if not on main branch
-      if [ "$CI_COMMIT_BRANCH" != "main" ] && [ "$CI_COMMIT_REF_NAME" != "main" ]; then
-        echo "⚠️  WARNING: Not on main branch (current: ${CI_COMMIT_BRANCH:-$CI_COMMIT_REF_NAME})"
-        echo "⚠️  PyPI publishing should typically be done from main branch"
-        echo "⚠️  Proceeding anyway - please ensure this is intentional"
-        echo ""
-      fi
-
-      # Install build and upload tools
-      pip install --upgrade pip build twine
-
-      # Get package version
-      VERSION=$(python3 -c "
-      import tomllib
-      with open('$PACKAGE/pyproject.toml', 'rb') as f:
-          data = tomllib.load(f)
-      print(data['project']['version'])
-      ")
-
-      echo "Package: $PACKAGE"
-      echo "Version: $VERSION"
-      echo "Environment: ${CI_ENVIRONMENT_NAME}"
-
-      # Build the package
-      cd "$PACKAGE"
-      echo "Building package..."
-      python -m build
-
-      # List built artifacts
-      echo "Built artifacts:"
-      ls -la dist/
-
-      # Check if version already exists on PyPI
-      echo "Checking if version exists on PyPI..."
-      PACKAGE_UNDERSCORE="${PACKAGE//-/_}"
-      if pip index versions ${PACKAGE_UNDERSCORE} 2>/dev/null | grep -q "^Available versions:.*$VERSION"; then
-        echo "❌ Version $VERSION already exists on PyPI!"
-        echo "Please update the version in pyproject.toml before publishing."
-        exit 1
-      fi
-
-      # Upload to PyPI using OIDC token
-      echo "Uploading to PyPI..."
-      python -m twine upload --non-interactive --verbose dist/*
-
-      echo "✅ Successfully published $PACKAGE version $VERSION to PyPI"
-      echo "View at: https://pypi.org/project/${PACKAGE_UNDERSCORE}/$VERSION/"
+.publish_pypi_template: &publish_pypi_template
+  stage: publish_pypi
   id_tokens:
     PYPI_ID_TOKEN:
       aud: pypi
-  rules:
-    # Always available as manual trigger
-    - when: manual
-      allow_failure: false
+  script:
+    - |
+      set -euo pipefail
+      echo "========================================"
+      echo "PyPI publish for: ${PACKAGE}"
+      echo "========================================"
 
-# Individual package jobs using the template
-publish:pypi:ff-logger:
-  <<: *pypi_publish_template
-  environment:
-    name: release
-    url: https://pypi.org/project/ff-logger/
+      PACKAGE_DIR="${CI_PROJECT_DIR}/${PACKAGE}"
+      cd "${PACKAGE_DIR}"
+
+      echo "Cleaning previous build artifacts..."
+      rm -rf dist build *.egg-info src/*.egg-info 2>/dev/null || true
+
+      echo "Building wheel with uv..."
+      uv build
+
+      VERSION=$(python - <<'PY'
+import tomllib
+from pathlib import Path
+data = tomllib.loads(Path("pyproject.toml").read_text())
+print(data["project"]["version"])
+PY
+)
+      echo "Package version: ${VERSION}"
+
+      echo "Verifying ${PACKAGE} ${VERSION} does not already exist on PyPI..."
+      PACKAGE_UNDERSCORE="${PACKAGE//-/_}"
+      if pip index versions "${PACKAGE_UNDERSCORE}" 2>/dev/null | grep -q "^Available versions:.*${VERSION}"; then
+        echo "❌ ${PACKAGE} ${VERSION} already exists on PyPI."
+        echo "Please bump the version before publishing."
+        exit 1
+      fi
+
+      uv pip install --system twine
+      python -m twine upload --non-interactive --verbose dist/*
+      echo "✅ PyPI publish complete for ${PACKAGE} ${VERSION}"
+
+publish:gitlab:ff-cli:
+  <<: *publish_gitlab_template
+  variables:
+    PACKAGE: "ff-cli"
+  rules:
+    - changes:
+        - ff-cli/pyproject.toml
+      when: on_success
+    - when: never
+
+publish:gitlab:ff-parsers:
+  <<: *publish_gitlab_template
+  variables:
+    PACKAGE: "ff-parsers"
+  rules:
+    - changes:
+        - ff-parsers/pyproject.toml
+      when: on_success
+    - when: never
+
+publish:gitlab:ff-logger:
+  <<: *publish_gitlab_template
   variables:
     PACKAGE: "ff-logger"
+  rules:
+    - changes:
+        - ff-logger/pyproject.toml
+      when: manual
+      allow_failure: false
+    - if: '$CI_PIPELINE_SOURCE == "web"'
+      when: manual
+      allow_failure: false
+    - when: never
+
+publish:gitlab:ff-storage:
+  <<: *publish_gitlab_template
+  variables:
+    PACKAGE: "ff-storage"
+  rules:
+    - changes:
+        - ff-storage/pyproject.toml
+      when: manual
+      allow_failure: false
+    - if: '$CI_PIPELINE_SOURCE == "web"'
+      when: manual
+      allow_failure: false
+    - when: never
+
+publish:pypi:ff-logger:
+  <<: *publish_pypi_template
+  variables:
+    PACKAGE: "ff-logger"
+  needs:
+    - job: publish:gitlab:ff-logger
+      optional: true
+  rules:
+    - changes:
+        - ff-logger/pyproject.toml
+      when: manual
+      allow_failure: false
+    - if: '$CI_PIPELINE_SOURCE == "web"'
+      when: manual
+      allow_failure: false
+    - when: never
 
 publish:pypi:ff-storage:
-  <<: *pypi_publish_template
-  environment:
-    name: release
-    url: https://pypi.org/project/ff-storage/
+  <<: *publish_pypi_template
   variables:
     PACKAGE: "ff-storage"
-
-publish:pypi:ff-cli:
-  <<: *pypi_publish_template
-  environment:
-    name: release
-    url: https://pypi.org/project/ff-cli/
-  variables:
-    PACKAGE: "ff-cli"
-
-publish:pypi:ff-parsers:
-  <<: *pypi_publish_template
-  environment:
-    name: release
-    url: https://pypi.org/project/ff-parsers/
-  variables:
-    PACKAGE: "ff-parsers"
-
-# ============================================================================
-# GITHUB MIRRORING - Push packages to GitHub (independent jobs)
-# ============================================================================
-
-# Shared template for GitHub mirroring
-.github_mirror_template: &github_mirror_template
-  stage: mirror-github
-  image: alpine:latest
-  variables:
-    GIT_STRATEGY: clone
-    GIT_DEPTH: 0  # Full history
-  needs: []  # No dependencies - can run independently
-  before_script:
-    - apk add --no-cache git python3 py3-pip
-  script:
-    - |
-      echo "========================================"
-      echo "Mirroring $PACKAGE to GitHub"
-      echo "========================================"
-
-      # Safety check for required variables
-      if [ -z "$GITHUB_TOKEN" ] || [ -z "$GITHUB_ORG" ]; then
-        echo "❌ GITHUB_TOKEN or GITHUB_ORG not set. Skipping GitHub mirror."
-        exit 0
-      fi
-
-      # Get package version
-      VERSION=$(python3 -c "
-      import tomllib
-      with open('${PACKAGE}/pyproject.toml', 'rb') as f:
-          data = tomllib.load(f)
-      print(data['project']['version'])
-      ")
-
-      echo "Package: $PACKAGE"
-      echo "Version: $VERSION"
-      echo "GitHub Org: ${GITHUB_ORG}"
-      echo "Branch: ${CI_COMMIT_BRANCH}"
-
-      # Configure git
-      git config --global user.email "ci@fenixflow.com"
-      git config --global user.name "GitLab CI"
-
-      # Create temp directory for package files
-      mkdir -p /tmp/github-push
-      cd /tmp/github-push
-
-      # Clone the GitHub repository
-      echo "Cloning GitHub repository..."
-      git clone https://${GITHUB_TOKEN}@github.com/${GITHUB_ORG}/${PACKAGE}.git . || {
-        echo "Repository might be empty, initializing..."
-        git init
-        git remote add origin https://${GITHUB_TOKEN}@github.com/${GITHUB_ORG}/${PACKAGE}.git
-        git checkout -b main 2>/dev/null || git checkout main
-      }
-
-      # Remove all existing files (to ensure clean sync)
-      find . -mindepth 1 -maxdepth 1 ! -name '.git' -exec rm -rf {} +
-
-      # Copy package files from GitLab repo
-      echo "Copying package files..."
-      cp -r ${CI_PROJECT_DIR}/${PACKAGE}/* .
-      cp ${CI_PROJECT_DIR}/LICENSE . 2>/dev/null || true
-
-      # Copy README if it exists at package level
-      if [ -f "${CI_PROJECT_DIR}/${PACKAGE}/README.md" ]; then
-        cp ${CI_PROJECT_DIR}/${PACKAGE}/README.md .
-      fi
-
-      # Add and commit if there are changes
-      git add -A
-      if ! git diff --cached --quiet; then
-        echo "Committing changes..."
-        git commit -m "Update to version ${VERSION} from GitLab (${CI_COMMIT_BRANCH})"
-
-        echo "Pushing to GitHub..."
-        git push origin main --force-with-lease || git push origin main --force
-        echo "✅ Successfully pushed to GitHub: ${GITHUB_ORG}/${PACKAGE}"
-      else
-        echo "No changes to push"
-      fi
+  needs:
+    - job: publish:gitlab:ff-storage
+      optional: true
   rules:
-    # Manual trigger - always available
-    - when: manual
+    - changes:
+        - ff-storage/pyproject.toml
+      when: manual
       allow_failure: false
-
-# Individual GitHub mirror jobs for each package
-mirror:github:ff-storage:
-  <<: *github_mirror_template
-  variables:
-    PACKAGE: "ff-storage"
-  environment:
-    name: github
-    url: https://github.com/${GITHUB_ORG}/ff-storage
-
-mirror:github:ff-logger:
-  <<: *github_mirror_template
-  variables:
-    PACKAGE: "ff-logger"
-  environment:
-    name: github
-    url: https://github.com/${GITHUB_ORG}/ff-logger
-
-mirror:github:ff-cli:
-  <<: *github_mirror_template
-  variables:
-    PACKAGE: "ff-cli"
-  environment:
-    name: github
-    url: https://github.com/${GITHUB_ORG}/ff-cli
-
-mirror:github:ff-parsers:
-  <<: *github_mirror_template
-  variables:
-    PACKAGE: "ff-parsers"
-  environment:
-    name: github
-    url: https://github.com/${GITHUB_ORG}/ff-parsers
-
-# Automatic mirror job for main branch (optional - runs all packages)
-mirror:github:auto:
-  stage: mirror-github
-  image: alpine:latest
-  variables:
-    GIT_STRATEGY: clone
-    GIT_DEPTH: 0
-  needs: []  # No dependencies
-  before_script:
-    - apk add --no-cache git python3 py3-pip
-  script:
-    - |
-      echo "========================================"
-      echo "Auto-mirroring all packages to GitHub"
-      echo "========================================"
-
-      # Safety check for required variables
-      if [ -z "$GITHUB_TOKEN" ] || [ -z "$GITHUB_ORG" ]; then
-        echo "❌ GITHUB_TOKEN or GITHUB_ORG not set. Skipping GitHub mirror."
-        exit 0
-      fi
-
-      for PACKAGE in ff-storage ff-logger ff-cli ff-parsers; do
-        echo ""
-        echo "Processing $PACKAGE..."
-        echo "------------------------"
-
-        # Get package version
-        VERSION=$(python3 -c "
-        import tomllib
-        with open('${PACKAGE}/pyproject.toml', 'rb') as f:
-            data = tomllib.load(f)
-        print(data['project']['version'])
-        ")
-
-        echo "Package: $PACKAGE"
-        echo "Version: $VERSION"
-
-        # Configure git
-        git config --global user.email "ci@fenixflow.com"
-        git config --global user.name "GitLab CI"
-
-        # Create temp directory for package files
-        mkdir -p /tmp/github-push-${PACKAGE}
-        cd /tmp/github-push-${PACKAGE}
-
-        # Clone the GitHub repository
-        echo "Cloning GitHub repository..."
-        git clone https://${GITHUB_TOKEN}@github.com/${GITHUB_ORG}/${PACKAGE}.git . || {
-          echo "Repository might be empty, initializing..."
-          git init
-          git remote add origin https://${GITHUB_TOKEN}@github.com/${GITHUB_ORG}/${PACKAGE}.git
-          git checkout -b main 2>/dev/null || git checkout main
-        }
-
-        # Remove all existing files (to ensure clean sync)
-        find . -mindepth 1 -maxdepth 1 ! -name '.git' -exec rm -rf {} +
-
-        # Copy package files from GitLab repo
-        echo "Copying package files..."
-        cp -r ${CI_PROJECT_DIR}/${PACKAGE}/* .
-        cp ${CI_PROJECT_DIR}/LICENSE . 2>/dev/null || true
-
-        # Copy README if it exists at package level
-        if [ -f "${CI_PROJECT_DIR}/${PACKAGE}/README.md" ]; then
-          cp ${CI_PROJECT_DIR}/${PACKAGE}/README.md .
-        fi
-
-        # Add and commit if there are changes
-        git add -A
-        if ! git diff --cached --quiet; then
-          echo "Committing changes..."
-          git commit -m "Update to version ${VERSION} from GitLab (${CI_COMMIT_BRANCH})"
-
-          echo "Pushing to GitHub..."
-          git push origin main --force-with-lease || git push origin main --force
-          echo "✅ Successfully pushed ${PACKAGE} to GitHub"
-        else
-          echo "No changes to push for ${PACKAGE}"
-        fi
-
-        cd ${CI_PROJECT_DIR}
-        rm -rf /tmp/github-push-${PACKAGE}
-      done
-
-      echo ""
-      echo "========================================"
-      echo "GitHub mirroring completed"
-      echo "========================================"
-  rules:
-    # Automatic on main branch (disabled by default - uncomment to enable)
-    # - if: '$CI_COMMIT_BRANCH == "main"'
-    #   when: on_success
-    # Manual trigger - always available
-    - when: manual
+    - if: '$CI_PIPELINE_SOURCE == "web"'
+      when: manual
       allow_failure: false
-
-# ============================================================================
-# SUMMARY JOB - Provides a summary of the pipeline (optional)
-# ============================================================================
-
-pipeline:summary:
-  stage: .post
-  script:
-    - |
-      echo "========================================"
-      echo "Pipeline Summary"
-      echo "========================================"
-      echo "Branch: $CI_COMMIT_BRANCH"
-      echo "Commit: $CI_COMMIT_SHORT_SHA"
-      echo "Pipeline: #$CI_PIPELINE_ID"
-      echo ""
-      
-      if [ "$CI_COMMIT_BRANCH" = "main" ]; then
-        echo "✅ Main branch pipeline - packages were published"
-      else
-        echo "✅ Development pipeline - build and test only"
-      fi
-      
-      echo "========================================"
-  when: always
-  allow_failure: true
+    - when: never
