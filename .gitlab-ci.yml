@@ -57,13 +57,7 @@ default:
       echo "Building wheel with uv..."
       uv build
 
-      VERSION=$(python - <<'PY'
-import tomllib
-from pathlib import Path
-data = tomllib.loads(Path("pyproject.toml").read_text())
-print(data["project"]["version"])
-PY
-)
+      VERSION=$(python3 -c 'import tomllib; from pathlib import Path; print(tomllib.loads(Path("pyproject.toml").read_text())["project"]["version"])')
       echo "Package version: ${VERSION}"
 
       WHEEL_FILE=$(find dist -maxdepth 1 -name "*.whl" -print -quit)
@@ -74,13 +68,7 @@ PY
       WHEEL_NAME=$(basename "${WHEEL_FILE}")
 
       PACKAGE_UNDERSCORE="${PACKAGE//-/_}"
-      PACKAGE_NORMALIZED=$(python3 - "$PACKAGE" <<'PY'
-import re
-import sys
-name = sys.argv[1]
-print(re.sub(r"[-_.]+", "-", name).lower())
-PY
-)
+      PACKAGE_NORMALIZED=$(python3 -c 'import re, sys; print(re.sub(r"[-_.]+", "-", sys.argv[1]).lower())' "${PACKAGE}")
       CHECK_URL="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/pypi/files/${PACKAGE_NORMALIZED}/${VERSION}/${WHEEL_NAME}"
 
       echo "Checking for existing artifact in GitLab registry..."
