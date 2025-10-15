@@ -8,7 +8,11 @@ A comprehensive storage package for Fenixflow applications, providing **async co
 
 Created by **Ben Moag** at **[Fenixflow](https://fenixflow.com)**
 
-## 🚨 Version 1.1.0 - Azure Blob Storage + Async Pools
+## 🚨 Version 2.0.0 - Schema Sync System
+
+**New in 2.0.0**: Terraform-like automatic schema synchronization system! Define your schema in model classes and let SchemaManager handle migrations automatically.
+
+**Breaking Change in 2.0.0**: Removed file-based migrations (`MigrationManager`). Use `SchemaManager` for automatic schema sync from model definitions.
 
 **New in 1.1.0**: Added Azure Blob Storage backend with support for both Azurite (local development) and production Azure Blob Storage.
 
@@ -149,17 +153,20 @@ async def get_user(user_id: int):
 - **Batch Operations**: Execute many queries efficiently
 - **Query Builder**: SQL query construction utilities
 
+### Schema Sync System (NEW in v2.0.0)
+- **Terraform-like Migrations**: Define schema in code, auto-sync on startup
+- **Automatic Detection**: Detects schema changes from model definitions
+- **Safe by Default**: Additive changes auto-apply, destructive changes require explicit approval
+- **Dry Run Mode**: Preview changes without applying them
+- **Transaction-Wrapped**: All changes in single atomic transaction
+- **Provider Detection**: Auto-detects PostgreSQL, MySQL, or SQL Server
+
 ### Object Storage
 - **Multiple Backends**: Local filesystem, S3/S3-compatible services, and Azure Blob Storage
 - **Async Operations**: Non-blocking I/O for better performance
 - **Streaming Support**: Handle large files without memory overhead
 - **Atomic Writes**: Safe file operations with temp file + rename
 - **Metadata Management**: Store and retrieve metadata with objects
-
-### Migration System
-- **SQL File-Based**: Simple, version-controlled migrations
-- **Automatic Tracking**: Keeps track of applied migrations
-- **Rollback Support**: Undo migrations when needed
 
 ## Core Components
 
@@ -384,26 +391,67 @@ asyncio.run(main())
 
 **Note**: Azure Blob Storage has restrictions on metadata keys (must be valid C# identifiers). The implementation automatically converts hyphens to underscores (e.g., `content-type` becomes `content_type`) when storing and converts them back when retrieving.
 
-### Migration Management
+### Schema Sync (Terraform-like Migrations)
 
 ```python
-from ff_storage.db.migrations import MigrationManager
+from ff_storage.db import Postgres, SchemaManager
+from ff_storage.db.models import BaseModel
 
-# Setup migration manager
-manager = MigrationManager(db_connection, "./migrations")
+# Define your model with schema in code
+class Document(BaseModel):
+    __table_name__ = "documents"
+    __schema__ = "public"
 
-# Run all pending migrations
-manager.migrate()
+    @classmethod
+    def create_table_sql(cls):
+        return """
+        CREATE TABLE IF NOT EXISTS public.documents (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            title VARCHAR(255) NOT NULL,
+            content TEXT,
+            status VARCHAR(50) DEFAULT 'draft',
+            created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+            updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+        );
 
-# Create new migration
-manager.create_migration("add_user_roles")
+        CREATE INDEX IF NOT EXISTS idx_documents_status
+        ON public.documents(status);
 
-# Check migration status
-pending = manager.get_pending_migrations()
-applied = manager.get_applied_migrations()
+        CREATE INDEX IF NOT EXISTS idx_documents_created_at
+        ON public.documents(created_at DESC);
+        """
+
+# Connect to database
+db = Postgres(dbname="mydb", user="user", password="pass", host="localhost", port=5432)
+db.connect()
+
+# Create schema manager (auto-detects PostgreSQL)
+manager = SchemaManager(db)
+
+# Dry run to preview changes
+print("Preview of changes:")
+manager.sync_schema(
+    models=[Document],
+    allow_destructive=False,
+    dry_run=True
+)
+
+# Apply changes automatically
+changes_applied = manager.sync_schema(
+    models=[Document],
+    allow_destructive=False,  # Safe by default
+    dry_run=False
+)
+
+print(f"Applied {changes_applied} schema changes")
 ```
 
-Migration files follow the naming pattern: `001_initial_schema.sql`, `002_add_indexes.sql`, etc.
+**Features**:
+- **Automatic Detection**: Detects new tables, missing columns, and indexes
+- **Safe by Default**: Additive changes (CREATE, ADD) auto-apply; destructive changes (DROP) require explicit flag
+- **Dry Run Mode**: Preview all changes before applying
+- **Transaction-Wrapped**: All changes in a single atomic transaction
+- **Provider-Agnostic**: Works with PostgreSQL (full support), MySQL/SQL Server (stubs for future implementation)
 
 ### Base Models
 

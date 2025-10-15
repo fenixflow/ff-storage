@@ -7,6 +7,153 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.0] - TBD
+
+### 🚨 BREAKING CHANGES
+
+**Schema synchronization replaces file-based migrations** - this is a major architectural shift to automatic, model-driven schema management similar to Terraform.
+
+#### What Changed
+
+- **Removed**: `MigrationManager` and file-based SQL migration system
+- **Added**: `SchemaManager` with Terraform-like automatic schema synchronization
+- **Migration Path**: Define schema in model `get_create_table_sql()` methods; SchemaManager automatically syncs on startup
+
+#### Migration Required
+
+**Before (v1.x - File-based migrations)**:
+```python
+from ff_storage.db import MigrationManager
+
+manager = MigrationManager(db, "./migrations")
+manager.migrate()  # Runs SQL files in order
+```
+
+**After (v2.0.0 - Schema sync)**:
+```python
+from ff_storage.db import SchemaManager
+
+manager = SchemaManager(db, logger=logger)
+changes = manager.sync_schema(
+    models=get_all_models(),
+    allow_destructive=False,
+    dry_run=False
+)
+```
+
+### Added
+
+- **Schema Sync System**: Terraform-like automatic schema synchronization
+  - `SchemaManager`: Main orchestrator for schema sync
+  - Provider-agnostic design with abstract base classes
+  - Full PostgreSQL implementation (introspection, parsing, generation)
+  - MySQL/SQL Server stubs for future implementation
+  - Automatic detection of schema changes from model definitions
+  - Safe by default (destructive changes require explicit approval)
+  - Dry-run mode for previewing changes without applying them
+  - Transaction-wrapped migrations for atomicity
+  - Comprehensive structured logging throughout
+
+- **Schema Sync Components**:
+  - `SchemaIntrospectorBase`: Read current database schema from information_schema
+  - `SQLParserBase`: Parse CREATE TABLE statements into structured definitions
+  - `MigrationGeneratorBase`: Generate provider-specific DDL statements
+  - `SchemaDifferBase`: Compute differences between desired and current schema
+  - Provider-specific implementations for PostgreSQL (complete)
+  - Stub implementations for MySQL and SQL Server (raise NotImplementedError)
+
+- **Model Compatibility Methods**:
+  - `get_create_table_sql()`: Alias for `create_table_sql()` for SchemaManager compatibility
+  - `get_table_name()`: Alias for `table_name()` for SchemaManager compatibility
+
+### Changed
+
+- **BREAKING**: Reorganized `db` module structure (completed in v1.1.0)
+  - Connection classes moved to `db.connections/` subfolder
+  - Updated import paths (backward compatible via `from ff_storage.db import Postgres`)
+
+### Removed
+
+- **BREAKING**: Removed file-based migrations system
+  - `MigrationManager` class removed
+  - No longer supports SQL migration files in directories
+  - Migration: Use SchemaManager with model definitions instead
+
+### Architecture
+
+- **Provider Detection**: Auto-detects database type from connection object
+- **Safety First**: Additive changes (CREATE, ADD) auto-apply; destructive changes (DROP, ALTER TYPE) require explicit flag
+- **Dry Run Mode**: Preview all changes without applying them
+- **Transaction Wrapping**: All schema changes in single atomic transaction
+- **IF NOT EXISTS**: Uses safe SQL clauses to prevent errors on re-runs
+
+### Usage Example
+
+```python
+from ff_storage.db import Postgres, SchemaManager
+from ff_logger import ConsoleLogger
+
+# Define models with create_table_sql()
+class Document(BaseModel):
+    __table_name__ = "documents"
+    __schema__ = "public"
+
+    @classmethod
+    def create_table_sql(cls):
+        return """
+        CREATE TABLE IF NOT EXISTS public.documents (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            title TEXT NOT NULL,
+            content TEXT,
+            created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+            updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_documents_title
+        ON public.documents(title);
+        """
+
+# Connect and sync
+db = Postgres(dbname="mydb", user="user", password="pass", host="localhost", port=5432)
+db.connect()
+
+logger = ConsoleLogger(name="schema_sync")
+manager = SchemaManager(db, logger=logger)
+
+# Dry run to preview changes
+changes = manager.sync_schema(
+    models=[Document],
+    allow_destructive=False,
+    dry_run=True
+)
+
+# Apply changes
+changes = manager.sync_schema(
+    models=[Document],
+    allow_destructive=False,
+    dry_run=False
+)
+
+print(f"Applied {changes} schema changes")
+```
+
+### Migration Guide
+
+For users upgrading from v1.x:
+
+1. **Remove migration files**: No longer needed (schema is in models)
+2. **Update model classes**: Ensure `create_table_sql()` or `get_create_table_sql()` is defined
+3. **Replace MigrationManager**: Use SchemaManager instead
+4. **Run schema sync**: On application startup, call `manager.sync_schema()`
+
+### Future Work
+
+- MySQL implementation (contributions welcome!)
+- SQL Server implementation (contributions welcome!)
+- Column type changes detection
+- Foreign key constraint management
+- Schema versioning and rollback
+
 ## [1.0.0] - 2025-10-06
 
 ### 🚨 BREAKING CHANGES
