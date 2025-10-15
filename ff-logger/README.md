@@ -12,12 +12,12 @@ Created by **Ben Moag** at **[Fenixflow](https://fenixflow.com)**
 
 ### Installation
 
-#### From PyPI (when published)
+#### From PyPI
 ```bash
 pip install ff-logger
 ```
 
-#### From GitLab (current)
+#### From GitLab
 ```bash
 pip install git+https://gitlab.com/fenixflow/fenix-packages.git#subdirectory=ff-logger
 ```

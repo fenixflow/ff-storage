@@ -7,7 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.4.1] - 2025-01-XX
+## [0.4.2] - 2025-10-15
+
+### Changed
+- Version bump for consistency with other fenix-packages releases
+- No functional changes from v0.4.1
+
+## [0.4.1] - 2025-01-23
 
 ### Fixed
 - **Comprehensive reserved field protection**: Fixed LogRecord conflicts with user-provided context fields
@@ -20,7 +26,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Note
 - Logger constructor `name` parameter is unaffected - this fix only applies to runtime context fields passed in log method calls (e.g., `logger.info("msg", name="value")`)
 
-## [0.4.0] - 2025-01-XX
+## [0.4.0] - 2025-01-22
 
 ### Added
 - **Thread-safe context management**: Added `threading.RLock` to `ScopedLogger` for safe concurrent context updates
@@ -139,7 +145,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Maintained by **Ben Moag** ([Fenixflow](https://fenixflow.com))
 
-[Unreleased]: https://gitlab.com/fenixflow/fenix-packages/-/compare/ff-logger-v0.2.0...HEAD
+[Unreleased]: https://gitlab.com/fenixflow/fenix-packages/-/compare/ff-logger-v0.4.2...HEAD
+[0.4.2]: https://gitlab.com/fenixflow/fenix-packages/-/compare/ff-logger-v0.4.1...ff-logger-v0.4.2
+[0.4.1]: https://gitlab.com/fenixflow/fenix-packages/-/compare/ff-logger-v0.4.0...ff-logger-v0.4.1
+[0.4.0]: https://gitlab.com/fenixflow/fenix-packages/-/compare/ff-logger-v0.3.0...ff-logger-v0.4.0
+[0.3.0]: https://gitlab.com/fenixflow/fenix-packages/-/compare/ff-logger-v0.2.0...ff-logger-v0.3.0
 [0.2.0]: https://gitlab.com/fenixflow/fenix-packages/-/compare/ff-logger-v0.1.2...ff-logger-v0.2.0
 [0.1.2]: https://gitlab.com/fenixflow/fenix-packages/-/compare/ff-logger-v0.1.1...ff-logger-v0.1.2
 [0.1.1]: https://gitlab.com/fenixflow/fenix-packages/-/compare/ff-logger-v0.1.0...ff-logger-v0.1.1
