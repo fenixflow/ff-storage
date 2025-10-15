@@ -74,7 +74,7 @@ PY
       WHEEL_NAME=$(basename "${WHEEL_FILE}")
 
       PACKAGE_UNDERSCORE="${PACKAGE//-/_}"
-      PACKAGE_NORMALIZED=$(python - "$PACKAGE" <<'PY'
+      PACKAGE_NORMALIZED=$(python3 - "$PACKAGE" <<'PY'
 import re
 import sys
 name = sys.argv[1]
