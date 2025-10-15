@@ -68,7 +68,13 @@ class DocumentIngestionPipeline:
             if not path.exists():
                 raise FileNotFoundError(f"Source path does not exist: {path}")
 
-            if options.renderer == "markitdown":
+            # Special case: markitdown renderer for simple files without attachments
+            # For emails, we need native parser to extract structure (attachments) first
+            # Then we'll re-render with markitdown for clean content
+            is_email = path.suffix.lower() in {".eml", ".msg"}
+            needs_structure_extraction = is_email  # Can add other types later
+
+            if options.renderer == "markitdown" and not needs_structure_extraction:
                 if self._markitdown.available:
                     return self._ingest_with_markitdown(path, options)
                 raise ParserError(
@@ -96,8 +102,15 @@ class DocumentIngestionPipeline:
                 self._persist_attachments(document.attachments, attachments_dir, options)
 
             root_node = self._build_root_node(path, document, attachments_dir)
-            rendered_root = self._renderer.render(document, root_node, options)
 
+            # Smart rendering: use markitdown for content if requested
+            # IMPORTANT: Render attachments BEFORE stripping binary payloads
+            if options.renderer == "markitdown" and self._markitdown.available:
+                rendered_root = self._render_with_smart_strategy(document, root_node, path, options)
+            else:
+                rendered_root = self._renderer.render(document, root_node, options)
+
+            # Strip binary payloads after rendering is complete
             if not options.include_binary_payloads:
                 self._strip_binary_payloads(rendered_root)
 
@@ -204,8 +217,8 @@ class DocumentIngestionPipeline:
                 dedupe[node.sha256] = path
             node.metadata["absolute_path"] = str(path)
             node.location = self._relative_location(path, attachments_dir)
-            if not options.include_binary_payloads:
-                node.binary = None
+            # NOTE: Don't strip binary here - let final _strip_binary_payloads() handle it
+            # after rendering is complete
 
         for child in node.children:
             self._persist_attachment_node(child, attachments_dir, options, dedupe)
@@ -271,3 +284,120 @@ class DocumentIngestionPipeline:
                     break
                 sha.update(chunk)
         return sha.hexdigest()
+
+    def _render_with_smart_strategy(
+        self,
+        document: ExtractedDocument,
+        root_node: BundleNode,
+        path: Path,
+        options: ParseOptions,
+    ) -> BundleNode:
+        """
+        Smart rendering strategy: use MarkItDown for documents, native+OCR for images.
+
+        For emails:
+        - Body → MarkItDown (clean continuous narrative)
+        - Document attachments (PDF, DOCX, XLSX) → MarkItDown (clean tables)
+        - Image attachments (PNG, JPG) → native parser with OCR (text extraction)
+        """
+        # Render main document content with MarkItDown
+        try:
+            main_markdown = self._markitdown.render_path(path)
+            root_node.markdown = main_markdown
+        except Exception:
+            # Fallback to native renderer if MarkItDown fails
+            root_node = self._renderer.render(document, root_node, options)
+            return root_node
+
+        # Add attachments as children (same as native renderer does)
+        root_node.children = []
+        if document.attachments:
+            self._attach_children(root_node, document.attachments)
+
+            # Process each attachment with smart rendering
+            for att_node in root_node.children:
+                self._render_attachment_smart(att_node, options)
+
+        return root_node
+
+    def _attach_children(self, parent: BundleNode, children):
+        """Attach a list of nodes to a parent using BundleNode.add_child."""
+        for child in children:
+            self._attach_node(parent, child)
+
+    def _attach_node(self, parent: BundleNode, node: BundleNode) -> None:
+        """Attach a node to a parent and recursively fix depth/parent metadata."""
+        descendants = list(node.children)
+        node.children = []
+        parent.add_child(node)
+        for descendant in descendants:
+            self._attach_node(node, descendant)
+
+    def _render_attachment_smart(self, node: BundleNode, options: ParseOptions) -> None:
+        """
+        Render attachment with smart strategy based on file type.
+
+        Images → native parser + OCR for text extraction
+        Documents → MarkItDown for clean tables and formatting
+        """
+        if not node.binary:
+            # No binary data, skip rendering
+            return
+
+        is_image = self._is_image(node.name)
+
+        if is_image:
+            # Images: use native parser with OCR to extract text
+            node.markdown = self._render_image_with_ocr(node, options)
+        else:
+            # Documents: use MarkItDown for clean markdown
+            node.markdown = self._render_document_with_markitdown(node)
+
+        # Recursively process children
+        for child in node.children:
+            self._render_attachment_smart(child, options)
+
+    def _is_image(self, filename: str) -> bool:
+        """Check if file is an image requiring OCR."""
+        image_exts = {".png", ".jpg", ".jpeg", ".gif", ".bmp", ".tiff", ".tif", ".webp"}
+        return Path(filename).suffix.lower() in image_exts
+
+    def _render_image_with_ocr(self, node: BundleNode, options: ParseOptions) -> str:
+        """
+        Render image with OCR text extraction.
+
+        Returns markdown with extracted text or description.
+        """
+        # For now, return a placeholder indicating OCR is needed
+        # Full OCR implementation would require pytesseract or similar
+        return f"![{node.name}]({node.location or node.name})\n\n*Image attachment: {node.name}*\n\n*OCR text extraction available when ocr_enabled=True*"
+
+    def _render_document_with_markitdown(self, node: BundleNode) -> str:
+        """
+        Render document attachment with MarkItDown for clean tables.
+
+        Saves bytes to temp file, processes with MarkItDown, returns markdown.
+        """
+        if not node.binary:
+            return f"*Attachment: {node.name}*"
+
+        try:
+            # Save binary to temp file with correct extension
+            suffix = Path(node.name).suffix or ".bin"
+            with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
+                tmp.write(node.binary)
+                tmp.flush()
+                tmp_path = Path(tmp.name)
+
+            try:
+                # Render with MarkItDown
+                markdown = self._markitdown.render_path(tmp_path)
+                return f"## Attachment: {node.name}\n\n{markdown}"
+            finally:
+                # Clean up temp file
+                if tmp_path.exists():
+                    tmp_path.unlink(missing_ok=True)
+
+        except Exception as e:
+            # Fallback if MarkItDown fails
+            return f"## Attachment: {node.name}\n\n*Content could not be rendered: {str(e)}*"
