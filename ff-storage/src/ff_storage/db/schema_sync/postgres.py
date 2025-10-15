@@ -8,7 +8,7 @@ This module provides complete PostgreSQL support for:
 """
 
 import re
-from typing import List, Optional
+from typing import List
 
 from .base import MigrationGeneratorBase, SQLParserBase, SchemaIntrospectorBase
 from .models import ColumnDefinition, ColumnType, IndexDefinition, TableDefinition
@@ -55,16 +55,18 @@ class PostgresSchemaIntrospector(SchemaIntrospectorBase):
             # Map PostgreSQL type to generic type
             column_type = self._map_postgres_type(data_type, udt_name)
 
-            columns.append(ColumnDefinition(
-                name=col_name,
-                column_type=column_type,
-                nullable=(nullable == 'YES'),
-                default=default,
-                max_length=max_len,
-                precision=precision,
-                scale=scale,
-                native_type=udt_name or data_type
-            ))
+            columns.append(
+                ColumnDefinition(
+                    name=col_name,
+                    column_type=column_type,
+                    nullable=(nullable == "YES"),
+                    default=default,
+                    max_length=max_len,
+                    precision=precision,
+                    scale=scale,
+                    native_type=udt_name or data_type,
+                )
+            )
 
         return columns
 
@@ -93,13 +95,15 @@ class PostgresSchemaIntrospector(SchemaIntrospectorBase):
         indexes = []
         for row in results:
             idx_name, col_names, is_unique, idx_type = row
-            indexes.append(IndexDefinition(
-                name=idx_name,
-                table_name=table_name,
-                columns=col_names if isinstance(col_names, list) else [col_names],
-                unique=is_unique,
-                index_type=idx_type
-            ))
+            indexes.append(
+                IndexDefinition(
+                    name=idx_name,
+                    table_name=table_name,
+                    columns=col_names if isinstance(col_names, list) else [col_names],
+                    unique=is_unique,
+                    index_type=idx_type,
+                )
+            )
 
         return indexes
 
@@ -121,27 +125,27 @@ class PostgresSchemaIntrospector(SchemaIntrospectorBase):
         type_str = (udt_name or data_type).lower()
 
         type_map = {
-            'uuid': ColumnType.UUID,
-            'character varying': ColumnType.STRING,
-            'varchar': ColumnType.STRING,
-            'text': ColumnType.TEXT,
-            'integer': ColumnType.INTEGER,
-            'int4': ColumnType.INTEGER,
-            'bigint': ColumnType.BIGINT,
-            'int8': ColumnType.BIGINT,
-            'boolean': ColumnType.BOOLEAN,
-            'bool': ColumnType.BOOLEAN,
-            'timestamp without time zone': ColumnType.TIMESTAMP,
-            'timestamp': ColumnType.TIMESTAMP,
-            'timestamp with time zone': ColumnType.TIMESTAMPTZ,
-            'timestamptz': ColumnType.TIMESTAMPTZ,
-            'jsonb': ColumnType.JSONB,
-            'numeric': ColumnType.DECIMAL,
-            'decimal': ColumnType.DECIMAL,
+            "uuid": ColumnType.UUID,
+            "character varying": ColumnType.STRING,
+            "varchar": ColumnType.STRING,
+            "text": ColumnType.TEXT,
+            "integer": ColumnType.INTEGER,
+            "int4": ColumnType.INTEGER,
+            "bigint": ColumnType.BIGINT,
+            "int8": ColumnType.BIGINT,
+            "boolean": ColumnType.BOOLEAN,
+            "bool": ColumnType.BOOLEAN,
+            "timestamp without time zone": ColumnType.TIMESTAMP,
+            "timestamp": ColumnType.TIMESTAMP,
+            "timestamp with time zone": ColumnType.TIMESTAMPTZ,
+            "timestamptz": ColumnType.TIMESTAMPTZ,
+            "jsonb": ColumnType.JSONB,
+            "numeric": ColumnType.DECIMAL,
+            "decimal": ColumnType.DECIMAL,
         }
 
         # Check for array types
-        if type_str.endswith('[]') or data_type == 'ARRAY':
+        if type_str.endswith("[]") or data_type == "ARRAY":
             return ColumnType.ARRAY
 
         return type_map.get(type_str, ColumnType.STRING)
@@ -154,9 +158,9 @@ class PostgresSQLParser(SQLParserBase):
         """Parse CREATE TABLE statement into TableDefinition."""
         # Extract schema and table name
         table_match = re.search(
-            r'CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?([a-zA-Z_][a-zA-Z0-9_]*\.)?([a-zA-Z_][a-zA-Z0-9_]*)',
+            r"CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?([a-zA-Z_][a-zA-Z0-9_]*\.)?([a-zA-Z_][a-zA-Z0-9_]*)",
             sql,
-            re.IGNORECASE
+            re.IGNORECASE,
         )
 
         if not table_match:
@@ -164,23 +168,18 @@ class PostgresSQLParser(SQLParserBase):
 
         schema_part = table_match.group(1)
         table_name = table_match.group(2)
-        schema = schema_part.rstrip('.') if schema_part else 'public'
+        schema = schema_part.rstrip(".") if schema_part else "public"
 
         # Parse columns and indexes
         columns = self.parse_columns_from_sql(sql)
         indexes = self.parse_indexes_from_sql(sql)
 
-        return TableDefinition(
-            name=table_name,
-            schema=schema,
-            columns=columns,
-            indexes=indexes
-        )
+        return TableDefinition(name=table_name, schema=schema, columns=columns, indexes=indexes)
 
     def parse_columns_from_sql(self, sql: str) -> List[ColumnDefinition]:
         """Extract column definitions from CREATE TABLE SQL."""
         # Extract the content inside CREATE TABLE (...)
-        table_match = re.search(r'CREATE\s+TABLE[^(]+\((.*?)\);', sql, re.IGNORECASE | re.DOTALL)
+        table_match = re.search(r"CREATE\s+TABLE[^(]+\((.*?)\);", sql, re.IGNORECASE | re.DOTALL)
         if not table_match:
             return []
 
@@ -188,37 +187,66 @@ class PostgresSQLParser(SQLParserBase):
 
         columns = []
         # Split by lines, look for column definitions
-        for line in table_content.split('\n'):
+        for line in table_content.split("\n"):
             line = line.strip()
 
             # Skip comments, constraints, empty lines
-            if not line or line.startswith('--') or line.upper().startswith(('PRIMARY KEY', 'FOREIGN KEY', 'UNIQUE', 'CHECK', 'CONSTRAINT')):
+            if (
+                not line
+                or line.startswith("--")
+                or line.upper().startswith(
+                    ("PRIMARY KEY", "FOREIGN KEY", "UNIQUE", "CHECK", "CONSTRAINT")
+                )
+            ):
                 continue
 
-            # Parse column definition: column_name TYPE [NULL/NOT NULL] [DEFAULT ...]
+            # Parse column definition: column_name TYPE [constraints...] [,]
+            # Fixed regex to handle:
+            # - Multi-word types (TIMESTAMP WITH TIME ZONE)
+            # - REFERENCES constraints
+            # - Foreign keys and other constraints
             col_match = re.match(
-                r'([a-zA-Z_][a-zA-Z0-9_]*)\s+([A-Z0-9_\(\)]+)(?:\s+(NOT\s+NULL|NULL))?(?:\s+DEFAULT\s+(.+?))?(?:,|$)',
-                line,
-                re.IGNORECASE
+                r"([a-zA-Z_][a-zA-Z0-9_]*)\s+(.+?)(?:,\s*$|$)", line, re.IGNORECASE
             )
 
             if col_match:
                 col_name = col_match.group(1)
-                col_type_str = col_match.group(2)
-                nullable_str = col_match.group(3)
-                default_str = col_match.group(4)
+                col_def = col_match.group(2).rstrip(",").strip()
+
+                # Extract type (first word or multi-word type)
+                # Handle types like: UUID, VARCHAR(255), TIMESTAMP WITH TIME ZONE
+                type_match = re.match(
+                    r"([A-Z]+(?:\s+WITH\s+TIME\s+ZONE)?(?:\s+VARYING)?(?:\([^)]+\))?)",
+                    col_def,
+                    re.IGNORECASE,
+                )
+                if not type_match:
+                    # Fallback: just take first word
+                    type_match = re.match(r"(\S+)", col_def)
+
+                col_type_str = type_match.group(1) if type_match else col_def.split()[0]
+
+                # Check for constraints in definition
+                nullable = "NOT NULL" not in col_def.upper()
+
+                # Extract default value if present
+                default_match = re.search(
+                    r"DEFAULT\s+(.+?)(?:,|REFERENCES|$)", col_def, re.IGNORECASE
+                )
+                default_str = default_match.group(1).strip() if default_match else None
 
                 # Map type string to ColumnType
                 column_type = self._parse_column_type(col_type_str)
-                nullable = not (nullable_str and 'NOT NULL' in nullable_str.upper())
 
-                columns.append(ColumnDefinition(
-                    name=col_name,
-                    column_type=column_type,
-                    nullable=nullable,
-                    default=default_str.rstrip(',') if default_str else None,
-                    native_type=col_type_str
-                ))
+                columns.append(
+                    ColumnDefinition(
+                        name=col_name,
+                        column_type=column_type,
+                        nullable=nullable,
+                        default=default_str,
+                        native_type=col_type_str,
+                    )
+                )
 
         return columns
 
@@ -227,27 +255,29 @@ class PostgresSQLParser(SQLParserBase):
         indexes = []
 
         # Find all CREATE INDEX statements
-        index_pattern = r'CREATE\s+(UNIQUE\s+)?INDEX\s+(?:IF\s+NOT\s+EXISTS\s+)?([a-zA-Z_][a-zA-Z0-9_]*)\s+ON\s+([a-zA-Z_][a-zA-Z0-9_]*\\.)?([a-zA-Z_][a-zA-Z0-9_]*)\s*(?:USING\s+([a-zA-Z]+))?\s*\(([^)]+)\)(?:\s+WHERE\s+(.+?))?;'
+        index_pattern = r"CREATE\s+(UNIQUE\s+)?INDEX\s+(?:IF\s+NOT\s+EXISTS\s+)?([a-zA-Z_][a-zA-Z0-9_]*)\s+ON\s+([a-zA-Z_][a-zA-Z0-9_]*\\.)?([a-zA-Z_][a-zA-Z0-9_]*)\s*(?:USING\s+([a-zA-Z]+))?\s*\(([^)]+)\)(?:\s+WHERE\s+(.+?))?;"
 
         for match in re.finditer(index_pattern, sql, re.IGNORECASE):
             is_unique = match.group(1) is not None
             index_name = match.group(2)
             table_name = match.group(4)
-            index_type = match.group(5) or 'btree'
+            index_type = match.group(5) or "btree"
             columns_str = match.group(6)
             where_clause = match.group(7)
 
             # Parse column list
-            columns = [col.strip() for col in columns_str.split(',')]
+            columns = [col.strip() for col in columns_str.split(",")]
 
-            indexes.append(IndexDefinition(
-                name=index_name,
-                table_name=table_name,
-                columns=columns,
-                unique=is_unique,
-                index_type=index_type.lower(),
-                where_clause=where_clause
-            ))
+            indexes.append(
+                IndexDefinition(
+                    name=index_name,
+                    table_name=table_name,
+                    columns=columns,
+                    unique=is_unique,
+                    index_type=index_type.lower(),
+                    where_clause=where_clause,
+                )
+            )
 
         return indexes
 
@@ -255,27 +285,27 @@ class PostgresSQLParser(SQLParserBase):
         """Parse PostgreSQL type string to ColumnType."""
         type_upper = type_str.upper()
 
-        if type_upper == 'UUID':
+        if type_upper == "UUID":
             return ColumnType.UUID
-        elif type_upper.startswith('VARCHAR') or type_upper.startswith('CHARACTER VARYING'):
+        elif type_upper.startswith("VARCHAR") or type_upper.startswith("CHARACTER VARYING"):
             return ColumnType.STRING
-        elif type_upper == 'TEXT':
+        elif type_upper == "TEXT":
             return ColumnType.TEXT
-        elif type_upper in ('INTEGER', 'INT', 'INT4'):
+        elif type_upper in ("INTEGER", "INT", "INT4"):
             return ColumnType.INTEGER
-        elif type_upper in ('BIGINT', 'INT8'):
+        elif type_upper in ("BIGINT", "INT8"):
             return ColumnType.BIGINT
-        elif type_upper == 'BOOLEAN':
+        elif type_upper == "BOOLEAN":
             return ColumnType.BOOLEAN
-        elif 'TIMESTAMP WITH TIME ZONE' in type_upper or type_upper == 'TIMESTAMPTZ':
+        elif "TIMESTAMP WITH TIME ZONE" in type_upper or type_upper == "TIMESTAMPTZ":
             return ColumnType.TIMESTAMPTZ
-        elif 'TIMESTAMP' in type_upper:
+        elif "TIMESTAMP" in type_upper:
             return ColumnType.TIMESTAMP
-        elif type_upper == 'JSONB':
+        elif type_upper == "JSONB":
             return ColumnType.JSONB
-        elif type_upper.endswith('[]'):
+        elif type_upper.endswith("[]"):
             return ColumnType.ARRAY
-        elif type_upper in ('NUMERIC', 'DECIMAL'):
+        elif type_upper in ("NUMERIC", "DECIMAL"):
             return ColumnType.DECIMAL
         else:
             return ColumnType.STRING  # Default fallback
@@ -290,7 +320,9 @@ class PostgresMigrationGenerator(MigrationGeneratorBase):
         nullable = "NULL" if column.nullable else "NOT NULL"
         default = f"DEFAULT {column.default}" if column.default else ""
 
-        sql = f"ALTER TABLE {full_table} ADD COLUMN IF NOT EXISTS {column.name} {column.native_type}"
+        sql = (
+            f"ALTER TABLE {full_table} ADD COLUMN IF NOT EXISTS {column.name} {column.native_type}"
+        )
 
         if not column.nullable:
             sql += f" {nullable}"

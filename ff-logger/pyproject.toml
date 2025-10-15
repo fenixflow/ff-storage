@@ -8,7 +8,7 @@ version = "0.4.2"
 description = "Fenixflow structured logging package with scoped, instance-based loggers"
 readme = "README.md"
 requires-python = ">=3.10"
-license = {text = "MIT"}
+license = {file = "LICENSE"}
 authors = [
     {name = "Ben Moag", email = "dev@fenixflow.com"}
 ]

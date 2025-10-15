@@ -4,11 +4,11 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ff-storage"
-version = "2.0.0"
+version = "2.0.1"
 description = "Fenixflow storage package for database and file operations with async connection pools and schema sync"
 readme = "README.md"
 requires-python = ">=3.10"
-license = {text = "MIT"}
+license = {file = "LICENSE"}
 authors = [
     {name = "Ben Moag", email = "dev@fenixflow.com"}
 ]
