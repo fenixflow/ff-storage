@@ -141,6 +141,24 @@ class BaseModel:
         """
 
     @classmethod
+    def get_create_table_sql(cls) -> str:
+        """
+        Alias for create_table_sql() for compatibility with SchemaManager.
+
+        :return: CREATE TABLE SQL statement.
+        """
+        return cls.create_table_sql()
+
+    @classmethod
+    def get_table_name(cls) -> str:
+        """
+        Alias for table_name() for compatibility with SchemaManager.
+
+        :return: Table name.
+        """
+        return cls.table_name()
+
+    @classmethod
     def drop_table_sql(cls) -> str:
         """
         Generate SQL for dropping the table.

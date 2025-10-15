@@ -10,7 +10,7 @@ from typing import Any, Dict, List, Optional
 import mysql.connector
 from mysql.connector import Error
 
-from .sql import SQL
+from ..sql import SQL
 
 # Async pool requires aiomysql
 try:

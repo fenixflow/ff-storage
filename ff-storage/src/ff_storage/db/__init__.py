@@ -6,13 +6,32 @@ Sync Connections (for scripts, simple apps):
 
 Async Pools (for FastAPI, production apps):
     - PostgresPool, MySQLPool, SQLServerPool
+
+Schema Management:
+    - SchemaManager (Terraform-like schema synchronization)
 """
 
-from .migrations import MigrationManager
-from .mysql import MySQL, MySQLBase, MySQLPool
-from .postgres import Postgres, PostgresBase, PostgresPool
+from .connections import (
+    MySQL,
+    MySQLBase,
+    MySQLPool,
+    Postgres,
+    PostgresBase,
+    PostgresPool,
+    SQLServer,
+    SQLServerBase,
+    SQLServerPool,
+)
+from .models import (
+    AuditModel,
+    BaseModel,
+    FullFeaturedModel,
+    MetadataModel,
+    SoftDeleteModel,
+    VersionedModel,
+)
+from .schema_sync import SchemaManager
 from .sql import SQL
-from .sqlserver import SQLServer, SQLServerBase, SQLServerPool
 
 __all__ = [
     "SQL",
@@ -28,6 +47,13 @@ __all__ = [
     "SQLServer",  # Sync direct connection
     "SQLServerPool",  # Async connection pool
     "SQLServerBase",
-    # Migrations
-    "MigrationManager",
+    # Schema Sync (replaces MigrationManager in v2.0.0)
+    "SchemaManager",
+    # Base Models
+    "BaseModel",
+    "SoftDeleteModel",
+    "VersionedModel",
+    "AuditModel",
+    "MetadataModel",
+    "FullFeaturedModel",
 ]

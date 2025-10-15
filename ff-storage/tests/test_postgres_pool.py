@@ -6,7 +6,7 @@ import pytest
 import pytest_asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from ff_storage.db.postgres import PostgresPool
+from ff_storage.db.connections.postgres import PostgresPool
 
 
 @pytest.fixture

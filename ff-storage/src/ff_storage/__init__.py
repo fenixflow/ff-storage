@@ -10,11 +10,8 @@ try:
 except Exception:
     __version__ = "0.0.0+unknown"
 
-from .db.migrations import MigrationManager
-from .db.mysql import MySQL, MySQLPool
-
 # Database exports
-from .db.postgres import Postgres, PostgresPool
+from .db import MySQL, MySQLPool, Postgres, PostgresPool, SchemaManager
 
 # Object storage exports
 from .object import AzureBlobObjectStorage, LocalObjectStorage, ObjectStorage, S3ObjectStorage
@@ -26,8 +23,8 @@ __all__ = [
     # MySQL
     "MySQL",
     "MySQLPool",
-    # Migrations
-    "MigrationManager",
+    # Schema Management
+    "SchemaManager",
     # Object Storage
     "ObjectStorage",
     "LocalObjectStorage",

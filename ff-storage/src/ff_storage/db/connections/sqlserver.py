@@ -9,7 +9,7 @@ from typing import Any, Dict, List, Optional
 
 import pyodbc
 
-from .sql import SQL
+from ..sql import SQL
 
 
 @dataclass

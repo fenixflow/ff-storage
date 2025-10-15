@@ -10,7 +10,7 @@ from typing import Any, Dict, List, Optional
 import psycopg2
 from psycopg2 import DatabaseError, OperationalError
 
-from .sql import SQL
+from ..sql import SQL
 
 
 @dataclass

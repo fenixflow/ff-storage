@@ -6,7 +6,7 @@ import pytest
 import pytest_asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from ff_storage.db.mysql import MySQLPool
+from ff_storage.db.connections.mysql import MySQLPool
 
 
 @pytest.fixture
