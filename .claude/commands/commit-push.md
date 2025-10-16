@@ -12,13 +12,23 @@ Commit and push changes ensuring proper human authorship:
 
 ## Commit and Push
 
+CRITICAL: NEVER commit as "Claude Code" or "Claude". ALL commits must be by the human developer only.
+
 1. First verify Git author configuration:
    ```bash
    git config user.name
    git config user.email
    ```
 
-   If these show "Claude Code" or are not set, configure them with the actual developer's information from the global config or recent commits.
+   If these show "Claude Code", "Claude", or are not set, configure them with the actual developer's information from recent commits:
+   ```bash
+   # Get the human author from recent commits
+   git log -1 --pretty=format:"%an%n%ae" | head -2
+
+   # Then set it if needed
+   git config user.name "Developer Name"
+   git config user.email "developer@email.com"
+   ```
 
 2. Stage all changes:
    ```bash
@@ -30,14 +40,19 @@ Commit and push changes ensuring proper human authorship:
    git commit -m "$ARGUMENTS"
    ```
 
+   IMPORTANT: Do NOT include "Generated with Claude Code" or "Co-Authored-By: Claude" in the commit message.
+
    If no message provided, create a meaningful commit message following conventional format (feat:, fix:, chore:, docs:, refactor:, test:, style:)
 
-4. Verify the commit author is correct:
+4. Verify the commit author is ONLY the human developer:
    ```bash
    git log -1 --pretty=format:"✓ Commit created by: %an <%ae>"
    ```
 
-   If it shows "Claude Code", amend the commit with correct author before pushing.
+   If it shows "Claude Code" or "Claude", ABORT and amend the commit with correct author before pushing:
+   ```bash
+   git commit --amend --author="Developer Name <developer@email.com>" --no-edit
+   ```
 
 5. Push to remote:
    ```bash

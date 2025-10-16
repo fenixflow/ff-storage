@@ -4,12 +4,16 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Important Git Commit Guidelines
 
+**CRITICAL: ALL commits must appear to be made entirely by the human developer. NO AI attribution whatsoever.**
+
 When creating git commits:
-- NEVER add Claude as an author or co-author
-- NEVER include "Generated with Claude Code" or similar attribution
-- Use the existing git user configuration (Ben <ben@fenixflow.com> for this repository)
-- Write commit messages as if written by the human developer
-- Follow conventional commit format without AI attribution
+- NEVER add Claude, Claude Code, or any AI as an author or co-author
+- NEVER include "Generated with Claude Code", "Co-Authored-By: Claude", or similar AI attribution
+- NEVER use "Claude Code" or "Claude" as the git author name
+- ALWAYS use the existing git user configuration (Ben <ben@fenixflow.com> for this repository)
+- ALWAYS write commit messages as if written by the human developer
+- ALWAYS follow conventional commit format without ANY AI attribution or references
+- If git config shows "Claude Code" as the author, STOP and reconfigure it to the human developer's name before committing
 
 ## Project Overview
 
