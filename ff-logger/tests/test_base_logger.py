@@ -6,6 +6,7 @@ import io
 import logging
 
 import pytest
+
 from ff_logger import ScopedLogger
 
 

@@ -58,68 +58,74 @@ class SchemaManager:
             Provider name: 'postgres', 'mysql', or 'sqlserver'
         """
         # Check db_type attribute
-        db_type = getattr(self.db, 'db_type', None)
+        db_type = getattr(self.db, "db_type", None)
         if db_type:
             return db_type
 
         # Fallback: check class name
         class_name = self.db.__class__.__name__.lower()
-        if 'postgres' in class_name:
-            return 'postgres'
-        elif 'mysql' in class_name:
-            return 'mysql'
-        elif 'sqlserver' in class_name or 'mssql' in class_name:
-            return 'sqlserver'
+        if "postgres" in class_name:
+            return "postgres"
+        elif "mysql" in class_name:
+            return "mysql"
+        elif "sqlserver" in class_name or "mssql" in class_name:
+            return "sqlserver"
 
         raise ValueError(f"Could not detect database provider from connection: {type(self.db)}")
 
     def _create_introspector(self) -> SchemaIntrospectorBase:
         """Factory method for provider-specific introspector."""
-        if self.provider == 'postgres':
+        if self.provider == "postgres":
             from .postgres import PostgresSchemaIntrospector
+
             return PostgresSchemaIntrospector(self.db, self.logger)
-        elif self.provider == 'mysql':
+        elif self.provider == "mysql":
             from .mysql import MySQLSchemaIntrospector
+
             return MySQLSchemaIntrospector(self.db, self.logger)
-        elif self.provider == 'sqlserver':
+        elif self.provider == "sqlserver":
             from .sqlserver import SQLServerSchemaIntrospector
+
             return SQLServerSchemaIntrospector(self.db, self.logger)
         else:
             raise ValueError(f"Unsupported database provider: {self.provider}")
 
     def _create_parser(self) -> SQLParserBase:
         """Factory method for provider-specific SQL parser."""
-        if self.provider == 'postgres':
+        if self.provider == "postgres":
             from .postgres import PostgresSQLParser
+
             return PostgresSQLParser()
-        elif self.provider == 'mysql':
+        elif self.provider == "mysql":
             from .mysql import MySQLSQLParser
+
             return MySQLSQLParser()
-        elif self.provider == 'sqlserver':
+        elif self.provider == "sqlserver":
             from .sqlserver import SQLServerSQLParser
+
             return SQLServerSQLParser()
         else:
             raise ValueError(f"Unsupported database provider: {self.provider}")
 
     def _create_generator(self) -> MigrationGeneratorBase:
         """Factory method for provider-specific migration generator."""
-        if self.provider == 'postgres':
+        if self.provider == "postgres":
             from .postgres import PostgresMigrationGenerator
+
             return PostgresMigrationGenerator()
-        elif self.provider == 'mysql':
+        elif self.provider == "mysql":
             from .mysql import MySQLMigrationGenerator
+
             return MySQLMigrationGenerator()
-        elif self.provider == 'sqlserver':
+        elif self.provider == "sqlserver":
             from .sqlserver import SQLServerMigrationGenerator
+
             return SQLServerMigrationGenerator()
         else:
             raise ValueError(f"Unsupported database provider: {self.provider}")
 
     def sync_schema(
-        self,
-        models: List[Type],
-        allow_destructive: bool = False,
-        dry_run: bool = False
+        self, models: List[Type], allow_destructive: bool = False, dry_run: bool = False
     ) -> int:
         """
         Synchronize database schema with model definitions.
@@ -138,8 +144,8 @@ class SchemaManager:
                 "provider": self.provider,
                 "models_count": len(models),
                 "allow_destructive": allow_destructive,
-                "dry_run": dry_run
-            }
+                "dry_run": dry_run,
+            },
         )
 
         all_changes = []
@@ -149,9 +155,9 @@ class SchemaManager:
             # Get desired state from model
             try:
                 # Support both get_create_table_sql() and create_table_sql()
-                if hasattr(model_class, 'get_create_table_sql'):
+                if hasattr(model_class, "get_create_table_sql"):
                     sql = model_class.get_create_table_sql()
-                elif hasattr(model_class, 'create_table_sql'):
+                elif hasattr(model_class, "create_table_sql"):
                     sql = model_class.create_table_sql()
                 else:
                     self.logger.warning(
@@ -162,29 +168,27 @@ class SchemaManager:
                 desired = self.parser.parse_create_table(sql)
             except Exception as e:
                 self.logger.error(
-                    f"Failed to parse SQL for model {model_class.__name__}",
-                    extra={"error": str(e)}
+                    f"Failed to parse SQL for model {model_class.__name__}", extra={"error": str(e)}
                 )
                 continue
 
             # Get current state from database
             try:
                 # Support both table_name() and get_table_name()
-                if hasattr(model_class, 'get_table_name'):
+                if hasattr(model_class, "get_table_name"):
                     table_name = model_class.get_table_name()
-                elif hasattr(model_class, 'table_name'):
+                elif hasattr(model_class, "table_name"):
                     table_name = model_class.table_name()
                 else:
-                    table_name = model_class.__name__.lower() + 's'
+                    table_name = model_class.__name__.lower() + "s"
 
                 current = self.introspector.get_table_schema(
-                    table_name=table_name,
-                    schema=model_class.__schema__
+                    table_name=table_name, schema=model_class.__schema__
                 )
             except Exception as e:
                 self.logger.error(
                     f"Failed to introspect table for model {model_class.__name__}",
-                    extra={"error": str(e)}
+                    extra={"error": str(e)},
                 )
                 continue
 
@@ -198,19 +202,18 @@ class SchemaManager:
                         change.sql = self.generator.generate_add_column(
                             table_name=change.table_name,
                             schema=desired.schema,
-                            column=change.column
+                            column=change.column,
                         )
                     elif change.change_type == ChangeType.ADD_INDEX:
                         change.sql = self.generator.generate_create_index(
-                            schema=desired.schema,
-                            index=change.index
+                            schema=desired.schema, index=change.index
                         )
                     elif change.change_type == ChangeType.CREATE_TABLE:
                         change.sql = self.generator.generate_create_table(desired)
                 except Exception as e:
                     self.logger.error(
                         f"Failed to generate SQL for change: {change.description}",
-                        extra={"error": str(e)}
+                        extra={"error": str(e)},
                     )
                     continue
 
@@ -225,8 +228,8 @@ class SchemaManager:
                 "Skipping destructive changes (set allow_destructive=True to apply)",
                 extra={
                     "count": len(destructive_changes),
-                    "changes": [c.description for c in destructive_changes]
-                }
+                    "changes": [c.description for c in destructive_changes],
+                },
             )
 
         # Determine changes to apply
@@ -253,13 +256,9 @@ class SchemaManager:
             self.db.execute(transaction_sql)
             self.logger.info(
                 f"Applied {len(statements)} schema changes successfully",
-                extra={"changes": [c.description for c in changes_to_apply]}
+                extra={"changes": [c.description for c in changes_to_apply]},
             )
             return len(statements)
         except Exception as e:
-            self.logger.error(
-                "Schema sync failed",
-                extra={"error": str(e)},
-                exc_info=True
-            )
+            self.logger.error("Schema sync failed", extra={"error": str(e)}, exc_info=True)
             raise

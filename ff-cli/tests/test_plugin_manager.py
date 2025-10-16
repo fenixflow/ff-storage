@@ -3,6 +3,7 @@
 from unittest.mock import MagicMock, Mock, patch
 
 import typer
+
 from ff_cli.plugin_manager import Plugin, PluginManager
 
 

@@ -10,7 +10,7 @@ This module provides complete PostgreSQL support for:
 import re
 from typing import List
 
-from .base import MigrationGeneratorBase, SQLParserBase, SchemaIntrospectorBase
+from .base import MigrationGeneratorBase, SchemaIntrospectorBase, SQLParserBase
 from .models import ColumnDefinition, ColumnType, IndexDefinition, TableDefinition
 
 

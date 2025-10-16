@@ -4,7 +4,7 @@ MySQL schema sync stubs (not yet implemented).
 Contributions welcome! See postgres.py for reference implementation.
 """
 
-from .base import MigrationGeneratorBase, SQLParserBase, SchemaIntrospectorBase
+from .base import MigrationGeneratorBase, SchemaIntrospectorBase, SQLParserBase
 
 
 class MySQLSchemaIntrospector(SchemaIntrospectorBase):

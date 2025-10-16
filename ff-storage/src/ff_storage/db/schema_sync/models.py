@@ -12,6 +12,7 @@ from typing import List, Optional
 
 class ColumnType(Enum):
     """Database-agnostic column types."""
+
     UUID = "uuid"
     STRING = "string"
     TEXT = "text"
@@ -27,6 +28,7 @@ class ColumnType(Enum):
 
 class ChangeType(Enum):
     """Schema change types."""
+
     # Additive (safe - auto-apply)
     CREATE_TABLE = "create_table"
     ADD_COLUMN = "add_column"
@@ -44,6 +46,7 @@ class ChangeType(Enum):
 @dataclass
 class ColumnDefinition:
     """Database-agnostic column definition."""
+
     name: str
     column_type: ColumnType
     nullable: bool = True
@@ -60,6 +63,7 @@ class ColumnDefinition:
 @dataclass
 class IndexDefinition:
     """Database-agnostic index definition."""
+
     name: str
     table_name: str
     columns: List[str]
@@ -71,6 +75,7 @@ class IndexDefinition:
 @dataclass
 class TableDefinition:
     """Complete table schema."""
+
     name: str
     schema: str
     columns: List[ColumnDefinition] = field(default_factory=list)
@@ -80,6 +85,7 @@ class TableDefinition:
 @dataclass
 class SchemaChange:
     """Represents a schema change to be applied."""
+
     change_type: ChangeType
     table_name: str
     is_destructive: bool

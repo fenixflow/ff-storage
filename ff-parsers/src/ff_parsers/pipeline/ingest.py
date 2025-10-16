@@ -4,8 +4,8 @@ Document ingestion pipeline that normalises parser output into Markdown bundles.
 
 from __future__ import annotations
 
-import tempfile
 import hashlib
+import tempfile
 from dataclasses import asdict, is_dataclass
 from pathlib import Path
 from typing import Dict, Iterable, Optional, Union
@@ -17,6 +17,7 @@ from ..models import BundleNode, DocumentBundle, ExtractedDocument
 from ..renderers.markdown import MarkdownRenderer
 from ..renderers.markitdown import MarkItDownFallback
 from ..utils.attachments import compute_sha256, ensure_directory, persist_attachment_bytes
+from ..utils.temp_file_manager import managed_temp_file
 
 
 class DocumentIngestionPipeline:
@@ -421,7 +422,7 @@ class DocumentIngestionPipeline:
             node.markdown = self._render_image_with_ocr(node, options)
         else:
             # Documents: use MarkItDown for clean markdown
-            node.markdown = self._render_document_with_markitdown(node)
+            node.markdown = self._render_document_with_markitdown(node, options)
 
         # Recursively process children
         for child in node.children:
@@ -444,14 +445,12 @@ class DocumentIngestionPipeline:
             )
 
         try:
-            # Save binary to temp file with correct extension
             suffix = Path(node.name).suffix or ".png"
-            with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
-                tmp.write(node.binary)
-                tmp.flush()
-                tmp_path = Path(tmp.name)
 
-            try:
+            with managed_temp_file(suffix=suffix) as tmp_path:
+                # Write binary to temp file
+                tmp_path.write_bytes(node.binary)
+
                 # Use ImageParser with OCR enabled
                 image_parser = self._factory.get_parser("image")
 
@@ -487,16 +486,11 @@ class DocumentIngestionPipeline:
 
                 return "\n".join(markdown_parts)
 
-            finally:
-                # Clean up temp file
-                if tmp_path.exists():
-                    tmp_path.unlink(missing_ok=True)
-
         except Exception as e:
             # Fallback if OCR fails
             return f"![{node.name}]({node.location or node.name})\n\n*Image attachment (OCR failed: {str(e)})*"
 
-    def _render_document_with_markitdown(self, node: BundleNode) -> str:
+    def _render_document_with_markitdown(self, node: BundleNode, options: ParseOptions) -> str:
         """
         Render document attachment with MarkItDown for clean tables.
 
@@ -511,14 +505,12 @@ class DocumentIngestionPipeline:
             return f"*Attachment: {node.name}*"
 
         try:
-            # Save binary to temp file with correct extension
             suffix = Path(node.name).suffix or ".bin"
-            with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
-                tmp.write(node.binary)
-                tmp.flush()
-                tmp_path = Path(tmp.name)
 
-            try:
+            with managed_temp_file(suffix=suffix) as tmp_path:
+                # Write binary to temp file
+                tmp_path.write_bytes(node.binary)
+
                 # Render with MarkItDown
                 markdown = self._markitdown.render_path(tmp_path)
 
@@ -530,12 +522,12 @@ class DocumentIngestionPipeline:
                     try:
                         pdf_parser = self._factory.get_parser("pdf")
 
-                        # Create options with OCR enabled for scanned PDFs
+                        # Create options with OCR enabled for scanned PDFs (inherit from parent options)
                         ocr_options = ParseOptions(
                             ocr_enabled=True,
-                            handwriting_enabled=False,  # Can enable if needed
-                            ocr_language="eng",
-                            ocr_timeout=30,
+                            handwriting_enabled=options.handwriting_enabled,
+                            ocr_language=options.ocr_language,
+                            ocr_timeout=options.ocr_timeout,
                             extract_tables=True,
                             extract_metadata=False,
                         )
@@ -560,11 +552,6 @@ class DocumentIngestionPipeline:
 
                 # MarkItDown succeeded with good content
                 return f"## Attachment: {node.name}\n\n{markdown}"
-
-            finally:
-                # Clean up temp file
-                if tmp_path.exists():
-                    tmp_path.unlink(missing_ok=True)
 
         except Exception as e:
             # Fallback if MarkItDown fails entirely

@@ -129,9 +129,7 @@ class EmailParser(BaseParser):
             document.pages.append(ExtractedText(content=full_text, confidence=1.0))
 
         document.attachments = attachments
-        email_meta.attachments = [
-            node.name for node in attachments if node.kind != "inline" or node.name
-        ]
+        email_meta.attachments = [node.name for node in attachments if node.kind != "inline"]
         document.metadata.custom_properties["email_header_text"] = header_text
         document.metadata.custom_properties["email_body_segments"] = body_segments
 
@@ -192,12 +190,12 @@ class EmailParser(BaseParser):
                 node.add_child(child)
             return [], [node]
 
-        # Textual parts contribute to the body content.
-        if content_type == "text/plain":
+        # Textual parts contribute to the body content unless marked as attachment.
+        if content_type == "text/plain" and disposition != "attachment":
             text = self._extract_text_part(message, options)
             return ([text] if text else []), []
 
-        if content_type == "text/html":
+        if content_type == "text/html" and disposition != "attachment":
             html_text = self._extract_html_part(message, options)
             return ([html_text] if html_text else []), []
 

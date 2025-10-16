@@ -268,7 +268,7 @@ def display_core_services_table(services: list[dict[str, Any]], title: str, mess
             else:
                 port_str = ", ".join(ports[:2])
                 if len(ports) > 2:
-                    port_str += f" +{len(ports)-2}"
+                    port_str += f" +{len(ports) - 2}"
         else:
             port_str = "-"
 

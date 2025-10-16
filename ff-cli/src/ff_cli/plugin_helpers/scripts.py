@@ -262,6 +262,6 @@ if __name__ == "__main__":
     def _normalise_command(self, command: object) -> Sequence[str]:
         if isinstance(command, str):
             return shlex.split(command)
-        if isinstance(command, (list, tuple)):
+        if isinstance(command, list | tuple):
             return [str(part) for part in command]
         raise TypeError("command must be a string or list")

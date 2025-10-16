@@ -2,9 +2,10 @@
 
 from pathlib import Path
 
+from typer.testing import CliRunner
+
 from ff_cli import branding
 from ff_cli.main import app
-from typer.testing import CliRunner
 
 runner = CliRunner()
 
