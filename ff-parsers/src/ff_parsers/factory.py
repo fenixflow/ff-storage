@@ -7,7 +7,7 @@ from typing import Dict, Type, Union
 
 from .base import BaseParser
 from .exceptions import UnsupportedFormatError
-from .parsers import DocxParser, EmailParser, ExcelParser, PDFParser, TextParser
+from .parsers import DocxParser, EmailParser, ExcelParser, ImageParser, PDFParser, TextParser
 from .utils.validation import detect_file_type, get_mime_type
 
 
@@ -37,6 +37,7 @@ class ParserFactory:
         self.register_parser("email", EmailParser)
         self.register_parser("word", DocxParser)
         self.register_parser("text", TextParser)
+        self.register_parser("image", ImageParser)
 
     def register_parser(self, name: str, parser_class: Type[BaseParser]):
         """

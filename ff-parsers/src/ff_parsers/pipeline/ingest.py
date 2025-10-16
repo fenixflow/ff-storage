@@ -25,6 +25,10 @@ class DocumentIngestionPipeline:
     persists attachments, and returns a manifest + Markdown bundle.
     """
 
+    # Thresholds for detecting scanned PDFs
+    SCANNED_PDF_TEXT_LENGTH_THRESHOLD = 100
+    SCANNED_PDF_WORD_COUNT_THRESHOLD = 20
+
     def __init__(
         self,
         *,
@@ -34,6 +38,53 @@ class DocumentIngestionPipeline:
         self._factory = parser_factory or ParserFactory()
         self._renderer = renderer or MarkdownRenderer()
         self._markitdown = MarkItDownFallback()
+
+    def _is_likely_scanned_pdf(self, markdown_text: str) -> bool:
+        """
+        Check if a PDF is likely scanned based on extracted text length and word count.
+
+        Args:
+            markdown_text: The extracted markdown text from the PDF
+
+        Returns:
+            True if the PDF is likely scanned (too little text), False otherwise
+        """
+        text_length = len(markdown_text.strip())
+        word_count = len(markdown_text.split())
+        return (
+            text_length < self.SCANNED_PDF_TEXT_LENGTH_THRESHOLD
+            or word_count < self.SCANNED_PDF_WORD_COUNT_THRESHOLD
+        )
+
+    def _apply_ocr_fallback_to_node(
+        self,
+        node: BundleNode,
+        document_text: Optional[str],
+        markdown_text: str,
+        fallback_type: str = "ocr_fallback",
+    ) -> None:
+        """
+        Apply OCR fallback text to a node if it contains more content than markdown extraction.
+
+        Args:
+            node: The BundleNode to update
+            document_text: OCR-extracted text from the document
+            markdown_text: Text extracted via markdown rendering
+            fallback_type: Type of fallback for metadata tracking
+        """
+        text_length = len(markdown_text.strip())
+
+        if document_text and len(document_text.strip()) > text_length:
+            # OCR found more text, use it
+            node.markdown = document_text
+            node.metadata[f"{fallback_type}_used"] = True
+            node.metadata["ocr_word_count"] = len(document_text.split())
+        else:
+            # OCR didn't find more text, use markdown result
+            node.markdown = markdown_text
+            node.metadata[f"{fallback_type}_attempted"] = True
+            if document_text:
+                node.metadata["ocr_word_count"] = len(document_text.split())
 
     def ingest(
         self,
@@ -69,10 +120,13 @@ class DocumentIngestionPipeline:
                 raise FileNotFoundError(f"Source path does not exist: {path}")
 
             # Special case: markitdown renderer for simple files without attachments
-            # For emails, we need native parser to extract structure (attachments) first
+            # For emails and PDFs, we need native parser first:
+            # - Emails: Extract structure (attachments)
+            # - PDFs: Detect if scanned and apply OCR fallback
             # Then we'll re-render with markitdown for clean content
             is_email = path.suffix.lower() in {".eml", ".msg"}
-            needs_structure_extraction = is_email  # Can add other types later
+            is_pdf = path.suffix.lower() == ".pdf"
+            needs_structure_extraction = is_email or is_pdf
 
             if options.renderer == "markitdown" and not needs_structure_extraction:
                 if self._markitdown.available:
@@ -299,11 +353,27 @@ class DocumentIngestionPipeline:
         - Body → MarkItDown (clean continuous narrative)
         - Document attachments (PDF, DOCX, XLSX) → MarkItDown (clean tables)
         - Image attachments (PNG, JPG) → native parser with OCR (text extraction)
+
+        For PDFs:
+        - Try MarkItDown first
+        - If result is too short, assume scanned and fallback to native OCR
         """
         # Render main document content with MarkItDown
         try:
             main_markdown = self._markitdown.render_path(path)
-            root_node.markdown = main_markdown
+
+            # For PDFs, check if MarkItDown result is suspiciously short (scanned PDF)
+            is_pdf = path.suffix.lower() == ".pdf"
+
+            if is_pdf and self._is_likely_scanned_pdf(main_markdown):
+                # Likely a scanned PDF, apply OCR fallback
+                self._apply_ocr_fallback_to_node(
+                    root_node, document.text, main_markdown, fallback_type="ocr_fallback"
+                )
+            else:
+                # Normal case: use MarkItDown result
+                root_node.markdown = main_markdown
+
         except Exception:
             # Fallback to native renderer if MarkItDown fails
             root_node = self._renderer.render(document, root_node, options)
@@ -364,17 +434,76 @@ class DocumentIngestionPipeline:
 
     def _render_image_with_ocr(self, node: BundleNode, options: ParseOptions) -> str:
         """
-        Render image with OCR text extraction.
+        Render image with OCR text extraction using ImageParser.
 
         Returns markdown with extracted text or description.
         """
-        # For now, return a placeholder indicating OCR is needed
-        # Full OCR implementation would require pytesseract or similar
-        return f"![{node.name}]({node.location or node.name})\n\n*Image attachment: {node.name}*\n\n*OCR text extraction available when ocr_enabled=True*"
+        if not node.binary:
+            return (
+                f"![{node.name}]({node.location or node.name})\n\n*Image attachment: {node.name}*"
+            )
+
+        try:
+            # Save binary to temp file with correct extension
+            suffix = Path(node.name).suffix or ".png"
+            with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
+                tmp.write(node.binary)
+                tmp.flush()
+                tmp_path = Path(tmp.name)
+
+            try:
+                # Use ImageParser with OCR enabled
+                image_parser = self._factory.get_parser("image")
+
+                # Create options with OCR enabled by default for images
+                ocr_options = ParseOptions(
+                    ocr_enabled=True,
+                    handwriting_enabled=options.handwriting_enabled,
+                    ocr_language=options.ocr_language,
+                    ocr_timeout=options.ocr_timeout,
+                    extract_metadata=False,
+                )
+
+                document = image_parser.parse(tmp_path, ocr_options)
+
+                # Format markdown with image reference and extracted text
+                markdown_parts = [f"## Image: {node.name}\n"]
+
+                if (
+                    document.text
+                    and document.text.strip()
+                    and not document.text.startswith("[Image:")
+                ):
+                    # OCR extracted meaningful text
+                    markdown_parts.append(f"**Extracted Text:**\n\n{document.text}")
+                    node.metadata["ocr_enabled"] = True
+                    node.metadata["ocr_word_count"] = len(document.text.split())
+                else:
+                    # No text extracted
+                    markdown_parts.append(f"![{node.name}]({node.location or node.name})")
+                    markdown_parts.append("\n*Image attachment (no text detected)*")
+                    node.metadata["ocr_enabled"] = True
+                    node.metadata["ocr_word_count"] = 0
+
+                return "\n".join(markdown_parts)
+
+            finally:
+                # Clean up temp file
+                if tmp_path.exists():
+                    tmp_path.unlink(missing_ok=True)
+
+        except Exception as e:
+            # Fallback if OCR fails
+            return f"![{node.name}]({node.location or node.name})\n\n*Image attachment (OCR failed: {str(e)})*"
 
     def _render_document_with_markitdown(self, node: BundleNode) -> str:
         """
         Render document attachment with MarkItDown for clean tables.
+
+        For PDFs: Smart fallback logic
+        1. Try MarkItDown first (fast, works for digital PDFs)
+        2. If result is too short (<100 chars or <20 words), assume scanned PDF
+        3. Fall back to native parser with OCR enabled
 
         Saves bytes to temp file, processes with MarkItDown, returns markdown.
         """
@@ -392,12 +521,51 @@ class DocumentIngestionPipeline:
             try:
                 # Render with MarkItDown
                 markdown = self._markitdown.render_path(tmp_path)
+
+                # Check if this is a PDF and if MarkItDown result is suspiciously short
+                is_pdf = suffix.lower() == ".pdf"
+
+                if is_pdf and self._is_likely_scanned_pdf(markdown):
+                    # Likely a scanned PDF, fall back to native parser with OCR
+                    try:
+                        pdf_parser = self._factory.get_parser("pdf")
+
+                        # Create options with OCR enabled for scanned PDFs
+                        ocr_options = ParseOptions(
+                            ocr_enabled=True,
+                            handwriting_enabled=False,  # Can enable if needed
+                            ocr_language="eng",
+                            ocr_timeout=30,
+                            extract_tables=True,
+                            extract_metadata=False,
+                        )
+
+                        document = pdf_parser.parse(tmp_path, ocr_options)
+
+                        # Use helper to apply OCR fallback
+                        self._apply_ocr_fallback_to_node(
+                            node, document.text, markdown, fallback_type="ocr_fallback"
+                        )
+
+                        # Return appropriate markdown based on what was used
+                        if node.metadata.get("ocr_fallback_used"):
+                            return f"## Attachment: {node.name} (OCR Processed)\n\n{document.text}"
+                        else:
+                            return f"## Attachment: {node.name}\n\n{markdown}"
+
+                    except Exception as ocr_error:
+                        # OCR fallback failed, use original MarkItDown result
+                        node.metadata["ocr_fallback_failed"] = str(ocr_error)
+                        return f"## Attachment: {node.name}\n\n{markdown}"
+
+                # MarkItDown succeeded with good content
                 return f"## Attachment: {node.name}\n\n{markdown}"
+
             finally:
                 # Clean up temp file
                 if tmp_path.exists():
                     tmp_path.unlink(missing_ok=True)
 
         except Exception as e:
-            # Fallback if MarkItDown fails
+            # Fallback if MarkItDown fails entirely
             return f"## Attachment: {node.name}\n\n*Content could not be rendered: {str(e)}*"

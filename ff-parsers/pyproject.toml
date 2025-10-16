@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ff-parsers"
-version = "1.1.0"
+version = "1.2.0"
 description = "Lightweight document parsing library for extracting content from various file formats"
 readme = "README.md"
 requires-python = ">=3.10"
