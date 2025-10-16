@@ -6,7 +6,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-
 try:
     from markitdown import MarkItDown  # type: ignore import-not-found
 except ImportError:  # pragma: no cover

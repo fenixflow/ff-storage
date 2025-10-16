@@ -2,10 +2,10 @@
 Test async MySQL connection pool using aiomysql.
 """
 
-import pytest
-import pytest_asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
+import pytest_asyncio
 from ff_storage.db.connections.mysql import MySQLPool
 
 

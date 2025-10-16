@@ -10,6 +10,7 @@ try:
 except Exception:
     __version__ = "0.0.0+unknown"
 
+from .adapters.fenix_agents import FenixAgentsPipelineAdapter, ParsedDocumentAdapter
 from .base import BaseParser, ParseOptions
 from .exceptions import ExtractionError, ParserError, UnsupportedFormatError
 from .factory import ParserFactory
@@ -25,7 +26,6 @@ from .models import (
 from .pipeline.ingest import DocumentIngestionPipeline
 from .renderers.markdown import MarkdownRenderer
 from .renderers.markitdown import MarkItDownFallback
-from .adapters.fenix_agents import FenixAgentsPipelineAdapter, ParsedDocumentAdapter
 
 __all__ = [
     "ParserFactory",

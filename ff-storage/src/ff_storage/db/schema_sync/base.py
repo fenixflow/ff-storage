@@ -102,7 +102,7 @@ class SchemaIntrospectorBase(ABC):
             name=table_name,
             schema=schema,
             columns=self.get_columns(table_name, schema),
-            indexes=self.get_indexes(table_name, schema)
+            indexes=self.get_indexes(table_name, schema),
         )
 
 
@@ -227,9 +227,7 @@ class SchemaDifferBase:
         self.logger = logger
 
     def compute_changes(
-        self,
-        desired: TableDefinition,
-        current: Optional[TableDefinition]
+        self, desired: TableDefinition, current: Optional[TableDefinition]
     ) -> List[SchemaChange]:
         """
         Compute schema changes needed to transform current → desired.
@@ -247,13 +245,15 @@ class SchemaDifferBase:
 
         # Table doesn't exist - create it
         if current is None:
-            changes.append(SchemaChange(
-                change_type=ChangeType.CREATE_TABLE,
-                table_name=desired.name,
-                is_destructive=False,
-                sql="",  # Generator will create this
-                description=f"Create table {desired.schema}.{desired.name}"
-            ))
+            changes.append(
+                SchemaChange(
+                    change_type=ChangeType.CREATE_TABLE,
+                    table_name=desired.name,
+                    is_destructive=False,
+                    sql="",  # Generator will create this
+                    description=f"Create table {desired.schema}.{desired.name}",
+                )
+            )
             return changes
 
         # Compare columns
@@ -263,26 +263,30 @@ class SchemaDifferBase:
         # Missing columns (ADD - safe)
         for col_name, col_def in desired_cols.items():
             if col_name not in current_cols:
-                changes.append(SchemaChange(
-                    change_type=ChangeType.ADD_COLUMN,
-                    table_name=desired.name,
-                    is_destructive=False,
-                    sql="",
-                    description=f"Add column {col_name}",
-                    column=col_def
-                ))
+                changes.append(
+                    SchemaChange(
+                        change_type=ChangeType.ADD_COLUMN,
+                        table_name=desired.name,
+                        is_destructive=False,
+                        sql="",
+                        description=f"Add column {col_name}",
+                        column=col_def,
+                    )
+                )
 
         # Extra columns (DROP - destructive)
         for col_name in current_cols:
             if col_name not in desired_cols:
-                changes.append(SchemaChange(
-                    change_type=ChangeType.DROP_COLUMN,
-                    table_name=desired.name,
-                    is_destructive=True,
-                    sql="",
-                    description=f"Drop column {col_name} (DESTRUCTIVE)",
-                    column=current_cols[col_name]
-                ))
+                changes.append(
+                    SchemaChange(
+                        change_type=ChangeType.DROP_COLUMN,
+                        table_name=desired.name,
+                        is_destructive=True,
+                        sql="",
+                        description=f"Drop column {col_name} (DESTRUCTIVE)",
+                        column=current_cols[col_name],
+                    )
+                )
 
         # Compare indexes
         current_idxs = {idx.name: idx for idx in current.indexes}
@@ -291,13 +295,15 @@ class SchemaDifferBase:
         # Missing indexes (ADD - safe)
         for idx_name, idx_def in desired_idxs.items():
             if idx_name not in current_idxs:
-                changes.append(SchemaChange(
-                    change_type=ChangeType.ADD_INDEX,
-                    table_name=desired.name,
-                    is_destructive=False,
-                    sql="",
-                    description=f"Add index {idx_name}",
-                    index=idx_def
-                ))
+                changes.append(
+                    SchemaChange(
+                        change_type=ChangeType.ADD_INDEX,
+                        table_name=desired.name,
+                        is_destructive=False,
+                        sql="",
+                        description=f"Add index {idx_name}",
+                        index=idx_def,
+                    )
+                )
 
         return changes
