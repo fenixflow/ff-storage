@@ -12,9 +12,7 @@ import asyncio
 from decimal import Decimal
 from uuid import uuid4
 
-from pydantic import Field
-
-from ff_storage import PydanticModel, PydanticRepository
+from ff_storage import Field, PydanticModel, PydanticRepository
 from ff_storage.db.connections.postgres import PostgresPool
 
 
@@ -46,19 +44,15 @@ class Product(PydanticModel):
     price: Decimal = Field(
         ge=0,
         description="Product price (must be >= 0)",
-        json_schema_extra={
-            "db_precision": 10,
-            "db_scale": 2,
-        },
+        db_precision=10,
+        db_scale=2,
     )
 
     status: str = Field(
         max_length=50,
         default="active",
         description="Product status",
-        json_schema_extra={
-            "db_index": True,  # Create index on status
-        },
+        db_index=True,  # Create index on status
     )
 
     category: str = Field(

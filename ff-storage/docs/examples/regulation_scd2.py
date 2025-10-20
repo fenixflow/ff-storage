@@ -12,9 +12,7 @@ import asyncio
 from datetime import datetime, timezone
 from uuid import uuid4
 
-from pydantic import Field
-
-from ff_storage import PydanticModel, PydanticRepository
+from ff_storage import Field, PydanticModel, PydanticRepository
 from ff_storage.db.connections.postgres import PostgresPool
 
 
@@ -41,9 +39,7 @@ class Regulation(PydanticModel):
     code: str = Field(
         max_length=50,
         description="Regulation code (e.g., GDPR, HIPAA)",
-        json_schema_extra={
-            "db_index": True,
-        },
+        db_index=True,
     )
 
     title: str = Field(
