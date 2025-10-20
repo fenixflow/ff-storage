@@ -75,7 +75,7 @@ class SCD2Strategy(TemporalStrategy[T]):
         - Temporal range (valid_from, valid_to)
         - Current version (partial: valid_to IS NULL)
         - Not deleted (partial: deleted_at IS NULL)
-        - Versions (id, version)
+        - Versions (id, version) with UNIQUE constraint
         """
         indexes = self._get_base_indexes(table_name)
 
@@ -112,12 +112,14 @@ class SCD2Strategy(TemporalStrategy[T]):
                 }
             )
 
-        # Version ordering
+        # CRITICAL: (id, version) UNIQUE constraint
+        # Enforces that each logical ID can only have one row per version number
         indexes.append(
             {
-                "name": f"idx_{table_name}_versions",
+                "name": f"idx_{table_name}_id_version_unique",
                 "table_name": table_name,
                 "columns": ["id", "version"],
+                "unique": True,  # UNIQUE constraint
                 "index_type": "btree",
             }
         )
@@ -276,14 +278,23 @@ class SCD2Strategy(TemporalStrategy[T]):
         user_id: Optional[UUID] = None,
     ) -> bool:
         """
-        Soft delete current version.
+        Soft delete by creating new version with deleted_at set.
 
-        Sets deleted_at, deleted_by on current version (valid_to IS NULL).
+        SCD2 immutability principle: Every state change is a new version.
+        Deletion is a state change, so we create version N+1 with deleted_at.
+
+        Process:
+        1. SELECT current version (valid_to IS NULL, deleted_at IS NULL)
+        2. UPDATE: Close current version (set valid_to = NOW())
+        3. INSERT: New version with deleted_at = NOW(), version++
+
+        Returns:
+            True if deleted, False if not found or already deleted
         """
         table_name = self._get_table_name()
         now = datetime.now(timezone.utc)
 
-        # Build WHERE clause for current version
+        # Build WHERE for current version
         where_parts = ["id = $1", "valid_to IS NULL", "deleted_at IS NULL"]
         where_values = [id]
 
@@ -293,20 +304,50 @@ class SCD2Strategy(TemporalStrategy[T]):
             where_parts.append(f"{self.tenant_field} = ${len(where_values) + 1}")
             where_values.append(tenant_id)
 
-        query = f"""
-            UPDATE {table_name}
-            SET deleted_at = ${len(where_values) + 1},
-                deleted_by = ${len(where_values) + 2},
-                updated_at = ${len(where_values) + 3}
-            WHERE {' AND '.join(where_parts)}
-            RETURNING id
-        """
-
-        # Execute
         async with db_pool.acquire() as conn:
-            row = await conn.fetchrow(query, *where_values, now, user_id, now)
+            async with conn.transaction():
+                # 1. Get current version
+                select_query = f"""
+                    SELECT * FROM {table_name}
+                    WHERE {' AND '.join(where_parts)}
+                """
+                current_row = await conn.fetchrow(select_query, *where_values)
 
-        return row is not None
+                if not current_row:
+                    return False  # Not found or already deleted
+
+                current_data = dict(current_row)
+                current_version = current_data["version"]
+
+                # 2. Close current version
+                close_query = f"""
+                    UPDATE {table_name}
+                    SET valid_to = ${len(where_values) + 1}
+                    WHERE {' AND '.join(where_parts)}
+                """
+                await conn.execute(close_query, *where_values, now)
+
+                # 3. Create new deleted version
+                new_data = current_data.copy()
+                new_data["version"] = current_version + 1
+                new_data["valid_from"] = now
+                new_data["valid_to"] = None
+                new_data["deleted_at"] = now  # MARK AS DELETED
+                new_data["deleted_by"] = user_id
+                new_data["updated_at"] = now
+
+                # INSERT new version
+                columns = list(new_data.keys())
+                placeholders = [f"${i+1}" for i in range(len(columns))]
+
+                insert_query = f"""
+                    INSERT INTO {table_name} ({', '.join(columns)})
+                    VALUES ({', '.join(placeholders)})
+                """
+
+                await conn.execute(insert_query, *new_data.values())
+
+        return True
 
     async def get(
         self,
@@ -318,17 +359,23 @@ class SCD2Strategy(TemporalStrategy[T]):
         **kwargs,
     ) -> Optional[T]:
         """
-        Get record (current or historical).
+        Get record (current or historical) with correct soft delete semantics.
 
         Args:
             as_of: If provided, get version valid at this time (time travel)
-            include_deleted: If True, include soft-deleted versions
+            include_deleted: If True, include soft-deleted records
 
         Current version query (as_of is None):
-            WHERE id = ? AND valid_to IS NULL AND deleted_at IS NULL
+            WHERE id = ? AND valid_to IS NULL [AND deleted_at IS NULL]
 
         Time travel query (as_of provided):
-            WHERE id = ? AND valid_from <= as_of AND (valid_to IS NULL OR valid_to > as_of)
+            WHERE id = ?
+              AND valid_from <= as_of
+              AND (valid_to IS NULL OR valid_to > as_of)
+              [AND (deleted_at IS NULL OR deleted_at > as_of)]
+
+        CRITICAL: When time-traveling, record is only visible if it was NOT deleted
+        at that point in time (deleted_at IS NULL OR deleted_at > as_of).
         """
         table_name = self._get_table_name()
 
@@ -348,13 +395,17 @@ class SCD2Strategy(TemporalStrategy[T]):
             if not include_deleted:
                 where_parts.append("deleted_at IS NULL")
         else:
-            # Time travel
+            # Time travel: Get version valid at as_of time
             where_parts.append(f"valid_from <= ${len(where_values) + 1}")
             where_values.append(as_of)
             where_parts.append(f"(valid_to IS NULL OR valid_to > ${len(where_values)})")
             where_values.append(as_of)
 
             if not include_deleted:
+                # CRITICAL: Check if record was deleted at as_of time
+                # Record is visible only if:
+                # - deleted_at IS NULL (never deleted), OR
+                # - deleted_at > as_of (deletion happened AFTER as_of)
                 where_parts.append(f"(deleted_at IS NULL OR deleted_at > ${len(where_values)})")
                 where_values.append(as_of)
 
@@ -410,13 +461,15 @@ class SCD2Strategy(TemporalStrategy[T]):
             if not include_deleted:
                 where_parts.append("deleted_at IS NULL")
         else:
-            # Time travel
+            # Time travel: Get versions valid at as_of time
             where_parts.append(f"valid_from <= ${len(where_values) + 1}")
             where_values.append(as_of)
             where_parts.append(f"(valid_to IS NULL OR valid_to > ${len(where_values)})")
             where_values.append(as_of)
 
             if not include_deleted:
+                # CRITICAL: Check if records were deleted at as_of time
+                # Same logic as get(): deleted_at IS NULL OR deleted_at > as_of
                 where_parts.append(f"(deleted_at IS NULL OR deleted_at > ${len(where_values)})")
                 where_values.append(as_of)
 

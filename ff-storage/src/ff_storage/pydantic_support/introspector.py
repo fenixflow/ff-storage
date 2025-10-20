@@ -130,8 +130,16 @@ class PydanticSchemaIntrospector:
         # Extract constraints
         max_length = getattr(field_info, "max_length", None)
 
-        # Extract default value
-        default = self._extract_default(field_info)
+        # Extract default value (db_default takes precedence over Pydantic default)
+        default = metadata.get("db_default") or self._extract_default(field_info)
+
+        # Override nullable if db_nullable is explicitly set
+        if "db_nullable" in metadata:
+            nullable = metadata["db_nullable"]
+
+        # Extract FK reference
+        fk_reference = metadata.get("db_foreign_key", None)
+        is_fk = fk_reference is not None
 
         return ColumnDefinition(
             name=field_name,
@@ -140,8 +148,8 @@ class PydanticSchemaIntrospector:
             default=default,
             max_length=max_length,
             is_primary_key=metadata.get("db_primary_key", False),
-            is_foreign_key=metadata.get("db_foreign_key", False),
-            references=metadata.get("db_references", None),
+            is_foreign_key=is_fk,
+            references=fk_reference,
             native_type=native_type,
         )
 
@@ -218,6 +226,8 @@ class PydanticSchemaIntrospector:
         """
         Create IndexDefinition from field metadata.
 
+        Supports partial indexes via db_index_where parameter.
+
         Args:
             table_name: Name of the table
             field_name: Name of the field
@@ -234,7 +244,7 @@ class PydanticSchemaIntrospector:
         # Extract index properties
         unique = metadata.get("db_unique", False)
         index_type = metadata.get("db_index_type", "btree")
-        where_clause = metadata.get("db_index_where", None)
+        where_clause = metadata.get("db_index_where", None)  # Partial index support
 
         # Handle multi-column indexes
         columns = metadata.get("db_index_columns", [field_name])

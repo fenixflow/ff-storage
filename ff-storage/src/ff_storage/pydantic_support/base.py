@@ -298,6 +298,64 @@ class PydanticModel(BaseModel):
         return "\n".join(all_sql)
 
     @classmethod
+    def get_auxiliary_tables_sql(cls) -> list[str]:
+        """
+        Generate CREATE TABLE SQL for all auxiliary tables.
+
+        Auxiliary tables are additional tables created by temporal strategies,
+        such as audit tables for copy_on_change strategy.
+
+        Called by SchemaManager to auto-create auxiliary tables during sync.
+
+        Returns:
+            List of SQL statements (one per auxiliary table + indexes)
+
+        Example:
+            >>> # For copy_on_change strategy
+            >>> sqls = Product.get_auxiliary_tables_sql()
+            >>> print(sqls[0])
+            CREATE TABLE IF NOT EXISTS public.products_audit (
+                audit_id UUID PRIMARY KEY,
+                record_id UUID NOT NULL,
+                field_name VARCHAR(255) NOT NULL,
+                old_value JSONB,
+                new_value JSONB,
+                ...
+            );
+        """
+        from ..db.schema_sync.models import ColumnDefinition, IndexDefinition, TableDefinition
+        from ..db.schema_sync.postgres import PostgresMigrationGenerator
+
+        aux_tables = cls.get_auxiliary_tables()
+        if not aux_tables:
+            return []
+
+        generator = PostgresMigrationGenerator()
+        sql_statements = []
+
+        for aux_table_def in aux_tables:
+            # Convert to TableDefinition
+            table_def = TableDefinition(
+                name=aux_table_def["name"],
+                schema=aux_table_def.get("schema", cls.__schema__),
+                columns=[ColumnDefinition(**col_dict) for col_dict in aux_table_def["columns"]],
+                indexes=[
+                    IndexDefinition(**idx_dict) for idx_dict in aux_table_def.get("indexes", [])
+                ],
+            )
+
+            # Generate CREATE TABLE
+            create_sql = generator.generate_create_table(table_def)
+            sql_statements.append(create_sql)
+
+            # Generate indexes
+            for index in table_def.indexes:
+                index_sql = generator.generate_create_index(table_def.schema, index)
+                sql_statements.append(index_sql)
+
+        return sql_statements
+
+    @classmethod
     def get_table_name(cls) -> str:
         """Alias for table_name() for SchemaManager compatibility."""
         return cls.table_name()

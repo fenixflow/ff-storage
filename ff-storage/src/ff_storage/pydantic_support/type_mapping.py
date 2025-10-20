@@ -41,11 +41,19 @@ def map_pydantic_type_to_column_type(
     """
     metadata = field_info.json_schema_extra or {}
 
-    # Check for custom db_type override
+    # Check for custom db_type override (takes precedence)
     if "db_type" in metadata:
         custom_type = metadata["db_type"]
         column_type = _parse_custom_type(custom_type)
         return column_type, custom_type
+
+    # Check for db_precision/db_scale override for numeric types
+    if (python_type == Decimal or python_type is Decimal) and (
+        "db_precision" in metadata or "db_scale" in metadata
+    ):
+        precision = metadata.get("db_precision", 15)
+        scale = metadata.get("db_scale", 2)
+        return ColumnType.DECIMAL, f"DECIMAL({precision},{scale})"
 
     # Handle Optional[T] / Union[T, None]
     origin = get_origin(python_type)

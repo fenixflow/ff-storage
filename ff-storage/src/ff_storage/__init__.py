@@ -14,11 +14,13 @@ except Exception:
 
 # Pydantic ORM (NEW in v3.0)
 from .pydantic_support.base import PydanticModel
+from .pydantic_support.field_metadata import Field
 from .pydantic_support.repository import PydanticRepository
 
 # Temporal strategies (NEW in v3.0)
 from .temporal.enums import TemporalStrategyType
 from .temporal.repository_base import TemporalRepository
+from .temporal.validation import TemporalValidator, ValidationError
 
 # Database exports
 from .db import MySQL, MySQLPool, Postgres, PostgresPool, SchemaManager
@@ -30,9 +32,12 @@ __all__ = [
     # Pydantic ORM
     "PydanticModel",
     "PydanticRepository",
+    "Field",
     # Temporal
     "TemporalStrategyType",
     "TemporalRepository",
+    "TemporalValidator",
+    "ValidationError",
     # PostgreSQL
     "Postgres",
     "PostgresPool",

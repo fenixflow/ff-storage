@@ -219,6 +219,83 @@ class SchemaManager:
 
             all_changes.extend(changes)
 
+        # ==================== PHASE 2: Process Auxiliary Tables (NEW in v3.0.0) ====================
+
+        for model_class in models:
+            if not hasattr(model_class, "get_auxiliary_tables"):
+                continue
+
+            try:
+                aux_tables = model_class.get_auxiliary_tables()
+            except Exception as e:
+                self.logger.error(
+                    f"Failed to get auxiliary tables for {model_class.__name__}",
+                    extra={"error": str(e)},
+                )
+                continue
+
+            # Process each auxiliary table (e.g., audit tables)
+            for aux_table_def in aux_tables:
+                try:
+                    # Convert dict → TableDefinition
+                    from .models import ColumnDefinition, IndexDefinition, TableDefinition
+
+                    aux_table = TableDefinition(
+                        name=aux_table_def["name"],
+                        schema=aux_table_def.get("schema", "public"),
+                        columns=[
+                            ColumnDefinition(**col_dict) for col_dict in aux_table_def["columns"]
+                        ],
+                        indexes=[
+                            IndexDefinition(**idx_dict)
+                            for idx_dict in aux_table_def.get("indexes", [])
+                        ],
+                    )
+
+                    # Check if auxiliary table exists
+                    try:
+                        current_aux = self.introspector.get_table_schema(
+                            table_name=aux_table.name,
+                            schema=aux_table.schema,
+                        )
+                    except Exception:
+                        current_aux = None  # Table doesn't exist
+
+                    # Compute diff
+                    aux_changes = self.differ.compute_changes(aux_table, current_aux)
+
+                    # Generate SQL
+                    for change in aux_changes:
+                        try:
+                            if change.change_type == ChangeType.CREATE_TABLE:
+                                change.sql = self.generator.generate_create_table(aux_table)
+                            elif change.change_type == ChangeType.ADD_COLUMN:
+                                change.sql = self.generator.generate_add_column(
+                                    table_name=aux_table.name,
+                                    schema=aux_table.schema,
+                                    column=change.column,
+                                )
+                            elif change.change_type == ChangeType.ADD_INDEX:
+                                change.sql = self.generator.generate_create_index(
+                                    schema=aux_table.schema,
+                                    index=change.index,
+                                )
+                        except Exception as e:
+                            self.logger.error(
+                                f"Failed to generate SQL for auxiliary table change: {change.description}",
+                                extra={"error": str(e)},
+                            )
+                            continue
+
+                    all_changes.extend(aux_changes)
+
+                except Exception as e:
+                    self.logger.error(
+                        f"Failed to process auxiliary table {aux_table_def.get('name', 'unknown')}",
+                        extra={"error": str(e)},
+                    )
+                    continue
+
         # Filter destructive changes
         safe_changes = [c for c in all_changes if not c.is_destructive]
         destructive_changes = [c for c in all_changes if c.is_destructive]

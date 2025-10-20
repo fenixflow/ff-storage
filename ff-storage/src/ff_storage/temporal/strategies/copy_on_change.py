@@ -257,13 +257,21 @@ class CopyOnChangeStrategy(TemporalStrategy[T]):
         user_id: Optional[UUID] = None,
     ) -> T:
         """
-        Update record with field-level audit entries.
+        Update record with field-level audit entries and row-level locking.
 
         Process:
-        1. SELECT current record
+        1. SELECT current record FOR UPDATE (lock row)
         2. Compute field diff (which fields changed)
         3. UPDATE main table
         4. INSERT audit entries (one per changed field)
+
+        Concurrency:
+        Uses SELECT ... FOR UPDATE to prevent race conditions where concurrent
+        updates might miss field changes. This holds an exclusive lock on the row
+        during diff computation, reducing write concurrency but ensuring correctness.
+
+        Trade-off: Acceptable for moderate update rates (<100/sec per row).
+        For higher concurrency needs, consider database triggers or optimistic locking.
         """
         table_name = self._get_table_name()
         audit_table_name = f"{table_name}_audit"
@@ -291,10 +299,11 @@ class CopyOnChangeStrategy(TemporalStrategy[T]):
         # Execute in transaction
         async with db_pool.acquire() as conn:
             async with conn.transaction():
-                # 1. Get current record
+                # 1. Get current record with row-level lock
                 select_query = f"""
                     SELECT * FROM {table_name}
                     WHERE {' AND '.join(where_parts)}
+                    FOR UPDATE
                 """
                 current_row = await conn.fetchrow(select_query, *where_values)
 
