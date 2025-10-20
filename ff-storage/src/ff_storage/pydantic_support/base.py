@@ -1,0 +1,321 @@
+"""
+Pydantic base model with automatic temporal management.
+
+This module provides the foundational PydanticModel class that integrates
+Pydantic with ff-storage's temporal and schema synchronization systems.
+"""
+
+from datetime import datetime, timezone
+from typing import Any, ClassVar, Optional
+from uuid import UUID, uuid4
+
+from pydantic import BaseModel, ConfigDict, Field
+
+from ..temporal.enums import TemporalStrategyType
+
+
+class PydanticModel(BaseModel):
+    """
+    Base Pydantic model for ff-storage integration.
+
+    Features:
+    - Automatic temporal field injection based on strategy
+    - Table name and schema management
+    - SQL generation for SchemaManager
+    - Soft delete and multi-tenant support (enabled by default)
+    - Backwards compatible with existing ff-storage patterns
+
+    Temporal Strategies:
+    - "none": No temporal tracking (only id, created_at, updated_at)
+    - "copy_on_change": Field-level audit trail
+    - "scd2": Slowly Changing Dimension Type 2 (immutable versions)
+
+    Example:
+        ```python
+        class User(PydanticModel):
+            __table_name__ = "users"
+            __schema__ = "public"
+            __temporal_strategy__ = "copy_on_change"
+            __soft_delete__ = True      # Default
+            __multi_tenant__ = True     # Default
+
+            email: str = Field(max_length=255, json_schema_extra={"db_unique": True})
+            name: str
+            age: int = Field(ge=0, le=150)
+        ```
+
+    Class Variables:
+        __table_name__: Override default table name (default: class name + 's')
+        __schema__: Database schema (default: "public")
+        __temporal_strategy__: Temporal strategy (default: "none")
+        __soft_delete__: Enable soft delete (default: True)
+        __multi_tenant__: Enable multi-tenancy (default: True)
+        __tenant_field__: Field name for multi-tenancy (default: "tenant_id")
+    """
+
+    # Pydantic v2 configuration
+    model_config = ConfigDict(
+        from_attributes=True,  # Support ORM mode (row → model)
+        arbitrary_types_allowed=True,  # Allow UUID, datetime, etc.
+        validate_assignment=True,  # Validate on field assignment
+        populate_by_name=True,  # Allow field population by name
+    )
+
+    # Class-level metadata for ff-storage
+    __table_name__: ClassVar[Optional[str]] = None
+    __schema__: ClassVar[str] = "public"
+    __temporal_strategy__: ClassVar[str] = "none"
+    __soft_delete__: ClassVar[bool] = True  # Default: enabled
+    __multi_tenant__: ClassVar[bool] = True  # Default: enabled
+    __tenant_field__: ClassVar[str] = "tenant_id"
+
+    # Standard fields (present in ALL models)
+    id: UUID = Field(
+        default_factory=uuid4,
+        description="Primary key UUID",
+        json_schema_extra={
+            "db_primary_key": True,
+            "db_index": True,
+        },
+    )
+
+    created_at: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc),
+        description="Record creation timestamp (UTC)",
+        json_schema_extra={
+            "db_index": True,
+            "db_order": "DESC",
+        },
+    )
+
+    updated_at: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc),
+        description="Last update timestamp (UTC)",
+        json_schema_extra={
+            "db_index": True,
+        },
+    )
+
+    created_by: Optional[UUID] = Field(
+        default=None,
+        description="User who created this record",
+    )
+
+    # ==================== Table Name Management ====================
+
+    @classmethod
+    def table_name(cls) -> str:
+        """
+        Get database table name.
+
+        Returns:
+            Table name (without schema prefix)
+
+        Example:
+            >>> User.table_name()
+            'users'
+        """
+        if cls.__table_name__:
+            return cls.__table_name__
+        return cls.__name__.lower() + "s"
+
+    @classmethod
+    def full_table_name(cls) -> str:
+        """
+        Get fully qualified table name (schema.table).
+
+        Returns:
+            Full table name with schema prefix
+
+        Example:
+            >>> User.full_table_name()
+            'public.users'
+        """
+        return f"{cls.__schema__}.{cls.table_name()}"
+
+    # ==================== Temporal Configuration ====================
+
+    @classmethod
+    def get_temporal_strategy(cls) -> TemporalStrategyType:
+        """
+        Get temporal strategy enum.
+
+        Returns:
+            TemporalStrategyType enum value
+        """
+        return TemporalStrategyType(cls.__temporal_strategy__)
+
+    @classmethod
+    def get_temporal_fields(cls) -> dict[str, tuple[type, Any]]:
+        """
+        Get temporal fields to inject based on strategy and features.
+
+        This method is called by PydanticSchemaIntrospector to automatically
+        add temporal fields to the table schema.
+
+        Returns:
+            Dict mapping field_name → (type, default_value)
+
+        Example:
+            >>> Product.__temporal_strategy__ = "scd2"
+            >>> Product.__soft_delete__ = True
+            >>> Product.get_temporal_fields()
+            {
+                'tenant_id': (UUID, None),
+                'valid_from': (datetime, 'NOW()'),
+                'valid_to': (Optional[datetime], None),
+                'version': (int, 1),
+                'deleted_at': (Optional[datetime], None),
+                'deleted_by': (Optional[UUID], None),
+            }
+        """
+        from ..temporal.registry import get_strategy
+
+        # Get strategy instance
+        strategy = get_strategy(
+            strategy_type=cls.get_temporal_strategy(),
+            model_class=cls,
+            soft_delete=cls.__soft_delete__,
+            multi_tenant=cls.__multi_tenant__,
+            tenant_field=cls.__tenant_field__,
+        )
+
+        return strategy.get_temporal_fields()
+
+    @classmethod
+    def get_temporal_indexes(cls) -> list[dict[str, Any]]:
+        """
+        Get index definitions for temporal fields.
+
+        Returns:
+            List of index definition dicts
+
+        Example:
+            >>> Product.get_temporal_indexes()
+            [
+                {
+                    'name': 'idx_products_tenant_id',
+                    'table_name': 'products',
+                    'columns': ['tenant_id'],
+                    'type': 'btree',
+                },
+                ...
+            ]
+        """
+        from ..temporal.registry import get_strategy
+
+        strategy = get_strategy(
+            strategy_type=cls.get_temporal_strategy(),
+            model_class=cls,
+            soft_delete=cls.__soft_delete__,
+            multi_tenant=cls.__multi_tenant__,
+            tenant_field=cls.__tenant_field__,
+        )
+
+        return strategy.get_temporal_indexes(
+            table_name=cls.table_name(),
+            schema=cls.__schema__,
+        )
+
+    @classmethod
+    def get_auxiliary_tables(cls) -> list[dict[str, Any]]:
+        """
+        Get auxiliary table definitions (e.g., audit tables).
+
+        Returns:
+            List of auxiliary table definitions
+
+        Example:
+            >>> Order.__temporal_strategy__ = "copy_on_change"
+            >>> tables = Order.get_auxiliary_tables()
+            >>> tables[0]['name']
+            'orders_audit'
+        """
+        from ..temporal.registry import get_strategy
+
+        strategy = get_strategy(
+            strategy_type=cls.get_temporal_strategy(),
+            model_class=cls,
+            soft_delete=cls.__soft_delete__,
+            multi_tenant=cls.__multi_tenant__,
+            tenant_field=cls.__tenant_field__,
+        )
+
+        return strategy.get_auxiliary_tables(
+            table_name=cls.table_name(),
+            schema=cls.__schema__,
+        )
+
+    # ==================== SQL Generation (SchemaManager Integration) ====================
+
+    @classmethod
+    def get_create_table_sql(cls) -> str:
+        """
+        Generate CREATE TABLE SQL for this model.
+
+        Called by SchemaManager.sync_schema() to generate table schema.
+        Uses PydanticSchemaIntrospector to extract table definition,
+        then PostgresMigrationGenerator to create SQL.
+
+        Returns:
+            CREATE TABLE statement with all columns and indexes
+
+        Example:
+            >>> print(User.get_create_table_sql())
+            CREATE TABLE IF NOT EXISTS public.users (
+                id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+                updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+                tenant_id UUID NOT NULL,
+                deleted_at TIMESTAMP WITH TIME ZONE,
+                deleted_by UUID,
+                email VARCHAR(255) UNIQUE NOT NULL,
+                name VARCHAR(255) NOT NULL,
+                age INTEGER NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_users_tenant_id ON public.users(tenant_id);
+            ...
+        """
+        # Import here to avoid circular dependency
+        from .introspector import PydanticSchemaIntrospector
+        from ..db.schema_sync.postgres import PostgresMigrationGenerator
+
+        # Extract table definition from Pydantic model
+        introspector = PydanticSchemaIntrospector()
+        table_def = introspector.extract_table_definition(cls)
+
+        # Generate SQL using existing migration generator
+        generator = PostgresMigrationGenerator()
+        create_table_sql = generator.generate_create_table(table_def)
+
+        # Generate index SQL
+        index_sqls = [
+            generator.generate_create_index(cls.__schema__, index) for index in table_def.indexes
+        ]
+
+        # Combine table + indexes
+        all_sql = [create_table_sql] + index_sqls
+        return "\n".join(all_sql)
+
+    @classmethod
+    def get_table_name(cls) -> str:
+        """Alias for table_name() for SchemaManager compatibility."""
+        return cls.table_name()
+
+    # ==================== Instance Methods ====================
+
+    def update_timestamp(self) -> None:
+        """Update the updated_at field to current UTC time."""
+        self.updated_at = datetime.now(timezone.utc)
+
+    def model_dump_for_db(self, exclude_none: bool = False) -> dict[str, Any]:
+        """
+        Dump model to dict for database operations.
+
+        Args:
+            exclude_none: Exclude None values
+
+        Returns:
+            Dict suitable for database INSERT/UPDATE
+        """
+        return self.model_dump(exclude_none=exclude_none, mode="python")

@@ -1,0 +1,633 @@
+"""
+SCD2 (Slowly Changing Dimension Type 2) strategy.
+
+Immutable version history with temporal validity.
+
+Main table contains ALL versions with:
+- valid_from, valid_to (temporal range)
+- version (incrementing counter)
+- deleted_at, deleted_by (soft delete built-in)
+
+Benefits:
+- Complete history (every version preserved)
+- Time-travel queries (state at any point in time)
+- Immutable (versions never change)
+- Regulatory compliance (full audit trail)
+"""
+
+from datetime import datetime, timezone
+from typing import Any, Dict, List, Optional
+from uuid import UUID, uuid4
+
+from ..enums import TemporalStrategyType
+from ..models import VersionInfo
+from ..registry import register_strategy
+from .base import TemporalStrategy, T
+
+
+@register_strategy(TemporalStrategyType.SCD2)
+class SCD2Strategy(TemporalStrategy[T]):
+    """
+    SCD2 (Slowly Changing Dimension Type 2) strategy.
+
+    Immutable version history:
+    - Each UPDATE creates a new version
+    - Old versions are closed (valid_to set)
+    - Current version has valid_to = NULL
+    - Soft delete built-in
+    """
+
+    def __init__(
+        self,
+        model_class: type,
+        soft_delete: bool = True,  # Always True for SCD2
+        multi_tenant: bool = True,
+        tenant_field: str = "tenant_id",
+    ):
+        # SCD2 always has soft delete (deleted_at field)
+        super().__init__(
+            model_class, soft_delete=True, multi_tenant=multi_tenant, tenant_field=tenant_field
+        )
+
+    def get_temporal_fields(self) -> Dict[str, tuple[type, Any]]:
+        """
+        SCD2 temporal fields:
+        - valid_from, valid_to (temporal range)
+        - version (counter)
+        - deleted_at, deleted_by (soft delete)
+        """
+        fields = self._get_base_fields()  # Includes soft delete, multi-tenant
+
+        # SCD2-specific fields
+        fields.update(
+            {
+                "valid_from": (datetime, "NOW()"),
+                "valid_to": (Optional[datetime], None),
+                "version": (int, 1),
+            }
+        )
+
+        return fields
+
+    def get_temporal_indexes(self, table_name: str, schema: str = "public") -> List[dict]:
+        """
+        SCD2 indexes:
+        - Temporal range (valid_from, valid_to)
+        - Current version (partial: valid_to IS NULL)
+        - Not deleted (partial: deleted_at IS NULL)
+        - Versions (id, version)
+        """
+        indexes = self._get_base_indexes(table_name)
+
+        # Temporal range index
+        indexes.append(
+            {
+                "name": f"idx_{table_name}_valid_period",
+                "table_name": table_name,
+                "columns": ["valid_from", "valid_to"],
+                "index_type": "btree",
+            }
+        )
+
+        # Current version (most common query)
+        current_version_where = "valid_to IS NULL AND deleted_at IS NULL"
+        if self.multi_tenant:
+            indexes.append(
+                {
+                    "name": f"idx_{table_name}_current_version",
+                    "table_name": table_name,
+                    "columns": ["id", self.tenant_field],
+                    "where": current_version_where,
+                    "index_type": "btree",
+                }
+            )
+        else:
+            indexes.append(
+                {
+                    "name": f"idx_{table_name}_current_version",
+                    "table_name": table_name,
+                    "columns": ["id"],
+                    "where": current_version_where,
+                    "index_type": "btree",
+                }
+            )
+
+        # Version ordering
+        indexes.append(
+            {
+                "name": f"idx_{table_name}_versions",
+                "table_name": table_name,
+                "columns": ["id", "version"],
+                "index_type": "btree",
+            }
+        )
+
+        return indexes
+
+    def get_auxiliary_tables(self, table_name: str, schema: str = "public") -> List[dict]:
+        """No auxiliary tables for SCD2 (all data in main table)."""
+        return []
+
+    async def create(
+        self,
+        data: Dict[str, Any],
+        db_pool,
+        tenant_id: Optional[UUID] = None,
+        user_id: Optional[UUID] = None,
+    ) -> T:
+        """
+        Create first version.
+
+        Sets:
+        - id (if not provided)
+        - created_at, updated_at
+        - created_by
+        - tenant_id
+        - version = 1
+        - valid_from = NOW(), valid_to = NULL
+        - deleted_at, deleted_by = NULL
+        """
+        # Ensure ID
+        if "id" not in data:
+            data["id"] = uuid4()
+
+        # Set timestamps
+        now = datetime.now(timezone.utc)
+        data["created_at"] = now
+        data["updated_at"] = now
+
+        # Set created_by
+        if user_id:
+            data["created_by"] = user_id
+
+        # Set tenant_id
+        if self.multi_tenant:
+            if not tenant_id:
+                raise ValueError("tenant_id required for multi-tenant model")
+            data[self.tenant_field] = tenant_id
+
+        # SCD2 fields
+        data["version"] = 1
+        data["valid_from"] = now
+        data["valid_to"] = None
+        data["deleted_at"] = None
+        data["deleted_by"] = None
+
+        # Build INSERT query
+        table_name = self._get_table_name()
+        columns = list(data.keys())
+        placeholders = [f"${i+1}" for i in range(len(columns))]
+
+        query = f"""
+            INSERT INTO {table_name} ({', '.join(columns)})
+            VALUES ({', '.join(placeholders)})
+            RETURNING *
+        """
+
+        # Execute
+        async with db_pool.acquire() as conn:
+            row = await conn.fetchrow(query, *data.values())
+
+        return self._row_to_model(row)
+
+    async def update(
+        self,
+        id: UUID,
+        data: Dict[str, Any],
+        db_pool,
+        tenant_id: Optional[UUID] = None,
+        user_id: Optional[UUID] = None,
+    ) -> T:
+        """
+        Create new version (immutable update).
+
+        Process:
+        1. SELECT current version (valid_to IS NULL)
+        2. UPDATE: Close current version (set valid_to = NOW())
+        3. INSERT: Create new version (version + 1, valid_from = NOW())
+
+        Transaction ensures atomicity.
+        """
+        table_name = self._get_table_name()
+        now = datetime.now(timezone.utc)
+
+        # Build WHERE clause for current version
+        where_parts = ["id = $1", "valid_to IS NULL", "deleted_at IS NULL"]
+        where_values = [id]
+
+        if self.multi_tenant:
+            if not tenant_id:
+                raise ValueError("tenant_id required for multi-tenant model")
+            where_parts.append(f"{self.tenant_field} = ${len(where_values) + 1}")
+            where_values.append(tenant_id)
+
+        async with db_pool.acquire() as conn:
+            async with conn.transaction():
+                # 1. Get current version
+                select_query = f"""
+                    SELECT * FROM {table_name}
+                    WHERE {' AND '.join(where_parts)}
+                """
+                current_row = await conn.fetchrow(select_query, *where_values)
+
+                if not current_row:
+                    raise ValueError(f"Record not found or already updated: {id}")
+
+                current_data = dict(current_row)
+                current_version = current_data["version"]
+
+                # 2. Close current version
+                close_query = f"""
+                    UPDATE {table_name}
+                    SET valid_to = ${len(where_values) + 1}
+                    WHERE {' AND '.join(where_parts)}
+                """
+                await conn.execute(close_query, *where_values, now)
+
+                # 3. Build new version
+                new_data = current_data.copy()
+                new_data.update(data)
+
+                # Update version fields
+                new_data["version"] = current_version + 1
+                new_data["valid_from"] = now
+                new_data["valid_to"] = None
+                new_data["updated_at"] = now
+
+                # Insert new version
+                columns = list(new_data.keys())
+                placeholders = [f"${i+1}" for i in range(len(columns))]
+
+                insert_query = f"""
+                    INSERT INTO {table_name} ({', '.join(columns)})
+                    VALUES ({', '.join(placeholders)})
+                    RETURNING *
+                """
+
+                row = await conn.fetchrow(insert_query, *new_data.values())
+
+        return self._row_to_model(row)
+
+    async def delete(
+        self,
+        id: UUID,
+        db_pool,
+        tenant_id: Optional[UUID] = None,
+        user_id: Optional[UUID] = None,
+    ) -> bool:
+        """
+        Soft delete current version.
+
+        Sets deleted_at, deleted_by on current version (valid_to IS NULL).
+        """
+        table_name = self._get_table_name()
+        now = datetime.now(timezone.utc)
+
+        # Build WHERE clause for current version
+        where_parts = ["id = $1", "valid_to IS NULL", "deleted_at IS NULL"]
+        where_values = [id]
+
+        if self.multi_tenant:
+            if not tenant_id:
+                raise ValueError("tenant_id required for multi-tenant model")
+            where_parts.append(f"{self.tenant_field} = ${len(where_values) + 1}")
+            where_values.append(tenant_id)
+
+        query = f"""
+            UPDATE {table_name}
+            SET deleted_at = ${len(where_values) + 1},
+                deleted_by = ${len(where_values) + 2},
+                updated_at = ${len(where_values) + 3}
+            WHERE {' AND '.join(where_parts)}
+            RETURNING id
+        """
+
+        # Execute
+        async with db_pool.acquire() as conn:
+            row = await conn.fetchrow(query, *where_values, now, user_id, now)
+
+        return row is not None
+
+    async def get(
+        self,
+        id: UUID,
+        db_pool,
+        tenant_id: Optional[UUID] = None,
+        as_of: Optional[datetime] = None,
+        include_deleted: bool = False,
+        **kwargs,
+    ) -> Optional[T]:
+        """
+        Get record (current or historical).
+
+        Args:
+            as_of: If provided, get version valid at this time (time travel)
+            include_deleted: If True, include soft-deleted versions
+
+        Current version query (as_of is None):
+            WHERE id = ? AND valid_to IS NULL AND deleted_at IS NULL
+
+        Time travel query (as_of provided):
+            WHERE id = ? AND valid_from <= as_of AND (valid_to IS NULL OR valid_to > as_of)
+        """
+        table_name = self._get_table_name()
+
+        # Build WHERE clause
+        where_parts = ["id = $1"]
+        where_values = [id]
+
+        if self.multi_tenant:
+            if not tenant_id:
+                raise ValueError("tenant_id required for multi-tenant model")
+            where_parts.append(f"{self.tenant_field} = ${len(where_values) + 1}")
+            where_values.append(tenant_id)
+
+        if as_of is None:
+            # Current version
+            where_parts.append("valid_to IS NULL")
+            if not include_deleted:
+                where_parts.append("deleted_at IS NULL")
+        else:
+            # Time travel
+            where_parts.append(f"valid_from <= ${len(where_values) + 1}")
+            where_values.append(as_of)
+            where_parts.append(f"(valid_to IS NULL OR valid_to > ${len(where_values)})")
+            where_values.append(as_of)
+
+            if not include_deleted:
+                where_parts.append(f"(deleted_at IS NULL OR deleted_at > ${len(where_values)})")
+                where_values.append(as_of)
+
+        query = f"""
+            SELECT * FROM {table_name}
+            WHERE {' AND '.join(where_parts)}
+        """
+
+        # Execute
+        async with db_pool.acquire() as conn:
+            row = await conn.fetchrow(query, *where_values)
+
+        if not row:
+            return None
+
+        return self._row_to_model(row)
+
+    async def list(
+        self,
+        filters: Optional[Dict[str, Any]],
+        db_pool,
+        tenant_id: Optional[UUID] = None,
+        limit: int = 100,
+        offset: int = 0,
+        as_of: Optional[datetime] = None,
+        include_deleted: bool = False,
+        **kwargs,
+    ) -> List[T]:
+        """
+        List records (current or historical).
+
+        By default, returns current versions only.
+        With as_of, returns versions valid at that time.
+        """
+        table_name = self._get_table_name()
+        filters = filters or {}
+
+        # Build WHERE clause
+        where_parts = []
+        where_values = []
+
+        # Multi-tenant filter
+        if self.multi_tenant:
+            if not tenant_id:
+                raise ValueError("tenant_id required for multi-tenant model")
+            where_parts.append(f"{self.tenant_field} = ${len(where_values) + 1}")
+            where_values.append(tenant_id)
+
+        # Temporal filter
+        if as_of is None:
+            # Current versions
+            where_parts.append("valid_to IS NULL")
+            if not include_deleted:
+                where_parts.append("deleted_at IS NULL")
+        else:
+            # Time travel
+            where_parts.append(f"valid_from <= ${len(where_values) + 1}")
+            where_values.append(as_of)
+            where_parts.append(f"(valid_to IS NULL OR valid_to > ${len(where_values)})")
+            where_values.append(as_of)
+
+            if not include_deleted:
+                where_parts.append(f"(deleted_at IS NULL OR deleted_at > ${len(where_values)})")
+                where_values.append(as_of)
+
+        # User filters
+        for key, value in filters.items():
+            where_parts.append(f"{key} = ${len(where_values) + 1}")
+            where_values.append(value)
+
+        # Build query
+        where_clause = f"WHERE {' AND '.join(where_parts)}" if where_parts else ""
+        query = f"""
+            SELECT * FROM {table_name}
+            {where_clause}
+            ORDER BY created_at DESC
+            LIMIT ${len(where_values) + 1}
+            OFFSET ${len(where_values) + 2}
+        """
+
+        # Execute
+        async with db_pool.acquire() as conn:
+            rows = await conn.fetch(query, *where_values, limit, offset)
+
+        return [self._row_to_model(row) for row in rows]
+
+    # ==================== SCD2-Specific Methods ====================
+
+    async def get_version_history(
+        self,
+        id: UUID,
+        db_pool,
+        tenant_id: Optional[UUID] = None,
+    ) -> List[T]:
+        """
+        Get all versions of a record, ordered by version.
+
+        Returns every version from creation to present.
+        """
+        table_name = self._get_table_name()
+
+        # Build WHERE clause
+        where_parts = ["id = $1"]
+        where_values = [id]
+
+        if self.multi_tenant:
+            if not tenant_id:
+                raise ValueError("tenant_id required for multi-tenant model")
+            where_parts.append(f"{self.tenant_field} = ${len(where_values) + 1}")
+            where_values.append(tenant_id)
+
+        query = f"""
+            SELECT * FROM {table_name}
+            WHERE {' AND '.join(where_parts)}
+            ORDER BY version ASC
+        """
+
+        # Execute
+        async with db_pool.acquire() as conn:
+            rows = await conn.fetch(query, *where_values)
+
+        return [self._row_to_model(row) for row in rows]
+
+    async def get_version(
+        self,
+        id: UUID,
+        version: int,
+        db_pool,
+        tenant_id: Optional[UUID] = None,
+    ) -> Optional[T]:
+        """Get specific version of a record."""
+        table_name = self._get_table_name()
+
+        # Build WHERE clause
+        where_parts = ["id = $1", "version = $2"]
+        where_values = [id, version]
+
+        if self.multi_tenant:
+            if not tenant_id:
+                raise ValueError("tenant_id required for multi-tenant model")
+            where_parts.append(f"{self.tenant_field} = ${len(where_values) + 1}")
+            where_values.append(tenant_id)
+
+        query = f"""
+            SELECT * FROM {table_name}
+            WHERE {' AND '.join(where_parts)}
+        """
+
+        # Execute
+        async with db_pool.acquire() as conn:
+            row = await conn.fetchrow(query, *where_values)
+
+        if not row:
+            return None
+
+        return self._row_to_model(row)
+
+    async def get_version_info(
+        self,
+        id: UUID,
+        db_pool,
+        tenant_id: Optional[UUID] = None,
+    ) -> List[VersionInfo]:
+        """
+        Get version metadata (without full records).
+
+        Returns list of VersionInfo with version number, validity range, status.
+        """
+        table_name = self._get_table_name()
+
+        # Build WHERE clause
+        where_parts = ["id = $1"]
+        where_values = [id]
+
+        if self.multi_tenant:
+            if not tenant_id:
+                raise ValueError("tenant_id required for multi-tenant model")
+            where_parts.append(f"{self.tenant_field} = ${len(where_values) + 1}")
+            where_values.append(tenant_id)
+
+        query = f"""
+            SELECT version, valid_from, valid_to, deleted_at
+            FROM {table_name}
+            WHERE {' AND '.join(where_parts)}
+            ORDER BY version ASC
+        """
+
+        # Execute
+        async with db_pool.acquire() as conn:
+            rows = await conn.fetch(query, *where_values)
+
+        return [
+            VersionInfo(
+                version=row["version"],
+                valid_from=row["valid_from"],
+                valid_to=row["valid_to"],
+                is_current=(row["valid_to"] is None),
+                is_deleted=(row["deleted_at"] is not None),
+            )
+            for row in rows
+        ]
+
+    async def compare_versions(
+        self,
+        id: UUID,
+        version1: int,
+        version2: int,
+        db_pool,
+        tenant_id: Optional[UUID] = None,
+    ) -> Dict[str, Dict[str, Any]]:
+        """
+        Compare two versions field-by-field.
+
+        Returns dict mapping field_name → {old, new, changed}
+        """
+        # Get both versions
+        v1 = await self.get_version(id, version1, db_pool, tenant_id)
+        v2 = await self.get_version(id, version2, db_pool, tenant_id)
+
+        if not v1 or not v2:
+            raise ValueError(f"Version not found: {id} v{version1} or v{version2}")
+
+        # Convert to dicts
+        v1_dict = self._model_to_dict(v1)
+        v2_dict = self._model_to_dict(v2)
+
+        # Compare fields
+        diff = {}
+        all_fields = set(v1_dict.keys()) | set(v2_dict.keys())
+
+        for field in all_fields:
+            old_val = v1_dict.get(field)
+            new_val = v2_dict.get(field)
+
+            diff[field] = {
+                "old": old_val,
+                "new": new_val,
+                "changed": old_val != new_val,
+            }
+
+        return diff
+
+    # ==================== Helper Methods ====================
+
+    def _get_table_name(self) -> str:
+        """Get table name from model class."""
+        if hasattr(self.model_class, "table_name"):
+            return self.model_class.table_name()
+        elif hasattr(self.model_class, "__table_name__"):
+            return self.model_class.__table_name__
+        else:
+            return self.model_class.__name__.lower() + "s"
+
+    def _row_to_model(self, row) -> T:
+        """Convert database row to model instance."""
+        if hasattr(self.model_class, "model_validate"):
+            # Pydantic v2
+            return self.model_class.model_validate(dict(row))
+        elif hasattr(self.model_class, "from_orm"):
+            # Pydantic v1
+            return self.model_class.from_orm(row)
+        else:
+            # Dataclass or other
+            return self.model_class(**dict(row))
+
+    def _model_to_dict(self, model: T) -> Dict[str, Any]:
+        """Convert model instance to dict."""
+        if hasattr(model, "model_dump"):
+            # Pydantic v2
+            return model.model_dump()
+        elif hasattr(model, "dict"):
+            # Pydantic v1
+            return model.dict()
+        else:
+            # Dataclass or other
+            return {k: getattr(model, k) for k in dir(model) if not k.startswith("_")}
