@@ -23,6 +23,40 @@ from ff_storage.temporal.registry import get_strategy
 from ff_storage.temporal.repository_base import TemporalRepository
 
 
+def create_async_pool_mock(mock_conn=None, side_effect=None):
+    """
+    Helper to create a properly mocked async pool with context manager support.
+
+    Args:
+        mock_conn: Optional mock connection to return from __aenter__
+        side_effect: Optional exception to raise when entering context
+
+    Returns:
+        AsyncMock configured as async context manager
+    """
+    from unittest.mock import Mock
+
+    mock_pool = AsyncMock()
+
+    # Always set up async context manager protocol
+    mock_acquire = AsyncMock()
+
+    if side_effect:
+        # For exceptions, raise them when entering the context manager
+        mock_acquire.__aenter__ = AsyncMock(side_effect=side_effect)
+        mock_acquire.__aexit__ = AsyncMock(return_value=None)
+    else:
+        # Normal case: return connection from __aenter__
+        mock_acquire.__aenter__ = AsyncMock(return_value=mock_conn or AsyncMock())
+        mock_acquire.__aexit__ = AsyncMock(return_value=None)
+
+    # IMPORTANT: Use Mock (not AsyncMock) for acquire() so it returns the context manager directly
+    # without wrapping it in a coroutine
+    mock_pool.acquire = Mock(return_value=mock_acquire)
+
+    return mock_pool
+
+
 # Test models for different strategies
 class ProductNone(PydanticModel):
     """Product model with no temporal strategy."""
@@ -63,16 +97,20 @@ class ProductSCD2(PydanticModel):
 @pytest.fixture
 async def mock_db_pool():
     """Mock database pool for testing."""
-    pool = AsyncMock()
+    # Create mock connection with required methods
+    conn = AsyncMock()
+    conn.fetchrow = AsyncMock()
+    conn.fetch = AsyncMock(return_value=[])
+    conn.execute = AsyncMock()
+    conn.transaction = AsyncMock()
 
-    # Configure pool methods
+    # Create properly configured pool mock
+    pool = create_async_pool_mock(mock_conn=conn)
+
+    # Configure pool-level methods for backward compatibility
     pool.fetch_one = AsyncMock()
     pool.fetch_all = AsyncMock()
     pool.execute = AsyncMock()
-
-    # Add connection acquisition
-    conn = AsyncMock()
-    pool.acquire = AsyncMock(return_value=conn)
 
     return pool
 

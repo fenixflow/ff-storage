@@ -27,6 +27,40 @@ from ff_storage.utils.metrics import MetricsCollector
 from ff_storage.utils.retry import CircuitState
 
 
+def create_async_pool_mock(mock_conn=None, side_effect=None):
+    """
+    Helper to create a properly mocked async pool with context manager support.
+
+    Args:
+        mock_conn: Optional mock connection to return from __aenter__
+        side_effect: Optional exception to raise when entering context
+
+    Returns:
+        AsyncMock configured as async context manager
+    """
+    from unittest.mock import Mock
+
+    mock_pool = AsyncMock()
+
+    # Always set up async context manager protocol
+    mock_acquire = AsyncMock()
+
+    if side_effect:
+        # For exceptions, raise them when entering the context manager
+        mock_acquire.__aenter__ = AsyncMock(side_effect=side_effect)
+        mock_acquire.__aexit__ = AsyncMock(return_value=None)
+    else:
+        # Normal case: return connection from __aenter__
+        mock_acquire.__aenter__ = AsyncMock(return_value=mock_conn or AsyncMock())
+        mock_acquire.__aexit__ = AsyncMock(return_value=None)
+
+    # IMPORTANT: Use Mock (not AsyncMock) for acquire() so it returns the context manager directly
+    # without wrapping it in a coroutine
+    mock_pool.acquire = Mock(return_value=mock_acquire)
+
+    return mock_pool
+
+
 @pytest.fixture
 def pool_config():
     """Test pool configuration."""
@@ -109,8 +143,7 @@ class TestConnectionResilience:
         pool = PostgresPool(**pool_config)
 
         # Mock pool that's exhausted
-        mock_pool = AsyncMock()
-        mock_pool.acquire = AsyncMock(side_effect=asyncio.TimeoutError("Pool exhausted"))
+        mock_pool = create_async_pool_mock(side_effect=asyncio.TimeoutError("Pool exhausted"))
         pool.pool = mock_pool
 
         # Should raise ConnectionPoolExhausted
@@ -131,10 +164,7 @@ class TestConnectionResilience:
             side_effect=Exception("canceling statement due to statement timeout")
         )
 
-        mock_pool = AsyncMock()
-        mock_pool.acquire = AsyncMock()
-        mock_pool.acquire.return_value.__aenter__ = AsyncMock(return_value=mock_conn)
-        mock_pool.acquire.return_value.__aexit__ = AsyncMock(return_value=None)
+        mock_pool = create_async_pool_mock(mock_conn=mock_conn)
         pool.pool = mock_pool
 
         # Should raise QueryTimeout
@@ -149,19 +179,18 @@ class TestConnectionResilience:
         pool = PostgresPool(**pool_config)
 
         with patch("asyncpg.create_pool", new_callable=AsyncMock) as mock_create:
-            mock_pool = AsyncMock()
-
             # Mock connection acquisition for warmup
             mock_conn = AsyncMock()
             mock_conn.fetchval = AsyncMock(return_value=1)
-            mock_pool.acquire = AsyncMock()
-            mock_pool.acquire.return_value.__aenter__ = AsyncMock(return_value=mock_conn)
-            mock_pool.acquire.return_value.__aexit__ = AsyncMock(return_value=None)
 
+            mock_pool = create_async_pool_mock(mock_conn=mock_conn)
             mock_create.return_value = mock_pool
 
             # Connect should trigger warmup
             await pool.connect()
+
+            # Allow warmup tasks to complete
+            await asyncio.sleep(0.1)
 
             # Verify warmup queries were executed
             assert mock_conn.fetchval.call_count >= pool.min_size
@@ -182,10 +211,7 @@ class TestConnectionResilience:
         mock_conn = AsyncMock()
         mock_conn.fetchrow = AsyncMock(return_value={"test": "data"})
 
-        mock_pool = AsyncMock()
-        mock_pool.acquire = AsyncMock()
-        mock_pool.acquire.return_value.__aenter__ = AsyncMock(return_value=mock_conn)
-        mock_pool.acquire.return_value.__aexit__ = AsyncMock(return_value=None)
+        mock_pool = create_async_pool_mock(mock_conn=mock_conn)
         pool.pool = mock_pool
 
         # Execute query
@@ -205,10 +231,7 @@ class TestConnectionResilience:
         mock_conn = AsyncMock()
         mock_conn.fetchrow = AsyncMock(return_value={"health_check": 1})
 
-        mock_pool = AsyncMock()
-        mock_pool.acquire = AsyncMock()
-        mock_pool.acquire.return_value.__aenter__ = AsyncMock(return_value=mock_conn)
-        mock_pool.acquire.return_value.__aexit__ = AsyncMock(return_value=None)
+        mock_pool = create_async_pool_mock(mock_conn=mock_conn)
         mock_pool._holders = []  # No active connections
         mock_pool._free = [1, 2, 3, 4, 5]  # 5 free connections
         pool.pool = mock_pool
@@ -230,10 +253,7 @@ class TestConnectionResilience:
         mock_conn = AsyncMock()
         mock_conn.fetchrow = AsyncMock(return_value={"health_check": 1})
 
-        mock_pool = AsyncMock()
-        mock_pool.acquire = AsyncMock()
-        mock_pool.acquire.return_value.__aenter__ = AsyncMock(return_value=mock_conn)
-        mock_pool.acquire.return_value.__aexit__ = AsyncMock(return_value=None)
+        mock_pool = create_async_pool_mock(mock_conn=mock_conn)
         mock_pool._holders = list(range(9))  # 9 active connections
         mock_pool._free = [1]  # 1 free connection
         pool.pool = mock_pool
@@ -266,10 +286,7 @@ class TestConnectionResilience:
         mock_conn = AsyncMock()
         mock_conn.fetchrow = AsyncMock(return_value={"id": 1})
 
-        mock_pool = AsyncMock()
-        mock_pool.acquire = AsyncMock()
-        mock_pool.acquire.return_value.__aenter__ = AsyncMock(return_value=mock_conn)
-        mock_pool.acquire.return_value.__aexit__ = AsyncMock(return_value=None)
+        mock_pool = create_async_pool_mock(mock_conn=mock_conn)
         pool.pool = mock_pool
 
         # Safe query should work
@@ -311,10 +328,7 @@ class TestConnectionResilience:
         mock_conn.fetchrow = AsyncMock(return_value={"count": 1})
         mock_conn.fetch = AsyncMock(return_value=[])
 
-        mock_pool = AsyncMock()
-        mock_pool.acquire = AsyncMock()
-        mock_pool.acquire.return_value.__aenter__ = AsyncMock(return_value=mock_conn)
-        mock_pool.acquire.return_value.__aexit__ = AsyncMock(return_value=None)
+        mock_pool = create_async_pool_mock(mock_conn=mock_conn)
         pool.pool = mock_pool
 
         # Execute multiple concurrent queries
