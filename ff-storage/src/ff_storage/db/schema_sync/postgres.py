@@ -55,6 +55,15 @@ class PostgresSchemaIntrospector(SchemaIntrospectorBase):
             # Map PostgreSQL type to generic type
             column_type = self._map_postgres_type(data_type, udt_name)
 
+            # Only DECIMAL types have user-specified precision/scale
+            # (Other numeric types like INTEGER have DB-generated precision we ignore)
+            if column_type == ColumnType.DECIMAL:
+                final_precision = precision
+                final_scale = scale
+            else:
+                final_precision = None
+                final_scale = None
+
             columns.append(
                 ColumnDefinition(
                     name=col_name,
@@ -62,8 +71,8 @@ class PostgresSchemaIntrospector(SchemaIntrospectorBase):
                     nullable=(nullable == "YES"),
                     default=default,
                     max_length=max_len,
-                    precision=precision,
-                    scale=scale,
+                    precision=final_precision,
+                    scale=final_scale,
                     native_type=udt_name or data_type,
                 )
             )
@@ -240,12 +249,18 @@ class PostgresSQLParser(SQLParserBase):
                 # Map type string to ColumnType
                 column_type = self._parse_column_type(col_type_str)
 
+                # Extract max_length, precision, scale from type string
+                max_length, precision, scale = self._extract_type_constraints(col_type_str)
+
                 columns.append(
                     ColumnDefinition(
                         name=col_name,
                         column_type=column_type,
                         nullable=nullable,
                         default=default_str,
+                        max_length=max_length,
+                        precision=precision,
+                        scale=scale,
                         native_type=col_type_str,
                     )
                 )
@@ -293,9 +308,9 @@ class PostgresSQLParser(SQLParserBase):
             return ColumnType.STRING
         elif type_upper == "TEXT":
             return ColumnType.TEXT
-        elif type_upper in ("INTEGER", "INT", "INT4"):
+        elif type_upper.startswith("INTEGER") or type_upper in ("INT", "INT4"):
             return ColumnType.INTEGER
-        elif type_upper in ("BIGINT", "INT8"):
+        elif type_upper.startswith("BIGINT") or type_upper == "INT8":
             return ColumnType.BIGINT
         elif type_upper == "BOOLEAN":
             return ColumnType.BOOLEAN
@@ -307,10 +322,22 @@ class PostgresSQLParser(SQLParserBase):
             return ColumnType.JSONB
         elif type_upper.endswith("[]"):
             return ColumnType.ARRAY
-        elif type_upper in ("NUMERIC", "DECIMAL"):
+        elif type_upper.startswith("NUMERIC") or type_upper.startswith("DECIMAL"):
             return ColumnType.DECIMAL
         else:
             return ColumnType.STRING  # Default fallback
+
+    def _extract_type_constraints(self, type_str: str) -> tuple[int | None, int | None, int | None]:
+        """Extract max_length, precision, scale from SQL type string."""
+        # VARCHAR(n)
+        if match := re.search(r"VARCHAR\((\d+)\)", type_str, re.IGNORECASE):
+            return int(match.group(1)), None, None
+
+        # NUMERIC(p,s)
+        if match := re.search(r"(?:NUMERIC|DECIMAL)\((\d+),(\d+)\)", type_str, re.IGNORECASE):
+            return None, int(match.group(1)), int(match.group(2))
+
+        return None, None, None
 
 
 class PostgresMigrationGenerator(MigrationGeneratorBase):

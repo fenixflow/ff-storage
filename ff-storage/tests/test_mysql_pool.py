@@ -82,6 +82,9 @@ async def test_pool_disconnect(pool_config):
 
     with patch("aiomysql.create_pool", new_callable=AsyncMock) as mock_create_pool:
         mock_pool = AsyncMock()
+        # close() is not async in aiomysql, but wait_closed() is
+        mock_pool.close = MagicMock()
+        mock_pool.wait_closed = AsyncMock()
         mock_create_pool.return_value = mock_pool
         await pool.connect()
         await pool.disconnect()

@@ -6,9 +6,9 @@ from pathlib import Path
 import typer
 from rich.console import Console
 
-from . import github, pypi
 from ..utils import check_all_auth
 from ..utils.constants import SUPPORTED_PACKAGES
+from . import github, pypi
 
 console = Console()
 

@@ -18,6 +18,25 @@ from pydantic.fields import FieldInfo
 from ..db.schema_sync.models import ColumnType
 
 
+def _extract_max_length_from_field(field_info: FieldInfo) -> int | None:
+    """
+    Extract max_length from Pydantic v2 field constraints.
+
+    Pydantic v2 stores constraints in metadata, not as direct attributes.
+    """
+    # Check Pydantic v2 metadata for constraint objects
+    if hasattr(field_info, "metadata"):
+        for constraint in field_info.metadata:
+            if hasattr(constraint, "max_length") and constraint.max_length is not None:
+                return constraint.max_length
+
+    # Fallback: Try direct attribute (Pydantic v1 compatibility)
+    if hasattr(field_info, "max_length") and field_info.max_length is not None:
+        return field_info.max_length
+
+    return None
+
+
 def map_pydantic_type_to_column_type(
     python_type: type,
     field_info: FieldInfo,
@@ -75,7 +94,14 @@ def map_pydantic_type_to_column_type(
         return ColumnType.UUID, "UUID"
 
     elif python_type is str:
-        max_length = getattr(field_info, "max_length", None) or 255
+        # Priority 1: Explicit override in json_schema_extra
+        max_length = metadata.get("max_length")
+        # Priority 2: Pydantic v2 constraints
+        if max_length is None:
+            max_length = _extract_max_length_from_field(field_info)
+        # Priority 3: Default to 255
+        if max_length is None:
+            max_length = 255
         return ColumnType.STRING, f"VARCHAR({max_length})"
 
     elif python_type is int:

@@ -127,8 +127,8 @@ class PydanticSchemaIntrospector:
         # Determine nullable
         nullable = self._is_nullable(field_type, field_info)
 
-        # Extract constraints
-        max_length = getattr(field_info, "max_length", None)
+        # Extract constraints (max_length will be in native_type from type_mapping)
+        max_length = metadata.get("max_length", None)
 
         # Extract default value (db_default takes precedence over Pydantic default)
         default = metadata.get("db_default") or self._extract_default(field_info)
@@ -155,7 +155,15 @@ class PydanticSchemaIntrospector:
 
     def _is_nullable(self, field_type: type, field_info: FieldInfo) -> bool:
         """
-        Determine if field is nullable.
+        Determine if field is nullable in the database.
+
+        A field is nullable if:
+        1. It's typed as Optional[T] (Union[T, None])
+        2. It's not required AND has no default (Pydantic will set to None)
+
+        A field is NOT nullable if:
+        1. It's a required field (Field(...))
+        2. It has a default or default_factory (always has a value)
 
         Args:
             field_type: Python type annotation
@@ -164,19 +172,26 @@ class PydanticSchemaIntrospector:
         Returns:
             True if nullable, False otherwise
         """
-        # Check if Optional[T]
+        # Check if Optional[T] (Union[T, None])
         origin = get_origin(field_type)
         if origin is type(None) or str(origin) == "typing.Union":
             args = get_args(field_type)
             if len(args) == 2 and type(None) in args:
                 return True
 
-        # Check if field has default
-        if field_info.default is not None or field_info.default_factory is not None:
+        # If field is NOT required and has NO default, it's implicitly Optional
+        # (Pydantic will set it to None if not provided)
+        if (
+            not field_info.is_required()
+            and field_info.default is None
+            and field_info.default_factory is None
+        ):
             return True
 
-        # Check Pydantic's is_required
-        return not field_info.is_required()
+        # Otherwise: NOT nullable
+        # - Required fields: Field(...) → NOT NULL
+        # - Fields with defaults/factories → NOT NULL (always have value)
+        return False
 
     def _extract_default(self, field_info: FieldInfo) -> Optional[str]:
         """
