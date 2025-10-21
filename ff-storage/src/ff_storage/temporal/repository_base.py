@@ -791,7 +791,7 @@ class TemporalRepository(Generic[T]):
             try:
                 async with async_timer(f"repo.{self.model_class.__name__}.get_many"):
                     # Build IN query
-                    placeholders = ", ".join([f"${i+1}" for i in range(len(uncached_ids))])
+                    placeholders = ", ".join([f"${i + 1}" for i in range(len(uncached_ids))])
                     query = f"""
                         SELECT * FROM {self._get_table_name()}
                         WHERE id IN ({placeholders})

@@ -221,11 +221,11 @@ class CopyOnChangeStrategy(TemporalStrategy[T]):
         audit_table_name = f"{table_name}_audit"
 
         columns = list(data.keys())
-        placeholders = [f"${i+1}" for i in range(len(columns))]
+        placeholders = [f"${i + 1}" for i in range(len(columns))]
 
         main_insert = f"""
-            INSERT INTO {table_name} ({', '.join(columns)})
-            VALUES ({', '.join(placeholders)})
+            INSERT INTO {table_name} ({", ".join(columns)})
+            VALUES ({", ".join(placeholders)})
             RETURNING *
         """
 
@@ -316,7 +316,7 @@ class CopyOnChangeStrategy(TemporalStrategy[T]):
                 # 1. Get current record with row-level lock
                 select_query = f"""
                     SELECT * FROM {table_name}
-                    WHERE {' AND '.join(where_parts)}
+                    WHERE {" AND ".join(where_parts)}
                     FOR UPDATE
                 """
                 current_row = await conn.fetchrow(select_query, *where_values)
@@ -361,8 +361,8 @@ class CopyOnChangeStrategy(TemporalStrategy[T]):
 
                 update_query = f"""
                     UPDATE {table_name}
-                    SET {', '.join(set_parts)}
-                    WHERE {' AND '.join(where_parts)}
+                    SET {", ".join(set_parts)}
+                    WHERE {" AND ".join(where_parts)}
                     RETURNING *
                 """
 
@@ -407,7 +407,7 @@ class CopyOnChangeStrategy(TemporalStrategy[T]):
                 # Get current record for audit
                 select_query = f"""
                     SELECT * FROM {table_name}
-                    WHERE {' AND '.join(where_parts)}
+                    WHERE {" AND ".join(where_parts)}
                 """
                 if self.soft_delete:
                     select_query += " AND deleted_at IS NULL"
@@ -423,7 +423,7 @@ class CopyOnChangeStrategy(TemporalStrategy[T]):
                         UPDATE {table_name}
                         SET deleted_at = ${len(where_values) + 1},
                             deleted_by = ${len(where_values) + 2}
-                        WHERE {' AND '.join(where_parts)} AND deleted_at IS NULL
+                        WHERE {" AND ".join(where_parts)} AND deleted_at IS NULL
                         RETURNING id
                     """
                     await conn.fetchrow(delete_query, *where_values, now, user_id)
@@ -448,7 +448,7 @@ class CopyOnChangeStrategy(TemporalStrategy[T]):
                     # Hard delete
                     delete_query = f"""
                         DELETE FROM {table_name}
-                        WHERE {' AND '.join(where_parts)}
+                        WHERE {" AND ".join(where_parts)}
                         RETURNING id
                     """
                     await conn.fetchrow(delete_query, *where_values)
@@ -505,7 +505,7 @@ class CopyOnChangeStrategy(TemporalStrategy[T]):
 
         query = f"""
             SELECT * FROM {table_name}
-            WHERE {' AND '.join(where_parts)}
+            WHERE {" AND ".join(where_parts)}
         """
 
         async with db_pool.acquire() as conn:
@@ -588,7 +588,7 @@ class CopyOnChangeStrategy(TemporalStrategy[T]):
 
         query = f"""
             SELECT * FROM {audit_table_name}
-            WHERE {' AND '.join(where_parts)}
+            WHERE {" AND ".join(where_parts)}
             ORDER BY changed_at ASC
         """
 
@@ -619,7 +619,7 @@ class CopyOnChangeStrategy(TemporalStrategy[T]):
 
         query = f"""
             SELECT * FROM {audit_table_name}
-            WHERE {' AND '.join(where_parts)}
+            WHERE {" AND ".join(where_parts)}
             ORDER BY changed_at ASC
         """
 
@@ -654,8 +654,8 @@ class CopyOnChangeStrategy(TemporalStrategy[T]):
             values_clauses.append(f"({', '.join(placeholders)})")
 
         query = f"""
-            INSERT INTO {audit_table_name} ({', '.join(columns)})
-            VALUES {', '.join(values_clauses)}
+            INSERT INTO {audit_table_name} ({", ".join(columns)})
+            VALUES {", ".join(values_clauses)}
         """
 
         await conn.execute(query, *all_values)
@@ -735,12 +735,15 @@ class CopyOnChangeStrategy(TemporalStrategy[T]):
 
     def _row_to_model(self, row) -> T:
         """Convert database row to model instance."""
+        # Deserialize JSONB fields from JSON strings back to Python objects
+        row_dict = self._deserialize_jsonb_fields(dict(row))
+
         if hasattr(self.model_class, "model_validate"):
             # Pydantic v2
-            return self.model_class.model_validate(dict(row))
+            return self.model_class.model_validate(row_dict)
         elif hasattr(self.model_class, "from_orm"):
             # Pydantic v1
-            return self.model_class.from_orm(row)
+            return self.model_class.from_orm(row_dict)
         else:
             # Dataclass or other
-            return self.model_class(**dict(row))
+            return self.model_class(**row_dict)

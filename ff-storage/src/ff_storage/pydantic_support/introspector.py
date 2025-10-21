@@ -297,7 +297,7 @@ class PydanticSchemaIntrospector:
         if field_type == datetime or "datetime" in str(field_type):
             column_type = ColumnType.TIMESTAMPTZ
             native_type = "TIMESTAMP WITH TIME ZONE"
-        elif field_type == int or field_type is int:
+        elif field_type is int:
             column_type = ColumnType.INTEGER
             native_type = "INTEGER"
         elif field_type == UUID or "UUID" in str(field_type):

@@ -178,11 +178,11 @@ class SCD2Strategy(TemporalStrategy[T]):
         # Build INSERT query
         table_name = self._get_table_name()
         columns = list(data.keys())
-        placeholders = [f"${i+1}" for i in range(len(columns))]
+        placeholders = [f"${i + 1}" for i in range(len(columns))]
 
         query = f"""
-            INSERT INTO {table_name} ({', '.join(columns)})
-            VALUES ({', '.join(placeholders)})
+            INSERT INTO {table_name} ({", ".join(columns)})
+            VALUES ({", ".join(placeholders)})
             RETURNING *
         """
 
@@ -230,7 +230,7 @@ class SCD2Strategy(TemporalStrategy[T]):
                 # 1. Get current version
                 select_query = f"""
                     SELECT * FROM {table_name}
-                    WHERE {' AND '.join(where_parts)}
+                    WHERE {" AND ".join(where_parts)}
                 """
                 current_row = await conn.fetchrow(select_query, *where_values)
 
@@ -244,7 +244,7 @@ class SCD2Strategy(TemporalStrategy[T]):
                 close_query = f"""
                     UPDATE {table_name}
                     SET valid_to = ${len(where_values) + 1}
-                    WHERE {' AND '.join(where_parts)}
+                    WHERE {" AND ".join(where_parts)}
                 """
                 await conn.execute(close_query, *where_values, now)
 
@@ -260,11 +260,11 @@ class SCD2Strategy(TemporalStrategy[T]):
 
                 # Insert new version
                 columns = list(new_data.keys())
-                placeholders = [f"${i+1}" for i in range(len(columns))]
+                placeholders = [f"${i + 1}" for i in range(len(columns))]
 
                 insert_query = f"""
-                    INSERT INTO {table_name} ({', '.join(columns)})
-                    VALUES ({', '.join(placeholders)})
+                    INSERT INTO {table_name} ({", ".join(columns)})
+                    VALUES ({", ".join(placeholders)})
                     RETURNING *
                 """
 
@@ -313,7 +313,7 @@ class SCD2Strategy(TemporalStrategy[T]):
                 # 1. Get current version
                 select_query = f"""
                     SELECT * FROM {table_name}
-                    WHERE {' AND '.join(where_parts)}
+                    WHERE {" AND ".join(where_parts)}
                 """
                 current_row = await conn.fetchrow(select_query, *where_values)
 
@@ -327,7 +327,7 @@ class SCD2Strategy(TemporalStrategy[T]):
                 close_query = f"""
                     UPDATE {table_name}
                     SET valid_to = ${len(where_values) + 1}
-                    WHERE {' AND '.join(where_parts)}
+                    WHERE {" AND ".join(where_parts)}
                 """
                 await conn.execute(close_query, *where_values, now)
 
@@ -342,11 +342,11 @@ class SCD2Strategy(TemporalStrategy[T]):
 
                 # INSERT new version
                 columns = list(new_data.keys())
-                placeholders = [f"${i+1}" for i in range(len(columns))]
+                placeholders = [f"${i + 1}" for i in range(len(columns))]
 
                 insert_query = f"""
-                    INSERT INTO {table_name} ({', '.join(columns)})
-                    VALUES ({', '.join(placeholders)})
+                    INSERT INTO {table_name} ({", ".join(columns)})
+                    VALUES ({", ".join(placeholders)})
                 """
 
                 # Serialize JSONB fields to JSON strings for database insertion
@@ -417,7 +417,7 @@ class SCD2Strategy(TemporalStrategy[T]):
 
         query = f"""
             SELECT * FROM {table_name}
-            WHERE {' AND '.join(where_parts)}
+            WHERE {" AND ".join(where_parts)}
         """
 
         # Execute
@@ -527,7 +527,7 @@ class SCD2Strategy(TemporalStrategy[T]):
 
         query = f"""
             SELECT * FROM {table_name}
-            WHERE {' AND '.join(where_parts)}
+            WHERE {" AND ".join(where_parts)}
             ORDER BY version ASC
         """
 
@@ -559,7 +559,7 @@ class SCD2Strategy(TemporalStrategy[T]):
 
         query = f"""
             SELECT * FROM {table_name}
-            WHERE {' AND '.join(where_parts)}
+            WHERE {" AND ".join(where_parts)}
         """
 
         # Execute
@@ -597,7 +597,7 @@ class SCD2Strategy(TemporalStrategy[T]):
         query = f"""
             SELECT version, valid_from, valid_to, deleted_at
             FROM {table_name}
-            WHERE {' AND '.join(where_parts)}
+            WHERE {" AND ".join(where_parts)}
             ORDER BY version ASC
         """
 
@@ -681,15 +681,18 @@ class SCD2Strategy(TemporalStrategy[T]):
 
     def _row_to_model(self, row) -> T:
         """Convert database row to model instance."""
+        # Deserialize JSONB fields from JSON strings back to Python objects
+        row_dict = self._deserialize_jsonb_fields(dict(row))
+
         if hasattr(self.model_class, "model_validate"):
             # Pydantic v2
-            return self.model_class.model_validate(dict(row))
+            return self.model_class.model_validate(row_dict)
         elif hasattr(self.model_class, "from_orm"):
             # Pydantic v1
-            return self.model_class.from_orm(row)
+            return self.model_class.from_orm(row_dict)
         else:
             # Dataclass or other
-            return self.model_class(**dict(row))
+            return self.model_class(**row_dict)
 
     def _model_to_dict(self, model: T) -> Dict[str, Any]:
         """Convert model instance to dict."""

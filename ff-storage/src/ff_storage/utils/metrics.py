@@ -198,7 +198,7 @@ class MetricsCollector:
             # Alert on pool exhaustion
             if metric.is_exhausted and self.enable_detailed_logging:
                 self.logger.warning(
-                    f"Connection pool exhausted: {active}/{pool_size} active, " f"{waiting} waiting"
+                    f"Connection pool exhausted: {active}/{pool_size} active, {waiting} waiting"
                 )
 
     def record_operation(

@@ -135,7 +135,7 @@ class TemporalCleanup:
 
         delete_query = f"""
             DELETE FROM {table_name}
-            WHERE {' AND '.join(where_parts)}
+            WHERE {" AND ".join(where_parts)}
         """
 
         async with self.db_pool.acquire() as conn:

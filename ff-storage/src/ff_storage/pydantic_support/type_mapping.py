@@ -74,17 +74,17 @@ def map_pydantic_type_to_column_type(
     if python_type == UUID or python_type is UUID:
         return ColumnType.UUID, "UUID"
 
-    elif python_type == str or python_type is str:
+    elif python_type is str:
         max_length = getattr(field_info, "max_length", None) or 255
         return ColumnType.STRING, f"VARCHAR({max_length})"
 
-    elif python_type == int or python_type is int:
+    elif python_type is int:
         return ColumnType.INTEGER, "INTEGER"
 
-    elif python_type == bool or python_type is bool:
+    elif python_type is bool:
         return ColumnType.BOOLEAN, "BOOLEAN"
 
-    elif python_type == float or python_type is float:
+    elif python_type is float:
         return ColumnType.DECIMAL, "DOUBLE PRECISION"
 
     elif python_type == datetime or python_type is datetime:

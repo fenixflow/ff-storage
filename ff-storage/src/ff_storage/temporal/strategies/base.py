@@ -355,3 +355,58 @@ class TemporalStrategy(ABC, Generic[T]):
                         serialized_data[field_name] = json.dumps(str(field_value))
 
         return serialized_data
+
+    def _deserialize_jsonb_fields(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Deserialize JSONB fields from JSON strings to Python objects.
+
+        This is the reverse of _serialize_jsonb_fields. When reading from
+        the database, JSONB columns may be returned as JSON strings that need
+        to be deserialized back to Python dicts/lists before passing to Pydantic.
+
+        Args:
+            data: Dictionary of field values from database
+
+        Returns:
+            Dictionary with JSONB fields deserialized to Python objects
+
+        Example:
+            >>> data = {"name": "Product", "metadata": '{"tags": ["new"]}'}
+            >>> deserialized = self._deserialize_jsonb_fields(data)
+            >>> deserialized["metadata"]
+            {"tags": ["new"]}
+        """
+        import json
+
+        # Only deserialize if we have a Pydantic model with field definitions
+        if not hasattr(self.model_class, "model_fields"):
+            return data  # Not a Pydantic model, return as-is
+
+        # Import here to avoid circular dependency
+        from ...db.schema_sync.models import ColumnType
+        from ...pydantic_support.type_mapping import map_pydantic_type_to_column_type
+
+        deserialized_data = data.copy()
+
+        for field_name, field_value in data.items():
+            # Skip fields not in model definition (e.g., temporal fields)
+            if field_name not in self.model_class.model_fields:
+                continue
+
+            field_info = self.model_class.model_fields[field_name]
+            python_type = field_info.annotation
+
+            # Get column type for this field
+            column_type, _ = map_pydantic_type_to_column_type(python_type, field_info)
+
+            # Deserialize JSONB fields from JSON strings
+            if column_type == ColumnType.JSONB and field_value is not None:
+                # Only deserialize if it's a string (already serialized)
+                if isinstance(field_value, str):
+                    try:
+                        deserialized_data[field_name] = json.loads(field_value)
+                    except (json.JSONDecodeError, TypeError):
+                        # If deserialization fails, keep as-is
+                        pass
+
+        return deserialized_data

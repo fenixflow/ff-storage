@@ -82,11 +82,11 @@ class NoneStrategy(TemporalStrategy[T]):
         # Build INSERT query
         table_name = self._get_table_name()
         columns = list(data.keys())
-        placeholders = [f"${i+1}" for i in range(len(columns))]
+        placeholders = [f"${i + 1}" for i in range(len(columns))]
 
         query = f"""
-            INSERT INTO {table_name} ({', '.join(columns)})
-            VALUES ({', '.join(placeholders)})
+            INSERT INTO {table_name} ({", ".join(columns)})
+            VALUES ({", ".join(placeholders)})
             RETURNING *
         """
 
@@ -138,8 +138,8 @@ class NoneStrategy(TemporalStrategy[T]):
         table_name = self._get_table_name()
         query = f"""
             UPDATE {table_name}
-            SET {', '.join(set_parts)}
-            WHERE {' AND '.join(where_parts)}
+            SET {", ".join(set_parts)}
+            WHERE {" AND ".join(where_parts)}
             RETURNING *
         """
 
@@ -181,9 +181,9 @@ class NoneStrategy(TemporalStrategy[T]):
             # Soft delete
             query = f"""
                 UPDATE {table_name}
-                SET deleted_at = ${ len(where_values) + 1},
-                    deleted_by = ${ len(where_values) + 2}
-                WHERE {' AND '.join(where_parts)} AND deleted_at IS NULL
+                SET deleted_at = ${len(where_values) + 1},
+                    deleted_by = ${len(where_values) + 2}
+                WHERE {" AND ".join(where_parts)} AND deleted_at IS NULL
                 RETURNING id
             """
             values = where_values + [datetime.now(timezone.utc), user_id]
@@ -191,7 +191,7 @@ class NoneStrategy(TemporalStrategy[T]):
             # Hard delete
             query = f"""
                 DELETE FROM {table_name}
-                WHERE {' AND '.join(where_parts)}
+                WHERE {" AND ".join(where_parts)}
                 RETURNING id
             """
             values = where_values
@@ -233,7 +233,7 @@ class NoneStrategy(TemporalStrategy[T]):
 
         query = f"""
             SELECT * FROM {table_name}
-            WHERE {' AND '.join(where_parts)}
+            WHERE {" AND ".join(where_parts)}
         """
 
         # Execute
@@ -334,7 +334,7 @@ class NoneStrategy(TemporalStrategy[T]):
             SET deleted_at = NULL,
                 deleted_by = NULL,
                 updated_at = ${len(where_values) + 1}
-            WHERE {' AND '.join(where_parts)} AND deleted_at IS NOT NULL
+            WHERE {" AND ".join(where_parts)} AND deleted_at IS NOT NULL
             RETURNING *
         """
 
@@ -372,12 +372,15 @@ class NoneStrategy(TemporalStrategy[T]):
 
     def _row_to_model(self, row) -> T:
         """Convert database row to model instance."""
+        # Deserialize JSONB fields from JSON strings back to Python objects
+        row_dict = self._deserialize_jsonb_fields(dict(row))
+
         if hasattr(self.model_class, "model_validate"):
             # Pydantic v2
-            return self.model_class.model_validate(dict(row))
+            return self.model_class.model_validate(row_dict)
         elif hasattr(self.model_class, "from_orm"):
             # Pydantic v1
-            return self.model_class.from_orm(row)
+            return self.model_class.from_orm(row_dict)
         else:
             # Dataclass or other
-            return self.model_class(**dict(row))
+            return self.model_class(**row_dict)

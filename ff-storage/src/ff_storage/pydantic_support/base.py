@@ -10,6 +10,7 @@ from typing import Any, ClassVar, Optional
 from uuid import UUID, uuid4
 
 from pydantic import BaseModel, ConfigDict, Field
+from pydantic.fields import FieldInfo
 
 from ..temporal.enums import TemporalStrategyType
 
@@ -100,6 +101,107 @@ class PydanticModel(BaseModel):
         default=None,
         description="User who created this record",
     )
+
+    # ==================== Dynamic Field Injection ====================
+
+    def __init_subclass__(cls, **kwargs):
+        """
+        Dynamically inject temporal fields based on configuration.
+
+        This method runs when a subclass of PydanticModel is created and
+        automatically adds temporal fields (tenant_id, version, valid_from, etc.)
+        as proper Pydantic model fields based on the temporal strategy and
+        configuration flags.
+
+        The injected fields can then be accessed via dot notation without
+        AttributeError (e.g., model.tenant_id, model.version).
+        """
+        super().__init_subclass__(**kwargs)
+
+        # Skip injection for the base PydanticModel class itself
+        if cls.__name__ == "PydanticModel":
+            return
+
+        # Get temporal fields to inject based on strategy and config
+        try:
+            temporal_fields = cls.get_temporal_fields()
+        except Exception:
+            # If get_temporal_fields() fails (e.g., during initial class creation),
+            # skip field injection. This can happen if the temporal registry
+            # isn't fully initialized yet.
+            return
+
+        # Track if we modified any fields
+        fields_modified = False
+
+        # Inject each temporal field as a proper Pydantic field
+        for field_name, (field_type, default_value) in temporal_fields.items():
+            # Skip if field already exists (user-defined takes precedence)
+            if hasattr(cls, field_name) and field_name in cls.model_fields:
+                continue
+
+            # Convert SQL defaults to Python defaults
+            if default_value == "NOW()":
+                # For datetime fields with SQL NOW() default
+                def now_factory():
+                    return datetime.now(timezone.utc)
+
+                default_factory = now_factory
+                default = None
+            elif default_value == "gen_random_uuid()":
+                # For UUID fields with SQL gen_random_uuid() default
+                default_factory = uuid4
+                default = None
+            elif callable(default_value):
+                # Already a callable, use as factory
+                default_factory = default_value
+                default = None
+            elif default_value is None:
+                # Explicit None default
+                default_factory = None
+                default = None
+            else:
+                # Static default value (e.g., version=1)
+                default_factory = None
+                default = default_value
+
+            # Create FieldInfo for the temporal field
+            # Note: FieldInfo doesn't allow both default and default_factory
+            if default_factory is not None:
+                field_info = FieldInfo(
+                    annotation=field_type,
+                    default_factory=default_factory,
+                    description=f"Temporal field injected by {cls.__temporal_strategy__} strategy",
+                )
+            else:
+                field_info = FieldInfo(
+                    annotation=field_type,
+                    default=default,
+                    description=f"Temporal field injected by {cls.__temporal_strategy__} strategy",
+                )
+
+            # Add to model_fields
+            cls.model_fields[field_name] = field_info
+
+            # Add to __annotations__ for proper type hints
+            if not hasattr(cls, "__annotations__"):
+                cls.__annotations__ = {}
+            cls.__annotations__[field_name] = field_type
+
+            # Set the field as a class attribute for Pydantic to recognize it
+            setattr(cls, field_name, field_info)
+
+            fields_modified = True
+
+        # Rebuild the model if we modified any fields
+        # This ensures Pydantic's internal structures are updated
+        if fields_modified:
+            try:
+                cls.model_rebuild()
+            except Exception:
+                # If model_rebuild fails (older Pydantic versions), that's OK
+                # The fields are still injected and will work
+                pass
 
     # ==================== Table Name Management ====================
 

@@ -49,7 +49,7 @@ class AuditQueryHelper:
 
         query = f"""
             SELECT * FROM {self.audit_table_name}
-            WHERE {' AND '.join(where_parts)}
+            WHERE {" AND ".join(where_parts)}
             ORDER BY changed_at DESC
             LIMIT ${len(where_values) + 1}
         """
@@ -85,7 +85,7 @@ class AuditQueryHelper:
 
         query = f"""
             SELECT * FROM {self.audit_table_name}
-            WHERE {' AND '.join(where_parts)}
+            WHERE {" AND ".join(where_parts)}
             ORDER BY changed_at ASC
         """
 
