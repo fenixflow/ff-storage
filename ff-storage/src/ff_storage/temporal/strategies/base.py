@@ -296,3 +296,62 @@ class TemporalStrategy(ABC, Generic[T]):
             )
 
         return indexes
+
+    def _serialize_jsonb_fields(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Serialize JSONB fields to JSON strings for database insertion.
+
+        Identifies which fields are JSONB columns from the Pydantic model's
+        field types and serializes Python dicts/lists to JSON strings.
+
+        This is necessary because asyncpg may not automatically handle Python
+        dicts/lists for JSONB columns in all configurations. Explicit JSON
+        serialization ensures compatibility across different PostgreSQL drivers.
+
+        Args:
+            data: Dictionary of field values
+
+        Returns:
+            Dictionary with JSONB fields serialized to JSON strings
+
+        Example:
+            >>> data = {"name": "Product", "metadata": {"tags": ["new"]}}
+            >>> serialized = self._serialize_jsonb_fields(data)
+            >>> serialized["metadata"]
+            '{"tags": ["new"]}'
+        """
+        import json
+
+        # Only serialize if we have a Pydantic model with field definitions
+        if not hasattr(self.model_class, "model_fields"):
+            return data  # Not a Pydantic model, return as-is
+
+        # Import here to avoid circular dependency
+        from ...db.schema_sync.models import ColumnType
+        from ...pydantic_support.type_mapping import map_pydantic_type_to_column_type
+
+        serialized_data = data.copy()
+
+        for field_name, field_value in data.items():
+            # Skip fields not in model definition (e.g., temporal fields)
+            if field_name not in self.model_class.model_fields:
+                continue
+
+            field_info = self.model_class.model_fields[field_name]
+            python_type = field_info.annotation
+
+            # Get column type for this field
+            column_type, _ = map_pydantic_type_to_column_type(python_type, field_info)
+
+            # Serialize JSONB fields to JSON strings
+            if column_type == ColumnType.JSONB and field_value is not None:
+                # Only serialize if not already a string
+                if not isinstance(field_value, str):
+                    try:
+                        # Use default=str to handle non-serializable types (UUID, datetime, etc.)
+                        serialized_data[field_name] = json.dumps(field_value, default=str)
+                    except (TypeError, ValueError):
+                        # If serialization fails, convert to string as fallback
+                        serialized_data[field_name] = json.dumps(str(field_value))
+
+        return serialized_data

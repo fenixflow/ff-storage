@@ -77,7 +77,8 @@ class PostgresSchemaIntrospector(SchemaIntrospectorBase):
                 i.relname as index_name,
                 ARRAY_AGG(a.attname ORDER BY a.attnum) as column_names,
                 ix.indisunique as is_unique,
-                am.amname as index_type
+                am.amname as index_type,
+                pg_get_expr(ix.indpred, ix.indrelid) as where_clause
             FROM pg_class t
             JOIN pg_index ix ON t.oid = ix.indrelid
             JOIN pg_class i ON i.oid = ix.indexrelid
@@ -87,14 +88,14 @@ class PostgresSchemaIntrospector(SchemaIntrospectorBase):
             WHERE n.nspname = %s
             AND t.relname = %s
             AND t.relkind = 'r'
-            GROUP BY i.relname, ix.indisunique, am.amname
+            GROUP BY i.relname, ix.indisunique, am.amname, ix.indpred, ix.indrelid
             ORDER BY i.relname
         """
         results = self.db.read_query(query, (schema, table_name), as_dict=False)
 
         indexes = []
         for row in results:
-            idx_name, col_names, is_unique, idx_type = row
+            idx_name, col_names, is_unique, idx_type, where_clause = row
             indexes.append(
                 IndexDefinition(
                     name=idx_name,
@@ -102,6 +103,7 @@ class PostgresSchemaIntrospector(SchemaIntrospectorBase):
                     columns=col_names if isinstance(col_names, list) else [col_names],
                     unique=is_unique,
                     index_type=idx_type,
+                    where_clause=where_clause,
                 )
             )
 
@@ -401,6 +403,110 @@ class PostgresMigrationGenerator(MigrationGeneratorBase):
         sql += "\n);"
 
         return sql
+
+    def generate_drop_index(self, schema: str, index: IndexDefinition) -> str:
+        """Generate DROP INDEX statement."""
+        # PostgreSQL DROP INDEX requires schema-qualified index name
+        full_index = f"{schema}.{index.name}"
+        return f"DROP INDEX IF EXISTS {full_index};"
+
+    def generate_drop_column(self, table_name: str, schema: str, column: ColumnDefinition) -> str:
+        """Generate ALTER TABLE DROP COLUMN statement."""
+        full_table = f"{schema}.{table_name}"
+        return f"ALTER TABLE {full_table} DROP COLUMN IF EXISTS {column.name};"
+
+    def generate_alter_column(self, table_name: str, schema: str, column: ColumnDefinition) -> str:
+        """
+        Generate ALTER TABLE ALTER COLUMN statement with USING clause for type conversions.
+
+        Uses STRICT conversion strategy: fails loudly on invalid data rather than silently
+        converting to NULL. This forces manual data cleanup and prevents data loss.
+        """
+        full_table = f"{schema}.{table_name}"
+
+        # PostgreSQL ALTER COLUMN requires separate statements for type, nullable, and default
+        statements = []
+
+        # Determine if we need a USING clause for type conversion
+        using_clause = self._get_type_conversion_using(column)
+
+        # Change type
+        alter_type = (
+            f"ALTER TABLE {full_table} ALTER COLUMN {column.name} TYPE {column.native_type}"
+        )
+        if using_clause:
+            alter_type += f" USING {using_clause}"
+        statements.append(alter_type)
+
+        # Change nullable
+        if column.nullable:
+            statements.append(f"ALTER TABLE {full_table} ALTER COLUMN {column.name} DROP NOT NULL")
+        else:
+            statements.append(f"ALTER TABLE {full_table} ALTER COLUMN {column.name} SET NOT NULL")
+
+        # Change default
+        if column.default:
+            statements.append(
+                f"ALTER TABLE {full_table} ALTER COLUMN {column.name} SET DEFAULT {column.default}"
+            )
+        else:
+            statements.append(f"ALTER TABLE {full_table} ALTER COLUMN {column.name} DROP DEFAULT")
+
+        return ";\n".join(statements) + ";"
+
+    def _get_type_conversion_using(self, column: ColumnDefinition) -> str | None:
+        """
+        Generate USING clause for type conversions that PostgreSQL can't auto-cast.
+
+        Strategy: STRICT conversions that fail on invalid data
+        - NULL and empty strings are handled gracefully
+        - Invalid data causes migration to FAIL (forces manual cleanup)
+        - NO silent data loss or corruption
+
+        Returns:
+            USING clause string, or None if PostgreSQL can handle conversion automatically
+        """
+        target_type = column.native_type.upper()
+        col_name = column.name
+
+        # text → numeric/decimal
+        # Handles NULL/empty, but FAILS on non-numeric values (e.g., "abc")
+        if "NUMERIC" in target_type or "DECIMAL" in target_type:
+            return f"CASE WHEN {col_name}::text IS NULL OR {col_name}::text = '' THEN NULL ELSE {col_name}::numeric END"
+
+        # text → jsonb
+        # Defaults to empty array for NULL/empty, but FAILS on invalid JSON
+        elif "JSONB" in target_type or "JSON" in target_type:
+            return f"CASE WHEN {col_name}::text IS NULL OR {col_name}::text = '' THEN '[]'::jsonb ELSE {col_name}::jsonb END"
+
+        # text → integer
+        # Handles NULL/empty, but FAILS on non-integer values
+        elif "INTEGER" in target_type or "INT" in target_type:
+            return f"CASE WHEN {col_name}::text IS NULL OR {col_name}::text = '' THEN NULL ELSE {col_name}::integer END"
+
+        # text → bigint
+        elif "BIGINT" in target_type:
+            return f"CASE WHEN {col_name}::text IS NULL OR {col_name}::text = '' THEN NULL ELSE {col_name}::bigint END"
+
+        # text → boolean
+        # Standard boolean conversions, FAILS on unrecognized values
+        elif "BOOLEAN" in target_type or "BOOL" in target_type:
+            return (
+                f"CASE "
+                f"WHEN {col_name}::text IS NULL OR {col_name}::text = '' THEN NULL "
+                f"WHEN {col_name}::text IN ('t', 'true', '1', 'yes', 'y') THEN true "
+                f"WHEN {col_name}::text IN ('f', 'false', '0', 'no', 'n') THEN false "
+                f"ELSE {col_name}::boolean "  # Let PostgreSQL try, will fail on invalid
+                f"END"
+            )
+
+        # text → uuid
+        elif "UUID" in target_type:
+            return f"CASE WHEN {col_name}::text IS NULL OR {col_name}::text = '' THEN NULL ELSE {col_name}::uuid END"
+
+        # For other conversions (e.g., varchar(100) → varchar(255), same type changes)
+        # Let PostgreSQL handle it automatically without USING clause
+        return None
 
     def wrap_in_transaction(self, statements: List[str]) -> str:
         """Wrap multiple statements in a transaction."""

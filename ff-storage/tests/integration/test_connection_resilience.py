@@ -13,19 +13,18 @@ Tests the production-ready features including:
 import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import pytest
 import psycopg2
-
-from ff_storage.db.connections.postgres import PostgresPool, Postgres
+import pytest
+from ff_storage.db.connections.postgres import Postgres, PostgresPool
 from ff_storage.exceptions import (
+    CircuitBreakerOpen,
     ConnectionFailure,
     ConnectionPoolExhausted,
     QueryTimeout,
-    CircuitBreakerOpen,
 )
 from ff_storage.health import HealthStatus
-from ff_storage.utils.retry import CircuitState
 from ff_storage.utils.metrics import MetricsCollector
+from ff_storage.utils.retry import CircuitState
 
 
 @pytest.fixture

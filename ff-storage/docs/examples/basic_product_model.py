@@ -15,7 +15,6 @@ from uuid import uuid4
 from ff_storage import Field, PydanticModel, PydanticRepository
 from ff_storage.db.connections.postgres import PostgresPool
 
-
 # ==================== Model Definition ====================
 
 

@@ -12,21 +12,21 @@ from typing import Any, Dict, List, Optional
 import psycopg2
 from psycopg2 import DatabaseError, OperationalError
 
-from ..sql import SQL
 from ...exceptions import (
     ConnectionFailure,
     ConnectionPoolExhausted,
     QueryTimeout,
 )
+from ...health import HealthCheckResult, HealthStatus
+from ...utils.metrics import async_timer, get_global_collector, timer
 from ...utils.retry import (
     CircuitBreaker,
+    exponential_backoff,
     retry,
     retry_async,
-    exponential_backoff,
 )
-from ...utils.metrics import get_global_collector, timer, async_timer
 from ...utils.validation import validate_query
-from ...health import HealthCheckResult, HealthStatus
+from ..sql import SQL
 
 
 @dataclass

@@ -277,8 +277,8 @@ class PydanticModel(BaseModel):
             ...
         """
         # Import here to avoid circular dependency
-        from .introspector import PydanticSchemaIntrospector
         from ..db.schema_sync.postgres import PostgresMigrationGenerator
+        from .introspector import PydanticSchemaIntrospector
 
         # Extract table definition from Pydantic model
         introspector = PydanticSchemaIntrospector()

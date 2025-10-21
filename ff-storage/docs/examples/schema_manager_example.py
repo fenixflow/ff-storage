@@ -10,7 +10,6 @@ Demonstrates:
 
 from ff_storage import Field, PostgresPool, PydanticModel, SchemaManager
 
-
 # ==================== Model Definition ====================
 
 

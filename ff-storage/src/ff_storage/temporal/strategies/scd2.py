@@ -22,7 +22,7 @@ from uuid import UUID, uuid4
 from ..enums import TemporalStrategyType
 from ..models import VersionInfo
 from ..registry import register_strategy
-from .base import TemporalStrategy, T
+from .base import T, TemporalStrategy
 
 
 @register_strategy(TemporalStrategyType.SCD2)
@@ -188,7 +188,9 @@ class SCD2Strategy(TemporalStrategy[T]):
 
         # Execute
         async with db_pool.acquire() as conn:
-            row = await conn.fetchrow(query, *data.values())
+            # Serialize JSONB fields to JSON strings for database insertion
+            serialized_data = self._serialize_jsonb_fields(data)
+            row = await conn.fetchrow(query, *serialized_data.values())
 
         return self._row_to_model(row)
 
@@ -266,7 +268,9 @@ class SCD2Strategy(TemporalStrategy[T]):
                     RETURNING *
                 """
 
-                row = await conn.fetchrow(insert_query, *new_data.values())
+                # Serialize JSONB fields to JSON strings for database insertion
+                serialized_data = self._serialize_jsonb_fields(new_data)
+                row = await conn.fetchrow(insert_query, *serialized_data.values())
 
         return self._row_to_model(row)
 
@@ -345,7 +349,9 @@ class SCD2Strategy(TemporalStrategy[T]):
                     VALUES ({', '.join(placeholders)})
                 """
 
-                await conn.execute(insert_query, *new_data.values())
+                # Serialize JSONB fields to JSON strings for database insertion
+                serialized_data = self._serialize_jsonb_fields(new_data)
+                await conn.execute(insert_query, *serialized_data.values())
 
         return True
 
@@ -653,13 +659,25 @@ class SCD2Strategy(TemporalStrategy[T]):
     # ==================== Helper Methods ====================
 
     def _get_table_name(self) -> str:
-        """Get table name from model class."""
+        """
+        Get fully-qualified table name from model class.
+
+        Returns schema-qualified name (e.g., "ix_ds_v2.umr") to ensure queries
+        work regardless of PostgreSQL search_path configuration.
+        """
+        # Get schema (default to "public" if not specified)
+        schema = getattr(self.model_class, "__schema__", "public")
+
+        # Get table name
         if hasattr(self.model_class, "table_name"):
-            return self.model_class.table_name()
+            table = self.model_class.table_name()
         elif hasattr(self.model_class, "__table_name__"):
-            return self.model_class.__table_name__
+            table = self.model_class.__table_name__
         else:
-            return self.model_class.__name__.lower() + "s"
+            table = self.model_class.__name__.lower() + "s"
+
+        # Return schema-qualified name
+        return f"{schema}.{table}"
 
     def _row_to_model(self, row) -> T:
         """Convert database row to model instance."""

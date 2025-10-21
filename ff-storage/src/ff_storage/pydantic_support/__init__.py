@@ -5,8 +5,8 @@ Provides Pydantic base model with temporal management and repository pattern.
 """
 
 from .base import PydanticModel
-from .repository import PydanticRepository
 from .introspector import PydanticSchemaIntrospector
+from .repository import PydanticRepository
 from .type_mapping import map_pydantic_type_to_column_type
 
 __all__ = [

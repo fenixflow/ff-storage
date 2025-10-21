@@ -10,17 +10,17 @@ import hashlib
 import json
 import logging
 import time
-from typing import Any, Dict, Generic, List, Optional, TypeVar, Tuple
+from typing import Any, Dict, Generic, List, Optional, Tuple, TypeVar
 from uuid import UUID
 
-from .strategies.base import TemporalStrategy
 from ..exceptions import (
     TemporalStrategyError,
     TenantIsolationError,
     TenantNotConfigured,
 )
-from ..utils.metrics import get_global_collector, async_timer
-from ..utils.retry import retry_async, exponential_backoff
+from ..utils.metrics import async_timer, get_global_collector
+from ..utils.retry import exponential_backoff, retry_async
+from .strategies.base import TemporalStrategy
 
 T = TypeVar("T")
 
@@ -103,26 +103,48 @@ class TemporalRepository(Generic[T]):
         """
         Generate cache key from operation and parameters.
 
-        Returns a composite key with format: {hash}:id={id} (if id present)
-        This allows pattern matching for invalidating all cached variants of a record.
-        """
-        # Sort kwargs for consistent key generation
-        sorted_kwargs = sorted(kwargs.items())
-        key_data = {
-            "op": operation,
-            "model": self.model_class.__name__,
-            "tenant": str(self.tenant_id) if self.tenant_id else None,
-            "params": sorted_kwargs,
-        }
-        # Create hash of the key data
-        key_str = json.dumps(key_data, default=str, sort_keys=True)
-        key_hash = hashlib.sha256(key_str.encode()).hexdigest()
+        Returns a structured key supporting pattern matching:
+        Format: {model}:{tenant}:{operation}[:{params}]
 
-        # Append ID to key for pattern matching (if present)
-        id_str = kwargs.get("id", "")
-        if id_str:
-            return f"{key_hash}:id={id_str}"
-        return key_hash
+        Examples:
+        - "Product:org123:list:status=active:page=1"
+        - "Product:org123:get:id=abc-123:include_deleted=True"
+
+        This allows:
+        - invalidate_cache("list") to match all list queries
+        - invalidate_cache(":id={uuid}") to match all operations for that record
+        """
+        # Build structured key parts
+        parts = [
+            self.model_class.__name__,
+            str(self.tenant_id) if self.tenant_id else "global",
+            operation,  # Keep operation visible for pattern matching
+        ]
+
+        # Add parameters (sorted for consistency)
+        if kwargs:
+            sorted_params = sorted(kwargs.items())
+            param_str = ":".join(f"{k}={v}" for k, v in sorted_params)
+            parts.append(param_str)
+
+        key = ":".join(parts)
+
+        # Limit key size by hashing params if too long
+        if len(key) > 500:
+            base_parts = parts[:3]  # model, tenant, operation
+            param_data = {k: v for k, v in kwargs.items()}
+            param_hash = hashlib.sha256(
+                json.dumps(param_data, default=str, sort_keys=True).encode()
+            ).hexdigest()[:16]
+
+            # Keep ID visible for pattern matching
+            id_val = kwargs.get("id")
+            if id_val:
+                key = f"{':'.join(base_parts)}:h{param_hash}:id={id_val}"
+            else:
+                key = f"{':'.join(base_parts)}:h{param_hash}"
+
+        return key
 
     async def _get_cached(self, cache_key: str) -> Optional[Any]:
         """Get value from cache if not expired."""

@@ -10,16 +10,16 @@ Benefits:
 - Granular: See exactly which fields changed when
 """
 
+import json
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 from uuid import UUID, uuid4
-import json
 
 from ...db.schema_sync.models import ColumnType
 from ..enums import TemporalStrategyType
 from ..models import AuditEntry
 from ..registry import register_strategy
-from .base import TemporalStrategy, T
+from .base import T, TemporalStrategy
 
 
 @register_strategy(TemporalStrategyType.COPY_ON_CHANGE)
@@ -253,8 +253,9 @@ class CopyOnChangeStrategy(TemporalStrategy[T]):
         # Execute in transaction
         async with db_pool.acquire() as conn:
             async with conn.transaction():
-                # Insert main record
-                row = await conn.fetchrow(main_insert, *data.values())
+                # Insert main record with JSONB serialization
+                serialized_data = self._serialize_jsonb_fields(data)
+                row = await conn.fetchrow(main_insert, *serialized_data.values())
 
                 # Insert audit entries
                 await self._insert_audit_entries(conn, audit_table_name, audit_entries)
@@ -695,7 +696,7 @@ class CopyOnChangeStrategy(TemporalStrategy[T]):
         elif isinstance(value, UUID):
             return str(value)
         elif isinstance(value, Decimal):
-            return float(value)  # Convert to float for better JSON compatibility
+            return str(value)  # Preserve exact precision as string
         elif isinstance(value, Enum):
             return value.value  # Return the underlying value
         elif isinstance(value, bytes):
@@ -712,13 +713,25 @@ class CopyOnChangeStrategy(TemporalStrategy[T]):
             return str(value)
 
     def _get_table_name(self) -> str:
-        """Get table name from model class."""
+        """
+        Get fully-qualified table name from model class.
+
+        Returns schema-qualified name (e.g., "ix_ds_v2.umr") to ensure queries
+        work regardless of PostgreSQL search_path configuration.
+        """
+        # Get schema (default to "public" if not specified)
+        schema = getattr(self.model_class, "__schema__", "public")
+
+        # Get table name
         if hasattr(self.model_class, "table_name"):
-            return self.model_class.table_name()
+            table = self.model_class.table_name()
         elif hasattr(self.model_class, "__table_name__"):
-            return self.model_class.__table_name__
+            table = self.model_class.__table_name__
         else:
-            return self.model_class.__name__.lower() + "s"
+            table = self.model_class.__name__.lower() + "s"
+
+        # Return schema-qualified name
+        return f"{schema}.{table}"
 
     def _row_to_model(self, row) -> T:
         """Convert database row to model instance."""

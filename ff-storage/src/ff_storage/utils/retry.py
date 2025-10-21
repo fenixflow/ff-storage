@@ -12,7 +12,7 @@ import random
 import time
 from datetime import datetime
 from enum import Enum
-from typing import Type, Tuple, Union, Callable, Any, Optional, Dict
+from typing import Any, Callable, Dict, Optional, Tuple, Type, Union
 
 from ..exceptions import CircuitBreakerOpen
 

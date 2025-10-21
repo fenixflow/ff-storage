@@ -3,6 +3,7 @@ Migration utilities for adding temporal to existing tables.
 """
 
 from typing import Optional
+
 from ..enums import TemporalStrategyType
 
 

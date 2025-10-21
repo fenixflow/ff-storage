@@ -5,14 +5,14 @@ This module provides utilities for collecting performance metrics,
 query statistics, and resource usage information.
 """
 
-import time
+import logging
 import threading
+import time
 from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
-from typing import Dict, List, Optional, Any, Deque
 from enum import Enum
-import logging
+from typing import Any, Deque, Dict, List, Optional
 
 
 class MetricType(Enum):

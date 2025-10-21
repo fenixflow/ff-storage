@@ -5,9 +5,9 @@ This module provides validation functions to prevent SQL injection
 and ensure query safety.
 """
 
-import re
-from typing import List, Optional, Any, Dict, Set, Tuple
 import logging
+import re
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 from ..exceptions import SQLInjectionAttempt, ValidationError
 

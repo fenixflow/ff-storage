@@ -47,17 +47,23 @@ def map_pydantic_type_to_column_type(
         column_type = _parse_custom_type(custom_type)
         return column_type, custom_type
 
-    # Check for db_precision/db_scale override for numeric types
+    # Check for db_precision/db_scale OR Pydantic's max_digits/decimal_places for numeric types
     if (python_type == Decimal or python_type is Decimal) and (
-        "db_precision" in metadata or "db_scale" in metadata
+        "db_precision" in metadata
+        or "db_scale" in metadata
+        or hasattr(field_info, "max_digits")
+        or hasattr(field_info, "decimal_places")
     ):
-        precision = metadata.get("db_precision", 15)
-        scale = metadata.get("db_scale", 2)
-        return ColumnType.DECIMAL, f"DECIMAL({precision},{scale})"
+        # Prefer explicit db_* overrides, fallback to Pydantic's constraints
+        precision = metadata.get("db_precision") or getattr(field_info, "max_digits", None) or 15
+        scale = metadata.get("db_scale") or getattr(field_info, "decimal_places", None) or 2
+        return ColumnType.DECIMAL, f"NUMERIC({precision},{scale})"
 
     # Handle Optional[T] / Union[T, None]
     origin = get_origin(python_type)
-    if origin is type(None) or str(origin) == "typing.Union":
+    # Check for Union types (handles both typing.Union and types.UnionType from Python 3.10+)
+    origin_str = str(origin)
+    if origin is type(None) or "Union" in origin_str:
         args = get_args(python_type)
         if len(args) == 2 and type(None) in args:
             # Extract T from Optional[T]
@@ -88,19 +94,23 @@ def map_pydantic_type_to_column_type(
         return ColumnType.TIMESTAMP, "DATE"
 
     elif python_type == Decimal or python_type is Decimal:
-        precision = metadata.get("db_precision", 15)
-        scale = metadata.get("db_scale", 2)
-        return ColumnType.DECIMAL, f"DECIMAL({precision},{scale})"
+        # Prefer explicit db_* overrides, fallback to Pydantic's constraints
+        precision = metadata.get("db_precision") or getattr(field_info, "max_digits", None) or 15
+        scale = metadata.get("db_scale") or getattr(field_info, "decimal_places", None) or 2
+        return ColumnType.DECIMAL, f"NUMERIC({precision},{scale})"
 
     # Complex types (list, dict, nested models)
     elif origin is list:
         args = get_args(python_type)
-        if args and hasattr(args[0], "model_fields"):
-            # List of Pydantic models → JSONB
-            return ColumnType.JSONB, "JSONB"
-        else:
-            # List of primitives → Array
-            return ColumnType.ARRAY, "TEXT[]"
+        if args:
+            # Check if list element is a Pydantic model or dict (both use JSONB)
+            element_type = args[0]
+            element_origin = get_origin(element_type)
+            if hasattr(element_type, "model_fields") or element_origin is dict:
+                # List of Pydantic models or dicts → JSONB
+                return ColumnType.JSONB, "JSONB"
+        # List of primitives → Array
+        return ColumnType.ARRAY, "TEXT[]"
 
     elif origin is dict:
         # Dict → JSONB

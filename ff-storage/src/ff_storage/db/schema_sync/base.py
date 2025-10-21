@@ -203,6 +203,50 @@ class MigrationGeneratorBase(ABC):
         pass
 
     @abstractmethod
+    def generate_drop_index(self, schema: str, index: IndexDefinition) -> str:
+        """
+        Generate DROP INDEX statement.
+
+        Args:
+            schema: Schema name
+            index: Index definition
+
+        Returns:
+            SQL statement (e.g., "DROP INDEX schema.idx_name;")
+        """
+        pass
+
+    @abstractmethod
+    def generate_drop_column(self, table_name: str, schema: str, column: ColumnDefinition) -> str:
+        """
+        Generate ALTER TABLE DROP COLUMN statement.
+
+        Args:
+            table_name: Table name
+            schema: Schema name
+            column: Column definition
+
+        Returns:
+            SQL statement (e.g., "ALTER TABLE schema.table DROP COLUMN col_name;")
+        """
+        pass
+
+    @abstractmethod
+    def generate_alter_column(self, table_name: str, schema: str, column: ColumnDefinition) -> str:
+        """
+        Generate ALTER TABLE ALTER COLUMN statement.
+
+        Args:
+            table_name: Table name
+            schema: Schema name
+            column: New column definition
+
+        Returns:
+            SQL statement (e.g., "ALTER TABLE schema.table ALTER COLUMN ...")
+        """
+        pass
+
+    @abstractmethod
     def wrap_in_transaction(self, statements: List[str]) -> str:
         """
         Wrap multiple statements in a transaction.
@@ -225,6 +269,51 @@ class SchemaDifferBase:
 
     def __init__(self, logger=None):
         self.logger = logger
+
+    def _columns_equal(self, col1: ColumnDefinition, col2: ColumnDefinition) -> bool:
+        """
+        Deep comparison of column definitions.
+
+        Compares all properties: type, nullable, default, max_length, precision, scale.
+
+        Args:
+            col1: First column definition
+            col2: Second column definition
+
+        Returns:
+            True if columns are identical, False if any property differs
+        """
+        return (
+            col1.column_type == col2.column_type
+            and col1.nullable == col2.nullable
+            and col1.default == col2.default
+            and col1.max_length == col2.max_length
+            and col1.precision == col2.precision
+            and col1.scale == col2.scale
+            and col1.is_primary_key == col2.is_primary_key
+            and col1.is_foreign_key == col2.is_foreign_key
+            and col1.references == col2.references
+        )
+
+    def _indexes_equal(self, idx1: IndexDefinition, idx2: IndexDefinition) -> bool:
+        """
+        Deep comparison of index definitions.
+
+        Compares all properties: columns, unique, index_type, where_clause.
+
+        Args:
+            idx1: First index definition
+            idx2: Second index definition
+
+        Returns:
+            True if indexes are identical, False if any property differs
+        """
+        return (
+            idx1.columns == idx2.columns
+            and idx1.unique == idx2.unique
+            and idx1.index_type == idx2.index_type
+            and idx1.where_clause == idx2.where_clause
+        )
 
     def compute_changes(
         self, desired: TableDefinition, current: Optional[TableDefinition]
@@ -288,6 +377,46 @@ class SchemaDifferBase:
                     )
                 )
 
+        # Changed columns (ALTER - destructive, may cause data loss)
+        for col_name in set(current_cols.keys()) & set(desired_cols.keys()):
+            current_col = current_cols[col_name]
+            desired_col = desired_cols[col_name]
+
+            if not self._columns_equal(current_col, desired_col):
+                # Build detailed change description
+                differences = []
+                if current_col.column_type != desired_col.column_type:
+                    differences.append(
+                        f"type: {current_col.column_type.value} → {desired_col.column_type.value}"
+                    )
+                if current_col.nullable != desired_col.nullable:
+                    differences.append(f"nullable: {current_col.nullable} → {desired_col.nullable}")
+                if current_col.default != desired_col.default:
+                    differences.append(f"default: {current_col.default} → {desired_col.default}")
+                if current_col.max_length != desired_col.max_length:
+                    differences.append(
+                        f"max_length: {current_col.max_length} → {desired_col.max_length}"
+                    )
+                if current_col.precision != desired_col.precision:
+                    differences.append(
+                        f"precision: {current_col.precision} → {desired_col.precision}"
+                    )
+                if current_col.scale != desired_col.scale:
+                    differences.append(f"scale: {current_col.scale} → {desired_col.scale}")
+
+                change_desc = f"Alter column {col_name} ({', '.join(differences)}) - DESTRUCTIVE, may cause data loss"
+
+                changes.append(
+                    SchemaChange(
+                        change_type=ChangeType.ALTER_COLUMN_TYPE,
+                        table_name=desired.name,
+                        is_destructive=True,
+                        sql="",
+                        description=change_desc,
+                        column=desired_col,
+                    )
+                )
+
         # Compare indexes
         current_idxs = {idx.name: idx for idx in current.indexes}
         desired_idxs = {idx.name: idx for idx in desired.indexes}
@@ -303,6 +432,61 @@ class SchemaDifferBase:
                         sql="",
                         description=f"Add index {idx_name}",
                         index=idx_def,
+                    )
+                )
+
+        # Extra indexes (DROP - destructive)
+        for idx_name in current_idxs:
+            if idx_name not in desired_idxs:
+                changes.append(
+                    SchemaChange(
+                        change_type=ChangeType.DROP_INDEX,
+                        table_name=desired.name,
+                        is_destructive=True,
+                        sql="",
+                        description=f"Drop index {idx_name} (DESTRUCTIVE)",
+                        index=current_idxs[idx_name],
+                    )
+                )
+
+        # Changed indexes (DROP + CREATE - destructive)
+        for idx_name in set(current_idxs.keys()) & set(desired_idxs.keys()):
+            current_idx = current_idxs[idx_name]
+            desired_idx = desired_idxs[idx_name]
+
+            if not self._indexes_equal(current_idx, desired_idx):
+                # Build detailed change description
+                differences = []
+                if current_idx.columns != desired_idx.columns:
+                    differences.append(f"columns: {current_idx.columns} → {desired_idx.columns}")
+                if current_idx.unique != desired_idx.unique:
+                    differences.append(f"unique: {current_idx.unique} → {desired_idx.unique}")
+                if current_idx.index_type != desired_idx.index_type:
+                    differences.append(f"type: {current_idx.index_type} → {desired_idx.index_type}")
+                if current_idx.where_clause != desired_idx.where_clause:
+                    differences.append(
+                        f"where: {current_idx.where_clause} → {desired_idx.where_clause}"
+                    )
+
+                # Need to drop and recreate index
+                changes.append(
+                    SchemaChange(
+                        change_type=ChangeType.DROP_INDEX,
+                        table_name=desired.name,
+                        is_destructive=True,
+                        sql="",
+                        description=f"Drop index {idx_name} (changed: {', '.join(differences)}) - DESTRUCTIVE",
+                        index=current_idx,
+                    )
+                )
+                changes.append(
+                    SchemaChange(
+                        change_type=ChangeType.ADD_INDEX,
+                        table_name=desired.name,
+                        is_destructive=False,
+                        sql="",
+                        description=f"Recreate index {idx_name} with new definition",
+                        index=desired_idx,
                     )
                 )
 

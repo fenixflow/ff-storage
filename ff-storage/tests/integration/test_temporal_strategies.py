@@ -16,8 +16,7 @@ from typing import Optional
 from unittest.mock import AsyncMock
 
 import pytest
-
-from ff_storage.exceptions import TenantIsolationError, TemporalStrategyError
+from ff_storage.exceptions import TemporalStrategyError, TenantIsolationError
 from ff_storage.pydantic_support.base import PydanticModel
 from ff_storage.temporal.enums import TemporalStrategyType
 from ff_storage.temporal.registry import get_strategy
