@@ -52,7 +52,6 @@ class PostgresBase(SQL):
 
     def __post_init__(self):
         """Initialize metrics and circuit breaker after dataclass init."""
-        super().__post_init__()
         if self.collect_metrics:
             self._metrics_collector = get_global_collector()
 
@@ -127,19 +126,25 @@ class PostgresBase(SQL):
                 )
 
     @retry(max_attempts=3, delay=exponential_backoff(base_delay=0.5), exceptions=(DatabaseError,))
-    def execute(self, query: str, params: Optional[Dict[str, Any]] = None) -> None:
+    def execute(
+        self,
+        query: str,
+        params: Optional[Dict[str, Any]] = None,
+        context: Optional[Dict[str, Any]] = None,
+    ) -> None:
         """
         Execute a non-returning SQL statement with retry logic and monitoring.
 
         :param query: The SQL statement.
         :param params: Optional dictionary of query parameters.
+        :param context: Optional context for validation (e.g., trusted_source=True).
         :raises ConnectionFailure: If connection fails.
         :raises QueryTimeout: If query exceeds timeout.
         """
         # Validate query if enabled
         if self.validate_queries:
             try:
-                validate_query(query, params)
+                validate_query(query, params, context)
             except Exception as e:
                 self.logger.warning(f"Query validation failed: {e}")
 

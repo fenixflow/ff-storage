@@ -118,6 +118,8 @@ class SQLValidator:
             query: SQL query string
             params: Query parameters (if using parameterized queries)
             context: Additional context for validation
+                - trusted_source (bool): If True, skip pattern matching (for internally-generated SQL)
+                - source (str): Description of where the query comes from (for logging)
 
         Returns:
             True if query is safe
@@ -130,6 +132,15 @@ class SQLValidator:
             raise ValidationError("Empty query", "Query cannot be empty")
 
         query = query.strip()
+        context = context or {}
+
+        # Skip validation for trusted sources (internally-generated SQL)
+        if context.get("trusted_source", False):
+            self.logger.debug(
+                f"Skipping validation for trusted source: {context.get('source', 'unknown')}",
+                extra={"query_preview": query[:100]},
+            )
+            return True
 
         # Check for dangerous patterns
         if not self.allow_comments:

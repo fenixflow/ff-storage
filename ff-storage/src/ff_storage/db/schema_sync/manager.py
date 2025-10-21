@@ -148,6 +148,28 @@ class SchemaManager:
             },
         )
 
+        # ==================== PHASE 0: Ensure Required Schemas Exist ====================
+        # Extract unique schemas from all models and ensure they exist
+        schemas = set()
+        for model_class in models:
+            if hasattr(model_class, "__schema__"):
+                schema = model_class.__schema__
+                if schema and schema not in ("public", "pg_catalog", "information_schema"):
+                    schemas.add(schema)
+
+        # Create schemas if they don't exist
+        # Note: DDL is safe because schema names come from model __schema__ attributes
+        for schema in schemas:
+            try:
+                self.logger.info(f"Ensuring schema exists: {schema}")
+                # Use trusted_source context for internally-generated DDL
+                self.db.execute(
+                    f"CREATE SCHEMA IF NOT EXISTS {schema}",
+                    context={"trusted_source": True, "source": "schema_manager.ensure_schemas"},
+                )
+            except Exception as e:
+                self.logger.warning(f"Could not create schema {schema}: {e}")
+
         all_changes = []
 
         # Process each model
@@ -330,7 +352,11 @@ class SchemaManager:
         transaction_sql = self.generator.wrap_in_transaction(statements)
 
         try:
-            self.db.execute(transaction_sql)
+            # Use trusted_source context for internally-generated DDL wrapped in transaction
+            self.db.execute(
+                transaction_sql,
+                context={"trusted_source": True, "source": "schema_manager.apply_changes"},
+            )
             self.logger.info(
                 f"Applied {len(statements)} schema changes successfully",
                 extra={"changes": [c.description for c in changes_to_apply]},
