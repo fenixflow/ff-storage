@@ -356,6 +356,9 @@ class PostgresMigrationGenerator(MigrationGeneratorBase):
 
         # Generate column definitions
         col_defs = []
+        primary_keys = []
+        foreign_keys = []
+
         for col in table.columns:
             col_def = f"{col.name} {col.native_type}"
 
@@ -366,6 +369,32 @@ class PostgresMigrationGenerator(MigrationGeneratorBase):
                 col_def += f" DEFAULT {col.default}"
 
             col_defs.append(col_def)
+
+            # Track primary keys for composite PK constraint
+            if col.is_primary_key:
+                primary_keys.append(col.name)
+
+            # Track foreign keys
+            if col.is_foreign_key and col.references:
+                foreign_keys.append((col.name, col.references))
+
+        # Add PRIMARY KEY constraint if any primary keys exist
+        if primary_keys:
+            if len(primary_keys) == 1:
+                # Single PK - modify the column definition directly
+                for i, col_def in enumerate(col_defs):
+                    if col_def.startswith(f"{primary_keys[0]} "):
+                        col_defs[i] += " PRIMARY KEY"
+                        break
+            else:
+                # Composite PK - add as table constraint
+                pk_constraint = f"PRIMARY KEY ({', '.join(primary_keys)})"
+                col_defs.append(pk_constraint)
+
+        # Add FOREIGN KEY constraints
+        for col_name, references in foreign_keys:
+            fk_constraint = f"FOREIGN KEY ({col_name}) REFERENCES {references}"
+            col_defs.append(fk_constraint)
 
         sql = f"CREATE TABLE IF NOT EXISTS {full_table} (\n  "
         sql += ",\n  ".join(col_defs)

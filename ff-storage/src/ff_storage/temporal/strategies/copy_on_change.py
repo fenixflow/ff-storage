@@ -15,6 +15,7 @@ from typing import Any, Dict, List, Optional
 from uuid import UUID, uuid4
 import json
 
+from ...db.schema_sync.models import ColumnType
 from ..enums import TemporalStrategyType
 from ..models import AuditEntry
 from ..registry import register_strategy
@@ -55,14 +56,16 @@ class CopyOnChangeStrategy(TemporalStrategy[T]):
         columns = [
             {
                 "name": "audit_id",
-                "column_type": "UUID",
+                "column_type": ColumnType.UUID,
+                "native_type": "UUID",
                 "nullable": False,
                 "is_primary_key": True,
                 "default": "gen_random_uuid()",
             },
             {
                 "name": "record_id",
-                "column_type": "UUID",
+                "column_type": ColumnType.UUID,
+                "native_type": "UUID",
                 "nullable": False,
             },
         ]
@@ -72,7 +75,8 @@ class CopyOnChangeStrategy(TemporalStrategy[T]):
             columns.append(
                 {
                     "name": self.tenant_field,
-                    "column_type": "UUID",
+                    "column_type": ColumnType.UUID,
+                    "native_type": "UUID",
                     "nullable": False,
                 }
             )
@@ -82,45 +86,53 @@ class CopyOnChangeStrategy(TemporalStrategy[T]):
             [
                 {
                     "name": "field_name",
-                    "column_type": "VARCHAR",
+                    "column_type": ColumnType.STRING,
+                    "native_type": "VARCHAR(255)",
                     "max_length": 255,
                     "nullable": False,
                 },
                 {
                     "name": "old_value",
-                    "column_type": "JSONB",
+                    "column_type": ColumnType.JSONB,
+                    "native_type": "JSONB",
                     "nullable": True,
                 },
                 {
                     "name": "new_value",
-                    "column_type": "JSONB",
+                    "column_type": ColumnType.JSONB,
+                    "native_type": "JSONB",
                     "nullable": True,
                 },
                 {
                     "name": "operation",
-                    "column_type": "VARCHAR",
+                    "column_type": ColumnType.STRING,
+                    "native_type": "VARCHAR(10)",
                     "max_length": 10,
                     "nullable": False,
                 },
                 {
                     "name": "changed_at",
-                    "column_type": "TIMESTAMP WITH TIME ZONE",
+                    "column_type": ColumnType.TIMESTAMPTZ,
+                    "native_type": "TIMESTAMP WITH TIME ZONE",
                     "nullable": False,
                     "default": "NOW()",
                 },
                 {
                     "name": "changed_by",
-                    "column_type": "UUID",
+                    "column_type": ColumnType.UUID,
+                    "native_type": "UUID",
                     "nullable": True,
                 },
                 {
                     "name": "transaction_id",
-                    "column_type": "UUID",
+                    "column_type": ColumnType.UUID,
+                    "native_type": "UUID",
                     "nullable": True,
                 },
                 {
                     "name": "metadata",
-                    "column_type": "JSONB",
+                    "column_type": ColumnType.JSONB,
+                    "native_type": "JSONB",
                     "nullable": True,
                 },
             ]
@@ -222,20 +234,21 @@ class CopyOnChangeStrategy(TemporalStrategy[T]):
         user_fields = self._get_user_fields(data)
 
         for field_name, new_value in user_fields.items():
-            audit_entries.append(
-                {
-                    "audit_id": uuid4(),
-                    "record_id": record_id,
-                    "tenant_id": tenant_id if self.multi_tenant else None,
-                    "field_name": field_name,
-                    "old_value": None,  # NULL for INSERT
-                    "new_value": self._serialize_value(new_value),
-                    "operation": "INSERT",
-                    "changed_at": now,
-                    "changed_by": user_id,
-                    "transaction_id": transaction_id,
-                }
-            )
+            entry = {
+                "audit_id": uuid4(),
+                "record_id": record_id,
+                "field_name": field_name,
+                "old_value": None,  # NULL for INSERT
+                "new_value": self._serialize_value(new_value),
+                "operation": "INSERT",
+                "changed_at": now,
+                "changed_by": user_id,
+                "transaction_id": transaction_id,
+            }
+            # Only add tenant_id if multi-tenant is enabled
+            if self.multi_tenant:
+                entry["tenant_id"] = tenant_id
+            audit_entries.append(entry)
 
         # Execute in transaction
         async with db_pool.acquire() as conn:
@@ -322,20 +335,21 @@ class CopyOnChangeStrategy(TemporalStrategy[T]):
                         continue
 
                     # Create audit entry for this field
-                    audit_entries.append(
-                        {
-                            "audit_id": uuid4(),
-                            "record_id": id,
-                            "tenant_id": tenant_id if self.multi_tenant else None,
-                            "field_name": field_name,
-                            "old_value": self._serialize_value(old_value),
-                            "new_value": self._serialize_value(new_value),
-                            "operation": "UPDATE",
-                            "changed_at": now,
-                            "changed_by": user_id,
-                            "transaction_id": transaction_id,
-                        }
-                    )
+                    entry = {
+                        "audit_id": uuid4(),
+                        "record_id": id,
+                        "field_name": field_name,
+                        "old_value": self._serialize_value(old_value),
+                        "new_value": self._serialize_value(new_value),
+                        "operation": "UPDATE",
+                        "changed_at": now,
+                        "changed_by": user_id,
+                        "transaction_id": transaction_id,
+                    }
+                    # Only add tenant_id if multi-tenant is enabled
+                    if self.multi_tenant:
+                        entry["tenant_id"] = tenant_id
+                    audit_entries.append(entry)
 
                 # 3. UPDATE main table
                 set_parts = []
@@ -414,20 +428,21 @@ class CopyOnChangeStrategy(TemporalStrategy[T]):
                     await conn.fetchrow(delete_query, *where_values, now, user_id)
 
                     # Audit entry for deleted_at field
-                    audit_entries = [
-                        {
-                            "audit_id": uuid4(),
-                            "record_id": id,
-                            "tenant_id": tenant_id if self.multi_tenant else None,
-                            "field_name": "deleted_at",
-                            "old_value": None,
-                            "new_value": self._serialize_value(now),
-                            "operation": "DELETE",
-                            "changed_at": now,
-                            "changed_by": user_id,
-                            "transaction_id": transaction_id,
-                        }
-                    ]
+                    entry = {
+                        "audit_id": uuid4(),
+                        "record_id": id,
+                        "field_name": "deleted_at",
+                        "old_value": None,
+                        "new_value": self._serialize_value(now),
+                        "operation": "DELETE",
+                        "changed_at": now,
+                        "changed_by": user_id,
+                        "transaction_id": transaction_id,
+                    }
+                    # Only add tenant_id if multi-tenant is enabled
+                    if self.multi_tenant:
+                        entry["tenant_id"] = tenant_id
+                    audit_entries = [entry]
                 else:
                     # Hard delete
                     delete_query = f"""
@@ -442,20 +457,21 @@ class CopyOnChangeStrategy(TemporalStrategy[T]):
                     audit_entries = []
 
                     for field_name, old_value in user_fields.items():
-                        audit_entries.append(
-                            {
-                                "audit_id": uuid4(),
-                                "record_id": id,
-                                "tenant_id": tenant_id if self.multi_tenant else None,
-                                "field_name": field_name,
-                                "old_value": self._serialize_value(old_value),
-                                "new_value": None,
-                                "operation": "DELETE",
-                                "changed_at": now,
-                                "changed_by": user_id,
-                                "transaction_id": transaction_id,
-                            }
-                        )
+                        entry = {
+                            "audit_id": uuid4(),
+                            "record_id": id,
+                            "field_name": field_name,
+                            "old_value": self._serialize_value(old_value),
+                            "new_value": None,
+                            "operation": "DELETE",
+                            "changed_at": now,
+                            "changed_by": user_id,
+                            "transaction_id": transaction_id,
+                        }
+                        # Only add tenant_id if multi-tenant is enabled
+                        if self.multi_tenant:
+                            entry["tenant_id"] = tenant_id
+                        audit_entries.append(entry)
 
                 # Insert audit entries
                 await self._insert_audit_entries(conn, audit_table_name, audit_entries)
@@ -657,21 +673,43 @@ class CopyOnChangeStrategy(TemporalStrategy[T]):
 
         return {k: v for k, v in data.items() if k not in system_fields}
 
-    def _serialize_value(self, value: Any) -> Optional[str]:
-        """Serialize value to JSON for JSONB storage."""
+    def _serialize_value(self, value: Any) -> Any:
+        """
+        Serialize value for JSONB storage.
+
+        Returns JSON-compatible Python values that asyncpg can serialize to JSONB.
+        We don't pre-serialize to JSON strings - let asyncpg handle the encoding.
+        """
         if value is None:
             return None
 
-        # Handle datetime
+        from datetime import date
+        from decimal import Decimal
+        from enum import Enum
+
+        # Convert to JSON-compatible Python types (asyncpg will handle JSON encoding)
         if isinstance(value, datetime):
             return value.isoformat()
-
-        # Handle UUID
-        if isinstance(value, UUID):
+        elif isinstance(value, date):
+            return value.isoformat()
+        elif isinstance(value, UUID):
             return str(value)
+        elif isinstance(value, Decimal):
+            return float(value)  # Convert to float for better JSON compatibility
+        elif isinstance(value, Enum):
+            return value.value  # Return the underlying value
+        elif isinstance(value, bytes):
+            return value.hex()
+        elif isinstance(value, (dict, list, str, int, float, bool)):
+            return value  # Already JSON-compatible
 
-        # Otherwise JSON serialize
-        return json.dumps(value)
+        # For complex types, verify JSON compatibility
+        try:
+            json.dumps(value)
+            return value
+        except (TypeError, ValueError):
+            # Fallback: convert to string for non-serializable types
+            return str(value)
 
     def _get_table_name(self) -> str:
         """Get table name from model class."""

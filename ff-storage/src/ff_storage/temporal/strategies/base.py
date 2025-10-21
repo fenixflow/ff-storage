@@ -278,7 +278,7 @@ class TemporalStrategy(ABC, Generic[T]):
                     "name": f"idx_{table_name}_{self.tenant_field}_created",
                     "table_name": table_name,
                     "columns": [self.tenant_field, "created_at"],
-                    "where": "deleted_at IS NULL" if self.soft_delete else None,
+                    "where_clause": "deleted_at IS NULL" if self.soft_delete else None,
                     "index_type": "btree",
                 }
             )
@@ -290,7 +290,7 @@ class TemporalStrategy(ABC, Generic[T]):
                     "name": f"idx_{table_name}_not_deleted",
                     "table_name": table_name,
                     "columns": ["deleted_at"],
-                    "where": "deleted_at IS NULL",
+                    "where_clause": "deleted_at IS NULL",
                     "index_type": "btree",
                 }
             )

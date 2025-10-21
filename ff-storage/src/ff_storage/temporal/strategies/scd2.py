@@ -97,7 +97,7 @@ class SCD2Strategy(TemporalStrategy[T]):
                     "name": f"idx_{table_name}_current_version",
                     "table_name": table_name,
                     "columns": ["id", self.tenant_field],
-                    "where": current_version_where,
+                    "where_clause": current_version_where,
                     "index_type": "btree",
                 }
             )
@@ -107,7 +107,7 @@ class SCD2Strategy(TemporalStrategy[T]):
                     "name": f"idx_{table_name}_current_version",
                     "table_name": table_name,
                     "columns": ["id"],
-                    "where": current_version_where,
+                    "where_clause": current_version_where,
                     "index_type": "btree",
                 }
             )

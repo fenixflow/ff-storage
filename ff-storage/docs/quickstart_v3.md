@@ -65,32 +65,49 @@ class User(PydanticModel):
 ### 2. Auto-Sync Schema to Database
 
 ```python
-from ff_storage import PostgresPool, SchemaManager
+from ff_storage import PostgresPool, Postgres, SchemaManager
+import asyncio
 
-# Connect to database
-db_pool = PostgresPool(
-    dbname="fenix_dev",
-    user="fenix",
-    password="password",
-    host="localhost",
-    port=5432,
-)
-db_pool.connect()
+async def setup_database():
+    # For async operations (repositories), use PostgresPool
+    db_pool = PostgresPool(
+        dbname="fenix_dev",
+        user="fenix",
+        password="password",
+        host="localhost",
+        port=5432,
+    )
+    await db_pool.connect()  # Note: await for async pool
 
-# Create schema manager
-manager = SchemaManager(db_pool)
+    # For schema sync (synchronous), use regular Postgres connection
+    db_sync = Postgres(
+        dbname="fenix_dev",
+        user="fenix",
+        password="password",
+        host="localhost",
+        port=5432,
+    )
+    db_sync.connect()  # Note: no await for sync connection
 
-# Auto-sync schema (creates main table + audit table)
-changes = manager.sync_schema(
-    models=[User],
-    allow_destructive=False,  # Safe by default
-    dry_run=False,  # Set to True to preview changes
-)
+    # Create schema manager with sync connection
+    manager = SchemaManager(db_sync)
 
-print(f"Applied {changes} schema changes")
-# Applied 2 schema changes
-# - CREATE TABLE users
-# - CREATE TABLE users_audit (for copy_on_change)
+    # Auto-sync schema (creates main table + audit table)
+    changes = manager.sync_schema(
+        models=[User],
+        allow_destructive=False,  # Safe by default
+        dry_run=False,  # Set to True to preview changes
+    )
+
+    print(f"Applied {changes} schema changes")
+    # Applied 2 schema changes
+    # - CREATE TABLE users
+    # - CREATE TABLE users_audit (for copy_on_change)
+
+    return db_pool, db_sync
+
+# Run the async setup
+db_pool, db_sync = asyncio.run(setup_database())
 ```
 
 ### 3. CRUD Operations with Audit Trail
@@ -204,19 +221,30 @@ async def main():
     org_id = uuid4()
     user_id = uuid4()
 
+    # Async pool for repositories
     db_pool = PostgresPool(
         dbname="fenix_dev",
         user="fenix",
         password="password",
         host="localhost",
     )
-    db_pool.connect()
+    await db_pool.connect()  # Note: await for async pool
 
-    # Schema sync
-    manager = SchemaManager(db_pool)
+    # Sync connection for schema management
+    from ff_storage import Postgres
+    db_sync = Postgres(
+        dbname="fenix_dev",
+        user="fenix",
+        password="password",
+        host="localhost",
+    )
+    db_sync.connect()  # Note: no await for sync connection
+
+    # Schema sync with sync connection
+    manager = SchemaManager(db_sync)
     manager.sync_schema(models=[User], dry_run=False)
 
-    # Repository
+    # Repository uses async pool
     repo = PydanticRepository(User, db_pool, tenant_id=org_id)
 
     # CRUD
@@ -232,7 +260,8 @@ async def main():
         print(f"{entry.field_name}: {entry.old_value} → {entry.new_value}")
 
     # Cleanup
-    db_pool.close_connection()
+    await db_pool.disconnect()  # Async pool cleanup
+    db_sync.close_connection()  # Sync connection cleanup
 
 if __name__ == "__main__":
     asyncio.run(main())

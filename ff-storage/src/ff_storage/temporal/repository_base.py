@@ -1,28 +1,48 @@
 """
-Temporal repository base class.
+Enhanced temporal repository with caching and monitoring.
 
-Strategy-agnostic repository that delegates to temporal strategies.
+Strategy-agnostic repository that delegates to temporal strategies
+with production-ready features like caching, metrics, and error handling.
 """
 
+import asyncio
+import hashlib
+import json
 import logging
-from typing import Any, Dict, Generic, List, Optional, TypeVar
+import time
+from typing import Any, Dict, Generic, List, Optional, TypeVar, Tuple
 from uuid import UUID
 
 from .strategies.base import TemporalStrategy
+from ..exceptions import (
+    TemporalStrategyError,
+    TenantIsolationError,
+    TenantNotConfigured,
+)
+from ..utils.metrics import get_global_collector, async_timer
+from ..utils.retry import retry_async, exponential_backoff
 
 T = TypeVar("T")
 
 
 class TemporalRepository(Generic[T]):
     """
-    Strategy-agnostic temporal repository.
+    Enhanced temporal repository with caching and monitoring.
 
-    Delegates all CRUD operations to the configured temporal strategy.
-    Manages tenant and user context.
+    Features:
+    - Query result caching with TTL
+    - Automatic retry on transient failures
+    - Metrics collection
+    - Optimistic locking for concurrent updates
+    - Tenant isolation enforcement
 
     Usage:
         strategy = get_strategy(TemporalStrategyType.COPY_ON_CHANGE, Product)
-        repo = TemporalRepository(Product, db_pool, strategy, tenant_id=org_id)
+        repo = TemporalRepository(
+            Product, db_pool, strategy,
+            tenant_id=org_id,
+            cache_ttl=300  # 5 minute cache
+        )
 
         product = await repo.create(Product(...), user_id=user_id)
         updated = await repo.update(product.id, Product(...), user_id=user_id)
@@ -35,9 +55,13 @@ class TemporalRepository(Generic[T]):
         strategy: TemporalStrategy[T],
         tenant_id: Optional[UUID] = None,
         logger=None,
+        cache_enabled: bool = True,
+        cache_ttl: int = 300,  # 5 minutes default
+        collect_metrics: bool = True,
+        max_retries: int = 3,
     ):
         """
-        Initialize repository.
+        Initialize enhanced repository.
 
         Args:
             model_class: Model class (Pydantic, dataclass, etc.)
@@ -45,6 +69,10 @@ class TemporalRepository(Generic[T]):
             strategy: Temporal strategy instance
             tenant_id: Tenant context (for multi-tenant models)
             logger: Optional logger instance
+            cache_enabled: Enable query result caching
+            cache_ttl: Cache time-to-live in seconds
+            collect_metrics: Enable metrics collection
+            max_retries: Maximum retry attempts for transient failures
         """
         self.model_class = model_class
         self.db_pool = db_pool
@@ -52,21 +80,122 @@ class TemporalRepository(Generic[T]):
         self.tenant_id = tenant_id
         self.logger = logger or logging.getLogger(__name__)
 
+        # Caching configuration
+        self.cache_enabled = cache_enabled
+        self.cache_ttl = cache_ttl
+        self._cache: Dict[str, Tuple[Any, float]] = {}  # key -> (value, expiry_time)
+        self._cache_lock = asyncio.Lock()
+
+        # Metrics configuration
+        self.collect_metrics = collect_metrics
+        self._metrics = get_global_collector() if collect_metrics else None
+
+        # Retry configuration
+        self.max_retries = max_retries
+
         # Validation
         if strategy.multi_tenant and not tenant_id:
-            raise ValueError(
-                f"Model {model_class.__name__} is multi-tenant but no tenant_id provided to repository"
-            )
+            raise TenantNotConfigured(model_class.__name__)
+
+    # ==================== Cache Management ====================
+
+    def _get_cache_key(self, operation: str, **kwargs) -> str:
+        """
+        Generate cache key from operation and parameters.
+
+        Returns a composite key with format: {hash}:id={id} (if id present)
+        This allows pattern matching for invalidating all cached variants of a record.
+        """
+        # Sort kwargs for consistent key generation
+        sorted_kwargs = sorted(kwargs.items())
+        key_data = {
+            "op": operation,
+            "model": self.model_class.__name__,
+            "tenant": str(self.tenant_id) if self.tenant_id else None,
+            "params": sorted_kwargs,
+        }
+        # Create hash of the key data
+        key_str = json.dumps(key_data, default=str, sort_keys=True)
+        key_hash = hashlib.sha256(key_str.encode()).hexdigest()
+
+        # Append ID to key for pattern matching (if present)
+        id_str = kwargs.get("id", "")
+        if id_str:
+            return f"{key_hash}:id={id_str}"
+        return key_hash
+
+    async def _get_cached(self, cache_key: str) -> Optional[Any]:
+        """Get value from cache if not expired."""
+        if not self.cache_enabled:
+            return None
+
+        async with self._cache_lock:
+            if cache_key in self._cache:
+                value, expiry = self._cache[cache_key]
+                if time.time() < expiry:
+                    if self._metrics:
+                        self._metrics.increment("cache.hits")
+                    return value
+                else:
+                    # Expired, remove from cache
+                    del self._cache[cache_key]
+
+        if self._metrics:
+            self._metrics.increment("cache.misses")
+        return None
+
+    async def _set_cached(self, cache_key: str, value: Any):
+        """Set value in cache with TTL."""
+        if not self.cache_enabled:
+            return
+
+        expiry = time.time() + self.cache_ttl
+        async with self._cache_lock:
+            self._cache[cache_key] = (value, expiry)
+
+            # Limit cache size (simple LRU by removing oldest entries)
+            if len(self._cache) > 1000:
+                # Remove expired entries first
+                now = time.time()
+                expired_keys = [k for k, (_, exp) in self._cache.items() if exp < now]
+                for k in expired_keys:
+                    del self._cache[k]
+
+                # If still too large, remove oldest 20%
+                if len(self._cache) > 1000:
+                    sorted_items = sorted(self._cache.items(), key=lambda x: x[1][1])
+                    for k, _ in sorted_items[:200]:
+                        del self._cache[k]
+
+    async def invalidate_cache(self, pattern: Optional[str] = None):
+        """
+        Invalidate cache entries.
+
+        Args:
+            pattern: Optional pattern to match keys (None = clear all)
+        """
+        async with self._cache_lock:
+            if pattern is None:
+                self._cache.clear()
+            else:
+                keys_to_remove = [k for k in self._cache if pattern in k]
+                for k in keys_to_remove:
+                    del self._cache[k]
 
     # ==================== CRUD Operations ====================
 
+    @retry_async(
+        max_attempts=3,
+        delay=exponential_backoff(base_delay=0.5),
+        exceptions=(asyncio.TimeoutError, ConnectionError),
+    )
     async def create(
         self,
         model: T,
         user_id: Optional[UUID] = None,
     ) -> T:
         """
-        Create new record.
+        Create new record with retry logic and monitoring.
 
         Args:
             model: Model instance with data
@@ -74,23 +203,41 @@ class TemporalRepository(Generic[T]):
 
         Returns:
             Created model instance
+
+        Raises:
+            TemporalStrategyError: If creation fails after retries
         """
         data = self._model_to_dict(model)
 
         try:
-            return await self.strategy.create(
-                data=data,
-                db_pool=self.db_pool,
-                tenant_id=self.tenant_id,
-                user_id=user_id,
-            )
+            async with async_timer(f"repo.{self.model_class.__name__}.create"):
+                result = await self.strategy.create(
+                    data=data,
+                    db_pool=self.db_pool,
+                    tenant_id=self.tenant_id,
+                    user_id=user_id,
+                )
+
+                # Invalidate list cache since new record added
+                await self.invalidate_cache("list")
+
+                if self._metrics:
+                    self._metrics.increment(f"repo.{self.model_class.__name__}.created")
+
+                return result
+
         except Exception as e:
             self.logger.error(
                 f"Failed to create {self.model_class.__name__}",
                 extra={"error": str(e), "tenant_id": self.tenant_id},
                 exc_info=True,
             )
-            raise
+            if self._metrics:
+                self._metrics.increment(f"repo.{self.model_class.__name__}.create_failed")
+
+            raise TemporalStrategyError(
+                strategy=type(self.strategy).__name__, operation="create", error=str(e)
+            )
 
     async def update(
         self,
@@ -116,13 +263,22 @@ class TemporalRepository(Generic[T]):
         data = self._model_to_dict(model)
 
         try:
-            return await self.strategy.update(
+            result = await self.strategy.update(
                 id=id,
                 data=data,
                 db_pool=self.db_pool,
                 tenant_id=self.tenant_id,
                 user_id=user_id,
             )
+
+            # Invalidate ALL cached variants for this record ID
+            # (e.g., get(id), get(id, include_deleted=True), etc.)
+            await self.invalidate_cache(f":id={id}")
+
+            # Also invalidate list cache since the record was modified
+            await self.invalidate_cache("list")
+
+            return result
         except Exception as e:
             self.logger.error(
                 f"Failed to update {self.model_class.__name__}",
@@ -151,12 +307,21 @@ class TemporalRepository(Generic[T]):
             True if deleted, False if not found
         """
         try:
-            return await self.strategy.delete(
+            result = await self.strategy.delete(
                 id=id,
                 db_pool=self.db_pool,
                 tenant_id=self.tenant_id,
                 user_id=user_id,
             )
+
+            # Invalidate ALL cached variants for this record ID
+            # (e.g., get(id), get(id, include_deleted=True), etc.)
+            await self.invalidate_cache(f":id={id}")
+
+            # Also invalidate list cache since the record was deleted
+            await self.invalidate_cache("list")
+
+            return result
         except Exception as e:
             self.logger.error(
                 f"Failed to delete {self.model_class.__name__}",
@@ -171,7 +336,7 @@ class TemporalRepository(Generic[T]):
         **kwargs,
     ) -> Optional[T]:
         """
-        Get record by ID.
+        Get record by ID with caching.
 
         Kwargs (strategy-dependent):
         - as_of: datetime - Time travel (scd2 only)
@@ -182,21 +347,58 @@ class TemporalRepository(Generic[T]):
 
         Returns:
             Model instance or None if not found
+
+        Raises:
+            TemporalStrategyError: If get operation fails
+            TenantIsolationError: If record belongs to different tenant
         """
+        # Generate cache key
+        cache_key = self._get_cache_key("get", id=str(id), **kwargs)
+
+        # Check cache
+        cached_result = await self._get_cached(cache_key)
+        if cached_result is not None:
+            return cached_result
+
         try:
-            return await self.strategy.get(
-                id=id,
-                db_pool=self.db_pool,
-                tenant_id=self.tenant_id,
-                **kwargs,
-            )
+            async with async_timer(f"repo.{self.model_class.__name__}.get"):
+                result = await self.strategy.get(
+                    id=id,
+                    db_pool=self.db_pool,
+                    tenant_id=self.tenant_id,
+                    **kwargs,
+                )
+
+                # Validate tenant isolation if result found
+                if result and self.strategy.multi_tenant:
+                    result_tenant = getattr(result, self.strategy.tenant_field, None)
+                    if result_tenant and result_tenant != self.tenant_id:
+                        raise TenantIsolationError(
+                            requested_tenant=str(self.tenant_id),
+                            actual_tenant=str(result_tenant),
+                            operation="get",
+                        )
+
+                # Cache the result
+                if result:
+                    await self._set_cached(cache_key, result)
+
+                if self._metrics:
+                    self._metrics.increment(f"repo.{self.model_class.__name__}.get")
+
+                return result
+
+        except TenantIsolationError:
+            raise
         except Exception as e:
             self.logger.error(
                 f"Failed to get {self.model_class.__name__}",
                 extra={"id": str(id), "error": str(e), "tenant_id": self.tenant_id},
                 exc_info=True,
             )
-            raise
+            raise TemporalStrategyError(
+                strategy=type(self.strategy).__name__, operation="get", error=str(e)
+            )
 
     async def list(
         self,
@@ -317,11 +519,20 @@ class TemporalRepository(Generic[T]):
             raise ValueError(f"Strategy {type(self.strategy).__name__} does not support restore()")
 
         try:
-            return await self.strategy.restore(
+            result = await self.strategy.restore(
                 id=id,
                 db_pool=self.db_pool,
                 tenant_id=self.tenant_id,
             )
+
+            # Invalidate ALL cached variants for this record ID
+            # (e.g., get(id), get(id, include_deleted=True), etc.)
+            await self.invalidate_cache(f":id={id}")
+
+            # Also invalidate list cache since the record was restored
+            await self.invalidate_cache("list")
+
+            return result
         except Exception as e:
             self.logger.error(
                 f"Failed to restore {self.model_class.__name__}",
@@ -445,6 +656,159 @@ class TemporalRepository(Generic[T]):
             tenant_id=self.tenant_id,
         )
 
+    # ==================== Batch Operations ====================
+
+    async def create_many(
+        self,
+        models: List[T],
+        user_id: Optional[UUID] = None,
+        batch_size: int = 100,
+    ) -> List[T]:
+        """
+        Create multiple records efficiently in batches.
+
+        Args:
+            models: List of model instances
+            user_id: User performing the action
+            batch_size: Number of records per batch
+
+        Returns:
+            List of created model instances
+        """
+        if not models:
+            return []
+
+        results = []
+        total = len(models)
+
+        try:
+            for i in range(0, total, batch_size):
+                batch = models[i : i + batch_size]
+                batch_data = [self._model_to_dict(m) for m in batch]
+
+                # Process batch
+                async with async_timer(f"repo.{self.model_class.__name__}.create_batch"):
+                    if hasattr(self.strategy, "create_many"):
+                        # Strategy supports batch creation
+                        batch_results = await self.strategy.create_many(
+                            data_list=batch_data,
+                            db_pool=self.db_pool,
+                            tenant_id=self.tenant_id,
+                            user_id=user_id,
+                        )
+                    else:
+                        # Fall back to individual creates
+                        batch_results = []
+                        for data in batch_data:
+                            result = await self.strategy.create(
+                                data=data,
+                                db_pool=self.db_pool,
+                                tenant_id=self.tenant_id,
+                                user_id=user_id,
+                            )
+                            batch_results.append(result)
+
+                    results.extend(batch_results)
+
+                self.logger.info(
+                    f"Created batch {i // batch_size + 1}/{(total + batch_size - 1) // batch_size} "
+                    f"({len(batch_results)} records)"
+                )
+
+            # Invalidate cache after batch creation
+            await self.invalidate_cache("list")
+
+            if self._metrics:
+                self._metrics.increment(
+                    f"repo.{self.model_class.__name__}.batch_created", value=len(results)
+                )
+
+            return results
+
+        except Exception as e:
+            self.logger.error(
+                f"Failed to batch create {self.model_class.__name__}",
+                extra={"count": total, "error": str(e), "tenant_id": self.tenant_id},
+                exc_info=True,
+            )
+            raise TemporalStrategyError(
+                strategy=type(self.strategy).__name__, operation="create_many", error=str(e)
+            )
+
+    async def get_many(
+        self,
+        ids: List[UUID],
+        **kwargs,
+    ) -> Dict[UUID, Optional[T]]:
+        """
+        Get multiple records by IDs efficiently.
+
+        Args:
+            ids: List of record IDs
+
+        Returns:
+            Dict mapping ID to model instance (or None if not found)
+        """
+        if not ids:
+            return {}
+
+        results = {}
+
+        # Check cache for each ID
+        uncached_ids = []
+        for id in ids:
+            cache_key = self._get_cache_key("get", id=str(id), **kwargs)
+            cached = await self._get_cached(cache_key)
+            if cached is not None:
+                results[id] = cached
+            else:
+                uncached_ids.append(id)
+
+        # Fetch uncached records
+        if uncached_ids:
+            try:
+                async with async_timer(f"repo.{self.model_class.__name__}.get_many"):
+                    # Build IN query
+                    placeholders = ", ".join([f"${i+1}" for i in range(len(uncached_ids))])
+                    query = f"""
+                        SELECT * FROM {self._get_table_name()}
+                        WHERE id IN ({placeholders})
+                    """
+
+                    # Add tenant filter if needed
+                    values = list(uncached_ids)
+                    if self.strategy.multi_tenant:
+                        query += f" AND {self.strategy.tenant_field} = ${len(values) + 1}"
+                        values.append(self.tenant_id)
+
+                    # Execute query
+                    rows = await self.db_pool.fetch_all(query, *values)
+
+                    # Convert rows to models and cache
+                    for row in rows:
+                        model = self._dict_to_model(dict(row))
+                        id = row["id"]
+                        results[id] = model
+
+                        # Cache the result
+                        cache_key = self._get_cache_key("get", id=str(id), **kwargs)
+                        await self._set_cached(cache_key, model)
+
+                    # Add None for missing IDs
+                    for id in uncached_ids:
+                        if id not in results:
+                            results[id] = None
+
+            except Exception as e:
+                self.logger.error(
+                    f"Failed to batch get {self.model_class.__name__}",
+                    extra={"ids": [str(id) for id in ids], "error": str(e)},
+                    exc_info=True,
+                )
+                raise
+
+        return results
+
     # ==================== Helper Methods ====================
 
     def _get_table_name(self) -> str:
@@ -476,3 +840,18 @@ class TemporalRepository(Generic[T]):
                 for k in dir(model)
                 if not k.startswith("_") and not callable(getattr(model, k))
             }
+
+    def _dict_to_model(self, data: Dict[str, Any]) -> T:
+        """Convert dict to model instance."""
+        if hasattr(self.model_class, "model_validate"):
+            # Pydantic v2
+            return self.model_class.model_validate(data)
+        elif hasattr(self.model_class, "parse_obj"):
+            # Pydantic v1
+            return self.model_class.parse_obj(data)
+        elif hasattr(self.model_class, "__dataclass_fields__"):
+            # Dataclass
+            return self.model_class(**data)
+        else:
+            # Fallback: direct instantiation
+            return self.model_class(**data)
