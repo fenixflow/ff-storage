@@ -8,7 +8,25 @@ A comprehensive storage package for Fenixflow applications, providing **async co
 
 Created by **Ben Moag** at **[Fenixflow](https://fenixflow.com)**
 
-## 🚨 Version 2.0.0 - Schema Sync System
+## 🎉 Version 3.0.0 - Pydantic ORM & Temporal Data Management
+
+**NEW in v3.0.0**: Production-ready Pydantic ORM with built-in temporal data management!
+
+- **🔥 Pydantic Models** - Type-safe models with automatic schema generation
+- **⏱️ Temporal Strategies** - Choose from 3 strategies: none, copy_on_change (audit trail), scd2 (time travel)
+- **🎯 Multi-Tenant by Default** - Automatic tenant_id injection and filtering
+- **📝 Audit Trails** - Field-level change tracking with copy_on_change
+- **⏰ Time Travel** - Query historical data with scd2 strategy
+- **🔧 Rich Field Metadata** - Complete SQL control (FK, CHECK, defaults, partial indexes)
+- **🚀 Auto-Sync Schema** - SchemaManager now creates auxiliary tables (audit tables)
+
+**[📚 v3.0.0 Documentation](docs/README.md)** | **[⚡ Quickstart Guide](docs/quickstart_v3.md)** | **[🎯 Strategy Selection](docs/guides/strategy_selection.md)**
+
+**Backwards Compatible**: All v2 features work unchanged. v3 is fully opt-in.
+
+---
+
+## Version 2.0.0 - Schema Sync System
 
 **New in 2.0.0**: Terraform-like automatic schema synchronization system! Define your schema in model classes and let SchemaManager handle migrations automatically.
 

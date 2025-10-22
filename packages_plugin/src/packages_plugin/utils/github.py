@@ -1,7 +1,6 @@
 """GitHub utilities for mirroring packages."""
 
 import subprocess
-from pathlib import Path
 
 from .constants import GITHUB_REPOS
 

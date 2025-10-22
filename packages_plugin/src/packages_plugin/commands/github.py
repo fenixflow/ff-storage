@@ -1,6 +1,5 @@
 """GitHub mirroring commands."""
 
-from pathlib import Path
 
 import typer
 from rich.console import Console
@@ -27,12 +26,12 @@ def mirror_to_github(
     # Check GitHub authentication
     github_ok, github_msg = check_github_auth()
     if not github_ok:
-        console.print(f"[red]✗ GitHub authentication not configured[/red]")
+        console.print("[red]✗ GitHub authentication not configured[/red]")
         console.print(f"  {github_msg}")
         console.print("\nRun [cyan]fenix ff-packages check[/cyan] for setup instructions")
         raise typer.Exit(1)
 
-    console.print(f"[green]✓ GitHub authentication configured[/green]")
+    console.print("[green]✓ GitHub authentication configured[/green]")
 
     # Check git status
     is_clean, current_branch, uncommitted = check_git_status()

@@ -124,6 +124,21 @@ class SchemaManager:
         else:
             raise ValueError(f"Unsupported database provider: {self.provider}")
 
+    def _is_valid_identifier(self, identifier: str) -> bool:
+        """
+        Validate that an identifier is safe for SQL.
+
+        Args:
+            identifier: Schema, table, or column name
+
+        Returns:
+            True if valid, False otherwise
+        """
+        import re
+
+        # Must start with letter or underscore, followed by alphanumeric or underscore
+        return bool(re.match(r"^[a-zA-Z_][a-zA-Z0-9_]*$", identifier))
+
     def sync_schema(
         self, models: List[Type], allow_destructive: bool = False, dry_run: bool = False
     ) -> int:
@@ -147,6 +162,52 @@ class SchemaManager:
                 "dry_run": dry_run,
             },
         )
+
+        # ==================== PHASE 0: Ensure Required Schemas Exist ====================
+        # Extract unique schemas from all models and ensure they exist
+        schemas = set()
+        for model_class in models:
+            if hasattr(model_class, "__schema__"):
+                schema = model_class.__schema__
+                if schema and schema not in ("public", "pg_catalog", "information_schema"):
+                    schemas.add(schema)
+
+        # Create schemas if they don't exist
+        for schema in schemas:
+            try:
+                # Validate schema name (must be valid PostgreSQL identifier)
+                if not self._is_valid_identifier(schema):
+                    self.logger.error(
+                        f"Invalid schema name: {schema}. Must match ^[a-zA-Z_][a-zA-Z0-9_]*$"
+                    )
+                    continue
+
+                self.logger.info(f"Ensuring schema exists: {schema}")
+                # Use format() with %I for safe identifier quoting
+                if self.provider == "postgres":
+                    # Use PostgreSQL's format() function for safe identifier quoting
+                    sql = f"SELECT format('CREATE SCHEMA IF NOT EXISTS %I', '{schema}')"
+                    result = self.db.read_query(sql, as_dict=False)
+                    safe_sql = result[0][0] if result else None
+                    if safe_sql:
+                        self.db.execute(
+                            safe_sql,
+                            context={
+                                "trusted_source": True,
+                                "source": "schema_manager.ensure_schemas",
+                            },
+                        )
+                else:
+                    # For other providers, use validated identifier directly
+                    self.db.execute(
+                        f"CREATE SCHEMA IF NOT EXISTS {schema}",
+                        context={
+                            "trusted_source": True,
+                            "source": "schema_manager.ensure_schemas",
+                        },
+                    )
+            except Exception as e:
+                self.logger.warning(f"Could not create schema {schema}: {e}")
 
         all_changes = []
 
@@ -210,6 +271,22 @@ class SchemaManager:
                         )
                     elif change.change_type == ChangeType.CREATE_TABLE:
                         change.sql = self.generator.generate_create_table(desired)
+                    elif change.change_type == ChangeType.DROP_INDEX:
+                        change.sql = self.generator.generate_drop_index(
+                            schema=desired.schema, index=change.index
+                        )
+                    elif change.change_type == ChangeType.DROP_COLUMN:
+                        change.sql = self.generator.generate_drop_column(
+                            table_name=change.table_name,
+                            schema=desired.schema,
+                            column=change.column,
+                        )
+                    elif change.change_type == ChangeType.ALTER_COLUMN_TYPE:
+                        change.sql = self.generator.generate_alter_column(
+                            table_name=change.table_name,
+                            schema=desired.schema,
+                            column=change.column,
+                        )
                 except Exception as e:
                     self.logger.error(
                         f"Failed to generate SQL for change: {change.description}",
@@ -218,6 +295,99 @@ class SchemaManager:
                     continue
 
             all_changes.extend(changes)
+
+        # ==================== PHASE 2: Process Auxiliary Tables (NEW in v3.0.0) ====================
+
+        for model_class in models:
+            if not hasattr(model_class, "get_auxiliary_tables"):
+                continue
+
+            try:
+                aux_tables = model_class.get_auxiliary_tables()
+            except Exception as e:
+                self.logger.error(
+                    f"Failed to get auxiliary tables for {model_class.__name__}",
+                    extra={"error": str(e)},
+                )
+                continue
+
+            # Process each auxiliary table (e.g., audit tables)
+            for aux_table_def in aux_tables:
+                try:
+                    # Convert dict → TableDefinition
+                    from .models import ColumnDefinition, IndexDefinition, TableDefinition
+
+                    aux_table = TableDefinition(
+                        name=aux_table_def["name"],
+                        schema=aux_table_def.get("schema", "public"),
+                        columns=[
+                            ColumnDefinition(**col_dict) for col_dict in aux_table_def["columns"]
+                        ],
+                        indexes=[
+                            IndexDefinition(**idx_dict)
+                            for idx_dict in aux_table_def.get("indexes", [])
+                        ],
+                    )
+
+                    # Check if auxiliary table exists
+                    try:
+                        current_aux = self.introspector.get_table_schema(
+                            table_name=aux_table.name,
+                            schema=aux_table.schema,
+                        )
+                    except Exception:
+                        current_aux = None  # Table doesn't exist
+
+                    # Compute diff
+                    aux_changes = self.differ.compute_changes(aux_table, current_aux)
+
+                    # Generate SQL
+                    for change in aux_changes:
+                        try:
+                            if change.change_type == ChangeType.CREATE_TABLE:
+                                change.sql = self.generator.generate_create_table(aux_table)
+                            elif change.change_type == ChangeType.ADD_COLUMN:
+                                change.sql = self.generator.generate_add_column(
+                                    table_name=aux_table.name,
+                                    schema=aux_table.schema,
+                                    column=change.column,
+                                )
+                            elif change.change_type == ChangeType.ADD_INDEX:
+                                change.sql = self.generator.generate_create_index(
+                                    schema=aux_table.schema,
+                                    index=change.index,
+                                )
+                            elif change.change_type == ChangeType.DROP_INDEX:
+                                change.sql = self.generator.generate_drop_index(
+                                    schema=aux_table.schema, index=change.index
+                                )
+                            elif change.change_type == ChangeType.DROP_COLUMN:
+                                change.sql = self.generator.generate_drop_column(
+                                    table_name=aux_table.name,
+                                    schema=aux_table.schema,
+                                    column=change.column,
+                                )
+                            elif change.change_type == ChangeType.ALTER_COLUMN_TYPE:
+                                change.sql = self.generator.generate_alter_column(
+                                    table_name=aux_table.name,
+                                    schema=aux_table.schema,
+                                    column=change.column,
+                                )
+                        except Exception as e:
+                            self.logger.error(
+                                f"Failed to generate SQL for auxiliary table change: {change.description}",
+                                extra={"error": str(e)},
+                            )
+                            continue
+
+                    all_changes.extend(aux_changes)
+
+                except Exception as e:
+                    self.logger.error(
+                        f"Failed to process auxiliary table {aux_table_def.get('name', 'unknown')}",
+                        extra={"error": str(e)},
+                    )
+                    continue
 
         # Filter destructive changes
         safe_changes = [c for c in all_changes if not c.is_destructive]
@@ -253,7 +423,11 @@ class SchemaManager:
         transaction_sql = self.generator.wrap_in_transaction(statements)
 
         try:
-            self.db.execute(transaction_sql)
+            # Use trusted_source context for internally-generated DDL wrapped in transaction
+            self.db.execute(
+                transaction_sql,
+                context={"trusted_source": True, "source": "schema_manager.apply_changes"},
+            )
             self.logger.info(
                 f"Applied {len(statements)} schema changes successfully",
                 extra={"changes": [c.description for c in changes_to_apply]},

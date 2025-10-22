@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 import pytest_asyncio
 from ff_storage.db.connections.postgres import PostgresPool
+from ff_storage.exceptions import ConnectionPoolExhausted
 
 
 @pytest.fixture
@@ -47,7 +48,10 @@ async def test_pool_connect(pool_config):
     with patch("asyncpg.create_pool", new_callable=AsyncMock) as mock_create_pool:
         mock_pool = AsyncMock()
         mock_create_pool.return_value = mock_pool
-        await pool.connect()
+
+        # Mock _warmup_pool to prevent background tasks
+        with patch.object(pool, "_warmup_pool", new_callable=AsyncMock):
+            await pool.connect()
 
         mock_create_pool.assert_called_once()
         assert pool.pool is not None
@@ -61,8 +65,11 @@ async def test_pool_connect_already_connected(pool_config):
     with patch("asyncpg.create_pool", new_callable=AsyncMock) as mock_create_pool:
         mock_pool = AsyncMock()
         mock_create_pool.return_value = mock_pool
-        await pool.connect()
-        await pool.connect()  # Second call
+
+        # Mock _warmup_pool to prevent background tasks
+        with patch.object(pool, "_warmup_pool", new_callable=AsyncMock):
+            await pool.connect()
+            await pool.connect()  # Second call
 
         # Should only be called once
         mock_create_pool.assert_called_once()
@@ -76,8 +83,11 @@ async def test_pool_disconnect(pool_config):
     with patch("asyncpg.create_pool", new_callable=AsyncMock) as mock_create_pool:
         mock_pool = AsyncMock()
         mock_create_pool.return_value = mock_pool
-        await pool.connect()
-        await pool.disconnect()
+
+        # Mock _warmup_pool to prevent background tasks
+        with patch.object(pool, "_warmup_pool", new_callable=AsyncMock):
+            await pool.connect()
+            await pool.disconnect()
 
         mock_pool.close.assert_called_once()
         assert pool.pool is None
@@ -103,7 +113,7 @@ async def test_fetch_one_no_pool(pool_config):
     """Test fetch_one raises error when pool not connected."""
     pool = PostgresPool(**pool_config)
 
-    with pytest.raises(RuntimeError, match="Pool not connected"):
+    with pytest.raises(ConnectionPoolExhausted):
         await pool.fetch_one("SELECT * FROM users")
 
 
@@ -198,7 +208,7 @@ async def test_execute_many_no_pool(pool_config):
     """Test execute_many raises error when pool not connected."""
     pool = PostgresPool(**pool_config)
 
-    with pytest.raises(RuntimeError, match="Pool not connected"):
+    with pytest.raises(ConnectionPoolExhausted):
         await pool.execute_many("INSERT INTO users VALUES ($1)", [(1,), (2,)])
 
 

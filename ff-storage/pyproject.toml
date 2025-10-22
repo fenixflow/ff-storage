@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ff-storage"
-version = "2.0.1"
-description = "Fenixflow storage package for database and file operations with async connection pools and schema sync"
+version = "3.0.0"
+description = "Fenixflow storage package with Pydantic ORM, temporal data management, and state-based schema sync"
 readme = "README.md"
 requires-python = ">=3.10"
 license = {file = "LICENSE"}
@@ -43,6 +43,8 @@ classifiers = [
     "Typing :: Typed"
 ]
 dependencies = [
+    # Pydantic ORM
+    "pydantic>=2.0",
     # PostgreSQL - sync and async
     "psycopg2-binary>=2.9",
     "asyncpg>=0.29",

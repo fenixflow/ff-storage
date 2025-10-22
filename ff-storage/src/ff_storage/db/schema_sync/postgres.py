@@ -55,6 +55,15 @@ class PostgresSchemaIntrospector(SchemaIntrospectorBase):
             # Map PostgreSQL type to generic type
             column_type = self._map_postgres_type(data_type, udt_name)
 
+            # Only DECIMAL types have user-specified precision/scale
+            # (Other numeric types like INTEGER have DB-generated precision we ignore)
+            if column_type == ColumnType.DECIMAL:
+                final_precision = precision
+                final_scale = scale
+            else:
+                final_precision = None
+                final_scale = None
+
             columns.append(
                 ColumnDefinition(
                     name=col_name,
@@ -62,8 +71,8 @@ class PostgresSchemaIntrospector(SchemaIntrospectorBase):
                     nullable=(nullable == "YES"),
                     default=default,
                     max_length=max_len,
-                    precision=precision,
-                    scale=scale,
+                    precision=final_precision,
+                    scale=final_scale,
                     native_type=udt_name or data_type,
                 )
             )
@@ -77,7 +86,8 @@ class PostgresSchemaIntrospector(SchemaIntrospectorBase):
                 i.relname as index_name,
                 ARRAY_AGG(a.attname ORDER BY a.attnum) as column_names,
                 ix.indisunique as is_unique,
-                am.amname as index_type
+                am.amname as index_type,
+                pg_get_expr(ix.indpred, ix.indrelid) as where_clause
             FROM pg_class t
             JOIN pg_index ix ON t.oid = ix.indrelid
             JOIN pg_class i ON i.oid = ix.indexrelid
@@ -87,14 +97,14 @@ class PostgresSchemaIntrospector(SchemaIntrospectorBase):
             WHERE n.nspname = %s
             AND t.relname = %s
             AND t.relkind = 'r'
-            GROUP BY i.relname, ix.indisunique, am.amname
+            GROUP BY i.relname, ix.indisunique, am.amname, ix.indpred, ix.indrelid
             ORDER BY i.relname
         """
         results = self.db.read_query(query, (schema, table_name), as_dict=False)
 
         indexes = []
         for row in results:
-            idx_name, col_names, is_unique, idx_type = row
+            idx_name, col_names, is_unique, idx_type, where_clause = row
             indexes.append(
                 IndexDefinition(
                     name=idx_name,
@@ -102,6 +112,7 @@ class PostgresSchemaIntrospector(SchemaIntrospectorBase):
                     columns=col_names if isinstance(col_names, list) else [col_names],
                     unique=is_unique,
                     index_type=idx_type,
+                    where_clause=where_clause,
                 )
             )
 
@@ -238,12 +249,18 @@ class PostgresSQLParser(SQLParserBase):
                 # Map type string to ColumnType
                 column_type = self._parse_column_type(col_type_str)
 
+                # Extract max_length, precision, scale from type string
+                max_length, precision, scale = self._extract_type_constraints(col_type_str)
+
                 columns.append(
                     ColumnDefinition(
                         name=col_name,
                         column_type=column_type,
                         nullable=nullable,
                         default=default_str,
+                        max_length=max_length,
+                        precision=precision,
+                        scale=scale,
                         native_type=col_type_str,
                     )
                 )
@@ -291,9 +308,9 @@ class PostgresSQLParser(SQLParserBase):
             return ColumnType.STRING
         elif type_upper == "TEXT":
             return ColumnType.TEXT
-        elif type_upper in ("INTEGER", "INT", "INT4"):
+        elif type_upper.startswith("INTEGER") or type_upper in ("INT", "INT4"):
             return ColumnType.INTEGER
-        elif type_upper in ("BIGINT", "INT8"):
+        elif type_upper.startswith("BIGINT") or type_upper == "INT8":
             return ColumnType.BIGINT
         elif type_upper == "BOOLEAN":
             return ColumnType.BOOLEAN
@@ -305,10 +322,22 @@ class PostgresSQLParser(SQLParserBase):
             return ColumnType.JSONB
         elif type_upper.endswith("[]"):
             return ColumnType.ARRAY
-        elif type_upper in ("NUMERIC", "DECIMAL"):
+        elif type_upper.startswith("NUMERIC") or type_upper.startswith("DECIMAL"):
             return ColumnType.DECIMAL
         else:
             return ColumnType.STRING  # Default fallback
+
+    def _extract_type_constraints(self, type_str: str) -> tuple[int | None, int | None, int | None]:
+        """Extract max_length, precision, scale from SQL type string."""
+        # VARCHAR(n)
+        if match := re.search(r"VARCHAR\((\d+)\)", type_str, re.IGNORECASE):
+            return int(match.group(1)), None, None
+
+        # NUMERIC(p,s)
+        if match := re.search(r"(?:NUMERIC|DECIMAL)\((\d+),(\d+)\)", type_str, re.IGNORECASE):
+            return None, int(match.group(1)), int(match.group(2))
+
+        return None, None, None
 
 
 class PostgresMigrationGenerator(MigrationGeneratorBase):
@@ -356,6 +385,9 @@ class PostgresMigrationGenerator(MigrationGeneratorBase):
 
         # Generate column definitions
         col_defs = []
+        primary_keys = []
+        foreign_keys = []
+
         for col in table.columns:
             col_def = f"{col.name} {col.native_type}"
 
@@ -367,11 +399,141 @@ class PostgresMigrationGenerator(MigrationGeneratorBase):
 
             col_defs.append(col_def)
 
+            # Track primary keys for composite PK constraint
+            if col.is_primary_key:
+                primary_keys.append(col.name)
+
+            # Track foreign keys
+            if col.is_foreign_key and col.references:
+                foreign_keys.append((col.name, col.references))
+
+        # Add PRIMARY KEY constraint if any primary keys exist
+        if primary_keys:
+            if len(primary_keys) == 1:
+                # Single PK - modify the column definition directly
+                for i, col_def in enumerate(col_defs):
+                    if col_def.startswith(f"{primary_keys[0]} "):
+                        col_defs[i] += " PRIMARY KEY"
+                        break
+            else:
+                # Composite PK - add as table constraint
+                pk_constraint = f"PRIMARY KEY ({', '.join(primary_keys)})"
+                col_defs.append(pk_constraint)
+
+        # Add FOREIGN KEY constraints
+        for col_name, references in foreign_keys:
+            fk_constraint = f"FOREIGN KEY ({col_name}) REFERENCES {references}"
+            col_defs.append(fk_constraint)
+
         sql = f"CREATE TABLE IF NOT EXISTS {full_table} (\n  "
         sql += ",\n  ".join(col_defs)
         sql += "\n);"
 
         return sql
+
+    def generate_drop_index(self, schema: str, index: IndexDefinition) -> str:
+        """Generate DROP INDEX statement."""
+        # PostgreSQL DROP INDEX requires schema-qualified index name
+        full_index = f"{schema}.{index.name}"
+        return f"DROP INDEX IF EXISTS {full_index};"
+
+    def generate_drop_column(self, table_name: str, schema: str, column: ColumnDefinition) -> str:
+        """Generate ALTER TABLE DROP COLUMN statement."""
+        full_table = f"{schema}.{table_name}"
+        return f"ALTER TABLE {full_table} DROP COLUMN IF EXISTS {column.name};"
+
+    def generate_alter_column(self, table_name: str, schema: str, column: ColumnDefinition) -> str:
+        """
+        Generate ALTER TABLE ALTER COLUMN statement with USING clause for type conversions.
+
+        Uses STRICT conversion strategy: fails loudly on invalid data rather than silently
+        converting to NULL. This forces manual data cleanup and prevents data loss.
+        """
+        full_table = f"{schema}.{table_name}"
+
+        # PostgreSQL ALTER COLUMN requires separate statements for type, nullable, and default
+        statements = []
+
+        # Determine if we need a USING clause for type conversion
+        using_clause = self._get_type_conversion_using(column)
+
+        # Change type
+        alter_type = (
+            f"ALTER TABLE {full_table} ALTER COLUMN {column.name} TYPE {column.native_type}"
+        )
+        if using_clause:
+            alter_type += f" USING {using_clause}"
+        statements.append(alter_type)
+
+        # Change nullable
+        if column.nullable:
+            statements.append(f"ALTER TABLE {full_table} ALTER COLUMN {column.name} DROP NOT NULL")
+        else:
+            statements.append(f"ALTER TABLE {full_table} ALTER COLUMN {column.name} SET NOT NULL")
+
+        # Change default
+        if column.default:
+            statements.append(
+                f"ALTER TABLE {full_table} ALTER COLUMN {column.name} SET DEFAULT {column.default}"
+            )
+        else:
+            statements.append(f"ALTER TABLE {full_table} ALTER COLUMN {column.name} DROP DEFAULT")
+
+        return ";\n".join(statements) + ";"
+
+    def _get_type_conversion_using(self, column: ColumnDefinition) -> str | None:
+        """
+        Generate USING clause for type conversions that PostgreSQL can't auto-cast.
+
+        Strategy: STRICT conversions that fail on invalid data
+        - NULL and empty strings are handled gracefully
+        - Invalid data causes migration to FAIL (forces manual cleanup)
+        - NO silent data loss or corruption
+
+        Returns:
+            USING clause string, or None if PostgreSQL can handle conversion automatically
+        """
+        target_type = column.native_type.upper()
+        col_name = column.name
+
+        # text → numeric/decimal
+        # Handles NULL/empty, but FAILS on non-numeric values (e.g., "abc")
+        if "NUMERIC" in target_type or "DECIMAL" in target_type:
+            return f"CASE WHEN {col_name}::text IS NULL OR {col_name}::text = '' THEN NULL ELSE {col_name}::numeric END"
+
+        # text → jsonb
+        # Defaults to empty array for NULL/empty, but FAILS on invalid JSON
+        elif "JSONB" in target_type or "JSON" in target_type:
+            return f"CASE WHEN {col_name}::text IS NULL OR {col_name}::text = '' THEN '[]'::jsonb ELSE {col_name}::jsonb END"
+
+        # text → integer
+        # Handles NULL/empty, but FAILS on non-integer values
+        elif "INTEGER" in target_type or "INT" in target_type:
+            return f"CASE WHEN {col_name}::text IS NULL OR {col_name}::text = '' THEN NULL ELSE {col_name}::integer END"
+
+        # text → bigint
+        elif "BIGINT" in target_type:
+            return f"CASE WHEN {col_name}::text IS NULL OR {col_name}::text = '' THEN NULL ELSE {col_name}::bigint END"
+
+        # text → boolean
+        # Standard boolean conversions, FAILS on unrecognized values
+        elif "BOOLEAN" in target_type or "BOOL" in target_type:
+            return (
+                f"CASE "
+                f"WHEN {col_name}::text IS NULL OR {col_name}::text = '' THEN NULL "
+                f"WHEN {col_name}::text IN ('t', 'true', '1', 'yes', 'y') THEN true "
+                f"WHEN {col_name}::text IN ('f', 'false', '0', 'no', 'n') THEN false "
+                f"ELSE {col_name}::boolean "  # Let PostgreSQL try, will fail on invalid
+                f"END"
+            )
+
+        # text → uuid
+        elif "UUID" in target_type:
+            return f"CASE WHEN {col_name}::text IS NULL OR {col_name}::text = '' THEN NULL ELSE {col_name}::uuid END"
+
+        # For other conversions (e.g., varchar(100) → varchar(255), same type changes)
+        # Let PostgreSQL handle it automatically without USING clause
+        return None
 
     def wrap_in_transaction(self, statements: List[str]) -> str:
         """Wrap multiple statements in a transaction."""

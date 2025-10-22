@@ -11,19 +11,19 @@ repos:
       - id: end-of-file-fixer
       - id: check-yaml
       - id: check-added-large-files
-        args: ['--maxkb=1000']
+        args: ["--maxkb=1000"]
       - id: check-toml
       - id: check-json
       - id: check-merge-conflict
       - id: debug-statements
       - id: mixed-line-ending
 
-  # Python linting and formatting with Ruff
+  # Python linting with Ruff
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.3.4
     hooks:
       - id: ruff
-        args: ['--fix', '--exit-non-zero-on-fix']
+        args: ["--fix", "--exit-non-zero-on-fix"]
       - id: ruff-format
 
   # Python type checking with mypy (optional, can be slow)
