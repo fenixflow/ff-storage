@@ -490,22 +490,19 @@ class TemporalRepository(Generic[T]):
             where_parts.append(f"{self.strategy.tenant_field} = ${len(where_values) + 1}")
             where_values.append(self.tenant_id)
 
-        # Soft delete filter (if not include_deleted)
+        # Current version filters (soft delete, SCD2, etc.)
         include_deleted = kwargs.get("include_deleted", False)
-        if self.strategy.soft_delete and not include_deleted:
-            where_parts.append("deleted_at IS NULL")
+        if not include_deleted:
+            current_filters = self.strategy.get_current_version_filters()
+            where_parts.extend(current_filters)
 
-        # SCD2: current version only
-        if hasattr(self.strategy, "get_temporal_fields"):
-            temporal_fields = self.strategy.get_temporal_fields()
-            if "valid_to" in temporal_fields:
-                where_parts.append("valid_to IS NULL")
-
-        # User filters
+        # User filters (with validation to prevent SQL injection)
         if filters:
-            for key, value in filters.items():
-                where_parts.append(f"{key} = ${len(where_values) + 1}")
-                where_values.append(value)
+            filter_clauses, filter_values = self.strategy._validate_and_build_filter_clauses(
+                filters, base_param_count=len(where_values)
+            )
+            where_parts.extend(filter_clauses)
+            where_values.extend(filter_values)
 
         # Build query
         where_clause = f"WHERE {' AND '.join(where_parts)}" if where_parts else ""
@@ -803,6 +800,11 @@ class TemporalRepository(Generic[T]):
                         query += f" AND {self.strategy.tenant_field} = ${len(values) + 1}"
                         values.append(self.tenant_id)
 
+                    # Add current version filters (prevent data leakage)
+                    current_filters = self.strategy.get_current_version_filters()
+                    if current_filters:
+                        query += f" AND {' AND '.join(current_filters)}"
+
                     # Execute query
                     rows = await self.db_pool.fetch_all(query, *values)
 
@@ -834,13 +836,27 @@ class TemporalRepository(Generic[T]):
     # ==================== Helper Methods ====================
 
     def _get_table_name(self) -> str:
-        """Get table name from model class."""
+        """
+        Get fully-qualified table name with schema.
+
+        Returns schema-qualified name (e.g., "public.products") to ensure
+        queries work correctly regardless of PostgreSQL search_path configuration.
+        """
+        # Try to use full_table_name() method if available (includes schema)
+        if hasattr(self.model_class, "full_table_name"):
+            return self.model_class.full_table_name()
+
+        # Fallback: construct schema-qualified name manually
+        schema = getattr(self.model_class, "__schema__", "public")
+
         if hasattr(self.model_class, "table_name"):
-            return self.model_class.table_name()
+            table = self.model_class.table_name()
         elif hasattr(self.model_class, "__table_name__"):
-            return self.model_class.__table_name__
+            table = self.model_class.__table_name__
         else:
-            return self.model_class.__name__.lower() + "s"
+            table = self.model_class.__name__.lower() + "s"
+
+        return f"{schema}.{table}"
 
     def _model_to_dict(self, model: T) -> Dict[str, Any]:
         """Convert model instance to dict."""

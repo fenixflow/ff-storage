@@ -102,6 +102,11 @@ class PydanticModel(BaseModel):
         description="User who created this record",
     )
 
+    updated_by: Optional[UUID] = Field(
+        default=None,
+        description="User who last updated this record",
+    )
+
     # ==================== Dynamic Field Injection ====================
 
     def __init_subclass__(cls, **kwargs):

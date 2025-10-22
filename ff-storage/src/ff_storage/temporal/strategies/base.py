@@ -297,6 +297,84 @@ class TemporalStrategy(ABC, Generic[T]):
 
         return indexes
 
+    def _validate_and_build_filter_clauses(
+        self, filters: Dict[str, Any], base_param_count: int = 0
+    ) -> tuple[List[str], List[Any]]:
+        """
+        Validate filter keys and build safe WHERE clause components.
+
+        This method prevents SQL injection by validating all filter keys
+        using validate_identifier() before interpolating them into queries.
+
+        Args:
+            filters: Dictionary of field_name: value filters
+            base_param_count: Number of parameters already in the query (for $N numbering)
+
+        Returns:
+            Tuple of (where_clauses, parameter_values)
+
+        Raises:
+            ValidationError: If any filter key is invalid
+
+        Example:
+            >>> clauses, values = self._validate_and_build_filter_clauses(
+            ...     {"status": "active", "price": 100}, base_param_count=2
+            ... )
+            >>> clauses
+            ['status = $3', 'price = $4']
+            >>> values
+            ['active', 100]
+        """
+        from ...utils.validation import validate_identifier
+
+        where_clauses = []
+        where_values = []
+
+        for key, value in filters.items():
+            # SECURITY: Validate identifier to prevent SQL injection
+            validate_identifier(key)
+
+            if value is None:
+                # Handle NULL values
+                where_clauses.append(f"{key} IS NULL")
+            elif isinstance(value, (list, tuple)):
+                # Handle IN clause
+                placeholders = ", ".join(
+                    [f"${base_param_count + len(where_values) + i + 1}" for i in range(len(value))]
+                )
+                where_clauses.append(f"{key} IN ({placeholders})")
+                where_values.extend(value)
+            else:
+                # Handle equality
+                param_num = base_param_count + len(where_values) + 1
+                where_clauses.append(f"{key} = ${param_num}")
+                where_values.append(value)
+
+        return where_clauses, where_values
+
+    def get_current_version_filters(self) -> List[str]:
+        """
+        Get SQL filter conditions for querying current (non-historical) records.
+
+        This is used to prevent data leakage where historical or deleted
+        records are inadvertently returned in queries.
+
+        Returns:
+            List of SQL WHERE conditions (without the WHERE keyword)
+
+        Examples:
+            For SCD2: ["valid_to IS NULL", "deleted_at IS NULL"]
+            For soft delete: ["deleted_at IS NULL"]
+            For none: []
+        """
+        filters = []
+
+        # Soft delete filter (for active records only)
+        if self.soft_delete:
+            filters.append("deleted_at IS NULL")
+
+        return filters
+
     def _serialize_jsonb_fields(self, data: Dict[str, Any]) -> Dict[str, Any]:
         """
         Serialize JSONB fields to JSON strings for database insertion.

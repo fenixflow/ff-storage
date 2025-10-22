@@ -534,11 +534,11 @@ class TestModelRebuild:
     def test_model_fields_count(self):
         """Test that model_fields has correct count including temporal fields."""
         # ModelSCD2Full should have:
-        # - Standard: id, created_at, updated_at, created_by (4)
+        # - Standard: id, created_at, updated_at, created_by, updated_by (5)
         # - User: name, value (2)
         # - Temporal: tenant_id, version, valid_from, valid_to, deleted_at, deleted_by (6)
-        # Total: 12 fields
-        assert len(ModelSCD2Full.model_fields) == 12
+        # Total: 13 fields
+        assert len(ModelSCD2Full.model_fields) == 13
 
     def test_field_required_status(self):
         """Test that temporal fields have correct required status."""

@@ -280,10 +280,13 @@ class NoneStrategy(TemporalStrategy[T]):
         if self.soft_delete and not include_deleted:
             where_parts.append("deleted_at IS NULL")
 
-        # User filters
-        for key, value in filters.items():
-            where_parts.append(f"{key} = ${len(where_values) + 1}")
-            where_values.append(value)
+        # User filters (with validation to prevent SQL injection)
+        if filters:
+            filter_clauses, filter_values = self._validate_and_build_filter_clauses(
+                filters, base_param_count=len(where_values)
+            )
+            where_parts.extend(filter_clauses)
+            where_values.extend(filter_values)
 
         # Build query
         where_clause = f"WHERE {' AND '.join(where_parts)}" if where_parts else ""

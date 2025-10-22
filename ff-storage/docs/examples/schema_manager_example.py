@@ -8,7 +8,7 @@ Demonstrates:
 - Dry run mode
 """
 
-from ff_storage import Field, PostgresPool, PydanticModel, SchemaManager
+from ff_storage import Field, Postgres, PydanticModel, SchemaManager
 
 # ==================== Model Definition ====================
 
@@ -30,8 +30,8 @@ class Product(PydanticModel):
 def main():
     """Demonstrate SchemaManager with auxiliary table creation."""
 
-    # Connect to database
-    db = PostgresPool(
+    # Connect to database (synchronous)
+    db = Postgres(
         dbname="fenix_dev",
         user="fenix",
         password="password",

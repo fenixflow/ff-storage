@@ -174,6 +174,7 @@ class SCD2Strategy(TemporalStrategy[T]):
         data["valid_to"] = None
         data["deleted_at"] = None
         data["deleted_by"] = None
+        data["updated_by"] = None  # First version has no updater, only creator
 
         # Build INSERT query
         table_name = self._get_table_name()
@@ -240,7 +241,35 @@ class SCD2Strategy(TemporalStrategy[T]):
                 current_data = dict(current_row)
                 current_version = current_data["version"]
 
-                # 2. Close current version
+                # 2. Check if data actually changed (prevent no-op updates)
+                # Exclude metadata fields from comparison
+                metadata_fields = {
+                    "id",
+                    "version",
+                    "valid_from",
+                    "valid_to",
+                    "created_at",
+                    "updated_at",
+                    "created_by",
+                    "deleted_at",
+                    "deleted_by",
+                    "tenant_id",
+                }
+
+                # Compare only user-defined fields
+                has_changes = False
+                for key, new_value in data.items():
+                    if key not in metadata_fields:
+                        old_value = current_data.get(key)
+                        if old_value != new_value:
+                            has_changes = True
+                            break
+
+                # If no changes, return current version without creating a new one
+                if not has_changes:
+                    return self._row_to_model(current_row)
+
+                # 3. Close current version
                 close_query = f"""
                     UPDATE {table_name}
                     SET valid_to = ${len(where_values) + 1}
@@ -248,7 +277,7 @@ class SCD2Strategy(TemporalStrategy[T]):
                 """
                 await conn.execute(close_query, *where_values, now)
 
-                # 3. Build new version
+                # 4. Build new version
                 new_data = current_data.copy()
                 new_data.update(data)
 
@@ -257,6 +286,10 @@ class SCD2Strategy(TemporalStrategy[T]):
                 new_data["valid_from"] = now
                 new_data["valid_to"] = None
                 new_data["updated_at"] = now
+
+                # Track who made the update (audit trail)
+                if user_id:
+                    new_data["updated_by"] = user_id
 
                 # Insert new version
                 columns = list(new_data.keys())
@@ -479,10 +512,13 @@ class SCD2Strategy(TemporalStrategy[T]):
                 where_parts.append(f"(deleted_at IS NULL OR deleted_at > ${len(where_values)})")
                 where_values.append(as_of)
 
-        # User filters
-        for key, value in filters.items():
-            where_parts.append(f"{key} = ${len(where_values) + 1}")
-            where_values.append(value)
+        # User filters (with validation to prevent SQL injection)
+        if filters:
+            filter_clauses, filter_values = self._validate_and_build_filter_clauses(
+                filters, base_param_count=len(where_values)
+            )
+            where_parts.extend(filter_clauses)
+            where_values.extend(filter_values)
 
         # Build query
         where_clause = f"WHERE {' AND '.join(where_parts)}" if where_parts else ""
@@ -657,6 +693,21 @@ class SCD2Strategy(TemporalStrategy[T]):
         return diff
 
     # ==================== Helper Methods ====================
+
+    def get_current_version_filters(self) -> List[str]:
+        """
+        Override base method to include SCD2-specific filters.
+
+        For SCD2, current records must have:
+        - valid_to IS NULL (current version)
+        - deleted_at IS NULL (not deleted)
+
+        Returns:
+            List of SQL WHERE conditions
+        """
+        filters = super().get_current_version_filters()  # Gets deleted_at IS NULL
+        filters.append("valid_to IS NULL")  # Add SCD2 current version filter
+        return filters
 
     def _get_table_name(self) -> str:
         """

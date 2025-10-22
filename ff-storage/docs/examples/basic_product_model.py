@@ -84,7 +84,7 @@ async def main():
         host="localhost",
         port=5432,
     )
-    db_pool.connect()
+    await db_pool.connect()
 
     # Create repository (tenant-scoped)
     repo = PydanticRepository(

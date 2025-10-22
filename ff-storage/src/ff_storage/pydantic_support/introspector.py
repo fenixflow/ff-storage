@@ -91,6 +91,20 @@ class PydanticSchemaIntrospector:
                 index = IndexDefinition(**idx_def)
                 indexes.append(index)
 
+        # Step 4: Handle SCD2 primary key special case
+        # For SCD2 strategy, we need to remove PRIMARY KEY from `id` column
+        # because SCD2 allows multiple versions of the same logical record
+        # (same id, different version). The UNIQUE constraint on (id, version)
+        # from get_temporal_indexes() handles uniqueness instead.
+        if hasattr(pydantic_model, "__temporal_strategy__"):
+            strategy = pydantic_model.__temporal_strategy__
+            if strategy == "scd2":
+                # Find and modify the id column to remove PRIMARY KEY
+                for column in columns:
+                    if column.name == "id" and column.is_primary_key:
+                        # Create a new column definition without PRIMARY KEY
+                        column.is_primary_key = False
+
         return TableDefinition(
             name=table_name,
             schema=schema,
