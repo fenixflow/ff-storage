@@ -111,9 +111,14 @@ class NoneStrategy(TemporalStrategy[T]):
 
         Sets:
         - updated_at to NOW()
+        - updated_by if user_id provided
         """
         # Auto-set updated_at
         data["updated_at"] = datetime.now(timezone.utc)
+
+        # Track who made the update
+        if user_id:
+            data["updated_by"] = user_id
 
         # Build WHERE clause
         where_parts = ["id = $1"]

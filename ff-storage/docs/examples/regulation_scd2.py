@@ -232,7 +232,7 @@ async def main():
     print()
 
     # Cleanup
-    db_pool.close_connection()
+    await db_pool.disconnect()
 
 
 if __name__ == "__main__":

@@ -293,6 +293,10 @@ class CopyOnChangeStrategy(TemporalStrategy[T]):
         # Auto-set updated_at
         data["updated_at"] = datetime.now(timezone.utc)
 
+        # Track who made the update
+        if user_id:
+            data["updated_by"] = user_id
+
         # Transaction ID for grouping
         transaction_id = uuid4()
         now = datetime.now(timezone.utc)

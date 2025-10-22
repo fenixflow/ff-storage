@@ -636,6 +636,140 @@ class TestTemporalStrategies:
         assert conn.fetchrow.call_count >= 1
 
 
+@pytest.mark.asyncio
+async def test_none_update_tracks_user_id(mock_db_pool, tenant_id, user_id):
+    """Test that none strategy properly tracks who updated each record."""
+    from ff_storage.temporal.strategies.none import NoneStrategy
+
+    product_id = uuid.uuid4()
+    creator_id = uuid.uuid4()
+    updater_id = uuid.uuid4()
+
+    # Create strategy and repository
+    strategy = NoneStrategy(
+        model_class=ProductNone,
+        soft_delete=True,
+        multi_tenant=True,
+        tenant_field="tenant_id",
+    )
+    repo = TemporalRepository(
+        ProductNone,
+        mock_db_pool,
+        strategy,
+        tenant_id=tenant_id,
+        cache_enabled=False,
+    )
+
+    # Mock existing record with creator
+    existing_record = {
+        "id": product_id,
+        "name": "Product V1",
+        "price": 100.0,
+        "created_at": datetime.now(timezone.utc),
+        "updated_at": datetime.now(timezone.utc),
+        "created_by": creator_id,
+        "updated_by": None,  # Null initially
+        "tenant_id": tenant_id,
+        "deleted_at": None,
+    }
+
+    # Mock updated record
+    updated_record = {
+        **existing_record,
+        "name": "Product V2",
+        "price": 200.0,
+        "updated_at": datetime.now(timezone.utc),
+        "updated_by": updater_id,  # Should be set by update
+    }
+
+    # Setup mocks - UPDATE returns updated record
+    conn = mock_db_pool._test_conn
+    conn.fetchrow.side_effect = [updated_record]
+    conn.execute.return_value = None
+
+    # Perform update with different user
+    updated_product = ProductNone(
+        id=product_id,
+        name="Product V2",
+        price=200.0,
+        tenant_id=tenant_id,
+    )
+
+    result = await repo.update(product_id, updated_product, user_id=updater_id)
+
+    # Verify the update was successful and updated_by is set
+    assert result is not None
+    assert result.name == "Product V2"
+    assert result.updated_by == updater_id, "updated_by should be set to updater_id"
+
+
+@pytest.mark.asyncio
+async def test_copy_on_change_update_tracks_user_id(mock_db_pool, tenant_id, user_id):
+    """Test that copy_on_change strategy properly tracks who updated each record."""
+    from ff_storage.temporal.strategies.copy_on_change import CopyOnChangeStrategy
+
+    product_id = uuid.uuid4()
+    creator_id = uuid.uuid4()
+    updater_id = uuid.uuid4()
+
+    # Create strategy and repository
+    strategy = CopyOnChangeStrategy(
+        model_class=ProductCopyOnChange,
+        soft_delete=True,
+        multi_tenant=True,
+        tenant_field="tenant_id",
+    )
+    repo = TemporalRepository(
+        ProductCopyOnChange,
+        mock_db_pool,
+        strategy,
+        tenant_id=tenant_id,
+        cache_enabled=False,
+    )
+
+    # Mock existing record with creator
+    existing_record = {
+        "id": product_id,
+        "name": "Product V1",
+        "price": 100.0,
+        "created_at": datetime.now(timezone.utc),
+        "updated_at": datetime.now(timezone.utc),
+        "created_by": creator_id,
+        "updated_by": None,  # Null initially
+        "tenant_id": tenant_id,
+        "deleted_at": None,
+    }
+
+    # Mock updated record
+    updated_record = {
+        **existing_record,
+        "name": "Product V2",
+        "price": 200.0,
+        "updated_at": datetime.now(timezone.utc),
+        "updated_by": updater_id,  # Should be set by update
+    }
+
+    # Setup mocks - SELECT for current, UPDATE returns updated
+    conn = mock_db_pool._test_conn
+    conn.fetchrow.side_effect = [existing_record, updated_record]
+    conn.execute.return_value = None
+
+    # Perform update with different user
+    updated_product = ProductCopyOnChange(
+        id=product_id,
+        name="Product V2",
+        price=200.0,
+        tenant_id=tenant_id,
+    )
+
+    result = await repo.update(product_id, updated_product, user_id=updater_id)
+
+    # Verify the update was successful and updated_by is set
+    assert result is not None
+    assert result.name == "Product V2"
+    assert result.updated_by == updater_id, "updated_by should be set to updater_id"
+
+
 # Standalone tests for schema validation
 def test_scd2_model_includes_updated_by_field():
     """Test that SCD2 models have updated_by field in their schema."""
