@@ -26,7 +26,7 @@ def clean_build(package_path: Path) -> None:
 
 
 def build_package(package_path: Path) -> tuple[bool, str]:
-    """Build a package using python -m build.
+    """Build a package using uv build.
 
     Args:
         package_path: Path to package directory
@@ -38,9 +38,9 @@ def build_package(package_path: Path) -> tuple[bool, str]:
         # Clean first
         clean_build(package_path)
 
-        # Run build
+        # Run build with uv (matches CI pipeline)
         result = subprocess.run(
-            ["python3", "-m", "build"],
+            ["uv", "build"],
             cwd=package_path,
             capture_output=True,
             text=True,
@@ -49,14 +49,17 @@ def build_package(package_path: Path) -> tuple[bool, str]:
 
         return True, "Package built successfully"
 
+    except FileNotFoundError:
+        return False, "uv not found - please install uv (https://astral.sh/uv)"
     except subprocess.CalledProcessError as e:
-        return False, f"Build failed: {e.stderr}"
+        error_msg = e.stderr if e.stderr else str(e)
+        return False, f"Build failed: {error_msg}"
     except Exception as e:
         return False, f"Build error: {e}"
 
 
 def check_package(package_path: Path) -> tuple[bool, str]:
-    """Check package with twine.
+    """Check that package was built successfully.
 
     Args:
         package_path: Path to package directory
@@ -68,22 +71,11 @@ def check_package(package_path: Path) -> tuple[bool, str]:
     if not dist_path.exists():
         return False, "No dist/ directory found"
 
-    try:
-        result = subprocess.run(
-            ["python3", "-m", "twine", "check", "dist/*"],
-            cwd=package_path,
-            capture_output=True,
-            text=True,
-            check=True,
-            shell=True,
-        )
+    dist_files = list(dist_path.glob("*.whl")) + list(dist_path.glob("*.tar.gz"))
+    if not dist_files:
+        return False, "No distribution files found in dist/"
 
-        return True, "Package check passed"
-
-    except subprocess.CalledProcessError as e:
-        return False, f"Package check failed: {e.stderr}"
-    except Exception as e:
-        return False, f"Check error: {e}"
+    return True, f"Found {len(dist_files)} distribution file(s)"
 
 
 def get_package_info(package_path: Path) -> dict[str, str]:

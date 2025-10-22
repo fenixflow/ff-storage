@@ -40,7 +40,7 @@ def publish_to_pypi(
     package_path: Path,
     test_pypi: bool = False,
 ) -> tuple[bool, str]:
-    """Publish package to PyPI using twine.
+    """Publish package to PyPI using uv publish.
 
     Args:
         package_path: Path to package directory
@@ -53,32 +53,18 @@ def publish_to_pypi(
     if not dist_path.exists() or not list(dist_path.glob("*")):
         return False, "No build artifacts found in dist/"
 
-    # Determine repository and token
-    if test_pypi:
-        repository = "testpypi"
-        token_var = "TEST_PYPI_TOKEN"
-    else:
-        repository = "pypi"
-        token_var = "PYPI_TOKEN"
-
+    # Get token
+    token_var = "TEST_PYPI_TOKEN" if test_pypi else "PYPI_TOKEN"
     token = os.getenv(token_var)
 
-    # Build twine command
-    cmd = [
-        "python3",
-        "-m",
-        "twine",
-        "upload",
-        "--repository",
-        repository,
-        "--verbose",
-    ]
+    if not token:
+        return False, f"{token_var} not set"
 
-    # Add token if available
-    if token:
-        cmd.extend(["--username", "__token__", "--password", token])
+    # Build uv publish command
+    cmd = ["uv", "publish", "--username", "__token__", "--password", token]
 
-    cmd.append("dist/*")
+    if test_pypi:
+        cmd.extend(["--publish-url", "https://test.pypi.org/legacy/"])
 
     try:
         result = subprocess.run(
@@ -87,10 +73,15 @@ def publish_to_pypi(
             capture_output=True,
             text=True,
             check=True,
+            timeout=120,
         )
 
         return True, f"Published to {'TestPyPI' if test_pypi else 'PyPI'} successfully"
 
+    except FileNotFoundError:
+        return False, "uv not found - please install uv (https://astral.sh/uv)"
+    except subprocess.TimeoutExpired:
+        return False, "Publish operation timed out"
     except subprocess.CalledProcessError as e:
         error_msg = e.stderr if e.stderr else e.stdout
         return False, f"Upload failed: {error_msg}"

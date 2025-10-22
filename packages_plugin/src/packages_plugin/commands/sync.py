@@ -7,7 +7,7 @@ import typer
 from rich.console import Console
 
 from ..utils import check_all_auth
-from ..utils.constants import SUPPORTED_PACKAGES
+from ..utils.constants import REPO_ROOT, SUPPORTED_PACKAGES
 from . import github, pypi
 
 console = Console()
@@ -62,7 +62,7 @@ def sync_package(
         if dry_run:
             console.print("[yellow][DRY RUN] Would run: pytest tests/[/yellow]")
         else:
-            package_path = Path.cwd() / package
+            package_path = REPO_ROOT / package
             try:
                 result = subprocess.run(
                     ["pytest", "tests/", "-v"],

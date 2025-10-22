@@ -7,6 +7,213 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.0.0] - 2025-10-22
+
+### 🚨 BREAKING CHANGES
+
+**Pydantic ORM and Temporal Data Management** - major feature release introducing type-safe models with automatic schema generation and built-in temporal data strategies.
+
+#### What's New
+
+This release adds a complete Pydantic-based ORM layer on top of the existing SQL base classes. All v2.x functionality remains unchanged and fully compatible.
+
+**Before (v2.x - Direct SQL)**:
+```python
+from ff_storage.db import Postgres
+
+db = Postgres(...)
+db.execute_query(
+    "INSERT INTO users (id, email, name) VALUES (%s, %s, %s)",
+    {"id": uuid4(), "email": "user@example.com", "name": "John"}
+)
+```
+
+**After (v3.0.0 - Pydantic ORM)**:
+```python
+from ff_storage import PydanticModel, PydanticRepository, Field
+
+class User(PydanticModel):
+    __table_name__ = "users"
+    __temporal_strategy__ = "copy_on_change"
+
+    email: str = Field(max_length=255, db_unique=True)
+    name: str
+
+repo = PydanticRepository(User, db_pool, tenant_id=org_id)
+user = await repo.create(User(email="user@example.com", name="John"), user_id=admin_id)
+```
+
+### Added
+
+- **Pydantic ORM Layer** (`pydantic_support/`):
+  - `PydanticModel`: Base class for type-safe models with Pydantic validation
+  - `PydanticRepository`: Generic repository for CRUD operations with temporal support
+  - `Field()`: Enhanced field metadata for SQL constraints (FK, CHECK, defaults, partial indexes)
+  - Automatic schema generation from model definitions
+  - Type mapping from Python types to SQL types (PostgreSQL, MySQL, SQL Server)
+  - Schema introspection for extracting model structure
+
+- **Temporal Data Management** (`temporal/`):
+  - Three temporal strategies:
+    - `none`: Standard CRUD without history
+    - `copy_on_change`: Field-level audit trail with automatic audit table
+    - `scd2`: Immutable versioning with time travel (Type 2 Slowly Changing Dimension)
+  - Multi-tenant support with automatic tenant filtering
+  - Soft delete with restore capability
+  - Row-level locking in copy_on_change (prevents race conditions)
+  - Audit history queries with field-level change tracking
+  - Time travel queries for point-in-time data access
+  - Version comparison and diff capabilities
+
+- **Enhanced Schema Management**:
+  - Auxiliary table support (audit tables auto-created by SchemaManager)
+  - Enhanced `SchemaManager` with temporal strategy awareness
+  - Automatic foreign key setup for audit tables
+  - Validation system to catch configuration errors at startup
+
+- **Production Features**:
+  - Connection pooling integration with temporal repositories
+  - Async/await support throughout temporal layer
+  - Comprehensive validation for temporal configurations
+  - Query builders for temporal operations
+  - Cleanup utilities for audit data management
+
+### Changed
+
+- `SchemaManager.sync_schema()` now supports `auxiliary_ddl` parameter for temporal audit tables
+- Enhanced model base class hierarchy to support both SQL and Pydantic approaches
+- Repository pattern now primary API (direct SQL still fully supported)
+
+### Backward Compatibility
+
+**v3.0.0 is fully backward compatible with v2.x**:
+- All existing SQL base classes unchanged (Postgres, MySQL, SQLServer)
+- Direct SQL operations continue to work
+- Connection pooling unchanged
+- Schema sync unchanged for non-Pydantic models
+- Migration: Pydantic ORM is opt-in, use alongside existing code
+
+### Performance
+
+- Row-level locking prevents concurrent update conflicts in copy_on_change strategy
+- Optimized queries for temporal operations (indexed by validity periods)
+- Bulk operations supported in repositories
+- Connection pooling for high-concurrency scenarios
+
+### Documentation
+
+- Complete v3.0.0 documentation in `docs/` folder
+- Quickstart guide for Pydantic ORM
+- Strategy selection guide for temporal patterns
+- SCD2 foreign key patterns guide
+- Production deployment guide
+- Migration examples from v2.x
+
+### Architecture
+
+```
+ff_storage/
+├── pydantic_support/      # NEW: Pydantic ORM layer
+│   ├── base.py            # PydanticModel base class
+│   ├── field_metadata.py  # Enhanced Field() with SQL metadata
+│   ├── repository.py      # PydanticRepository CRUD
+│   ├── introspector.py    # Schema extraction
+│   └── type_mapping.py    # Python → SQL type mapping
+│
+├── temporal/              # NEW: Temporal data management
+│   ├── enums.py           # TemporalStrategyType
+│   ├── repository_base.py # TemporalRepository base
+│   ├── validation.py      # Configuration validation
+│   ├── strategies/
+│   │   ├── none.py        # No history strategy
+│   │   ├── copy_on_change.py # Field-level audit
+│   │   └── scd2.py        # Immutable versions
+│   └── utils/             # Query helpers, cleanup, etc.
+│
+└── db/                    # UNCHANGED: Existing SQL layer
+    ├── postgres.py
+    ├── mysql.py
+    ├── sqlserver.py
+    └── schema_sync/
+```
+
+### Usage Examples
+
+See complete examples in `docs/quickstart_v3.md` and `docs/examples/`.
+
+**Define Model**:
+```python
+from ff_storage import PydanticModel, Field
+
+class Product(PydanticModel):
+    __table_name__ = "products"
+    __temporal_strategy__ = "copy_on_change"
+
+    name: str = Field(max_length=255)
+    price: Decimal = Field(decimal_precision=(10, 2), db_check="price > 0")
+    sku: str = Field(max_length=50, db_unique=True)
+```
+
+**CRUD Operations**:
+```python
+from ff_storage import PydanticRepository
+
+repo = PydanticRepository(Product, db_pool, tenant_id=org_id)
+
+# Create with audit
+product = await repo.create(Product(...), user_id=admin_id)
+
+# Update with audit trail
+updated = await repo.update(product.id, Product(...), user_id=admin_id)
+
+# Query audit history
+history = await repo.get_audit_history(product.id)
+price_changes = await repo.get_field_history(product.id, "price")
+
+# Soft delete with restore
+await repo.delete(product.id, user_id=admin_id)
+await repo.restore(product.id, user_id=admin_id)
+```
+
+**Time Travel (SCD2)**:
+```python
+class Regulation(PydanticModel):
+    __temporal_strategy__ = "scd2"
+
+    regulation_code: str
+    text: str
+
+repo = PydanticRepository(Regulation, db_pool)
+
+# Current version
+current = await repo.get(reg_id)
+
+# Historical version
+past_version = await repo.get(reg_id, as_of=datetime(2024, 1, 1))
+
+# Compare versions
+diff = await repo.compare_versions(reg_id, version1=1, version2=2)
+```
+
+### Migration from v2.x
+
+No breaking changes - v3 features are additive:
+
+1. **Continue using v2.x SQL classes** - no changes required
+2. **Add Pydantic models** for new tables or incrementally migrate
+3. **Use SchemaManager** to auto-create both main and audit tables
+4. **Choose temporal strategy** per model based on requirements
+
+See `docs/quickstart_v3.md` for step-by-step migration guide.
+
+### Future Work
+
+- Additional temporal strategies (event sourcing, bi-temporal)
+- GraphQL integration for temporal queries
+- Real-time change notifications
+- Temporal foreign key integrity validation
+- Automated audit data archival
+
 ## [2.0.1] - 2025-10-15
 
 ### Fixed
@@ -333,7 +540,8 @@ db.close_connection()
 
 Maintained by **Ben Moag** ([Fenixflow](https://fenixflow.com))
 
-[Unreleased]: https://gitlab.com/fenixflow/fenix-packages/-/compare/ff-storage-v2.0.1...HEAD
+[Unreleased]: https://gitlab.com/fenixflow/fenix-packages/-/compare/ff-storage-v3.0.0...HEAD
+[3.0.0]: https://gitlab.com/fenixflow/fenix-packages/-/compare/ff-storage-v2.0.1...ff-storage-v3.0.0
 [2.0.1]: https://gitlab.com/fenixflow/fenix-packages/-/compare/ff-storage-v2.0.0...ff-storage-v2.0.1
 [2.0.0]: https://gitlab.com/fenixflow/fenix-packages/-/compare/ff-storage-v1.0.0...ff-storage-v2.0.0
 [1.0.0]: https://gitlab.com/fenixflow/fenix-packages/-/compare/ff-storage-v0.3.0...ff-storage-v1.0.0

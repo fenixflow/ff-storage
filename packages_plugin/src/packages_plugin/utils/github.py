@@ -1,8 +1,29 @@
 """GitHub utilities for mirroring packages."""
 
+import os
 import subprocess
 
 from .constants import GITHUB_REPOS
+
+
+def get_github_url(package_name: str) -> str:
+    """Get GitHub URL for a package, using token auth if available.
+
+    Args:
+        package_name: Name of the package (e.g., 'ff-storage')
+
+    Returns:
+        GitHub repository URL (HTTPS with token or SSH)
+    """
+    # Check for GITHUB_TOKEN environment variable
+    token = os.getenv("GITHUB_TOKEN")
+
+    if token:
+        # Use HTTPS with token authentication
+        return f"https://{token}@github.com/fenixflow/{package_name}.git"
+    else:
+        # Fall back to SSH URL from constants
+        return GITHUB_REPOS.get(package_name, f"git@github.com:fenixflow/{package_name}.git")
 
 
 def check_git_status() -> tuple[bool, str, list[str]]:
@@ -69,10 +90,7 @@ def add_github_remote(package_name: str) -> tuple[bool, str]:
     Returns:
         Tuple of (success, message)
     """
-    if package_name not in GITHUB_REPOS:
-        return False, f"Package {package_name} not in supported list"
-
-    github_url = GITHUB_REPOS[package_name]
+    github_url = get_github_url(package_name)
     remote_name = f"github-{package_name.split('-')[1]}"  # e.g., github-storage
 
     # Check if remote already exists

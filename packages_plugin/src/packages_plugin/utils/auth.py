@@ -11,7 +11,15 @@ def check_github_auth() -> tuple[bool, str]:
     Returns:
         Tuple of (is_authenticated, message)
     """
-    # Check for SSH key
+    # First check for GITHUB_TOKEN (preferred for CI/CD and consistency with PyPI)
+    token = os.getenv("GITHUB_TOKEN")
+    if token:
+        # GitHub tokens can start with: ghp_ (personal), gho_ (OAuth), ghs_ (server), github_pat_ (fine-grained)
+        if token.startswith(("ghp_", "gho_", "ghs_", "github_pat_")):
+            return True, "GitHub token found in environment"
+        return False, "GITHUB_TOKEN doesn't look like a valid GitHub token"
+
+    # Fall back to SSH key check
     ssh_key_paths = [
         Path.home() / ".ssh" / "id_ed25519",
         Path.home() / ".ssh" / "id_rsa",
@@ -20,7 +28,7 @@ def check_github_auth() -> tuple[bool, str]:
     has_ssh_key = any(p.exists() for p in ssh_key_paths)
 
     if not has_ssh_key:
-        return False, "No SSH key found in ~/.ssh/"
+        return False, "No GitHub token or SSH key found"
 
     # Test GitHub connection
     try:

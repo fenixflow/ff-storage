@@ -15,7 +15,7 @@ from ..utils import (
     publish_to_pypi,
     push_git_tag,
 )
-from ..utils.constants import SUPPORTED_PACKAGES
+from ..utils.constants import REPO_ROOT, SUPPORTED_PACKAGES
 
 console = Console()
 
@@ -47,7 +47,7 @@ def publish_package(
     console.print(f"[green]✓ {pypi_name} authentication configured[/green]")
 
     # Get package path
-    package_path = Path.cwd() / package
+    package_path = REPO_ROOT / package
     if not package_path.exists():
         console.print(f"[red]Error: Package directory not found: {package_path}[/red]")
         raise typer.Exit(1)
@@ -81,20 +81,20 @@ def publish_package(
         build_ok, build_msg = build_package(package_path)
 
     if not build_ok:
-        console.print(f"[red]✗ {build_msg}[/red]")
+        console.print(f"\n[red]✗ {build_msg}[/red]")
         raise typer.Exit(1)
 
-    console.print(f"[green]✓ {build_msg}[/green]")
+    console.print(f"\n[green]✓ {build_msg}[/green]")
 
     # Check package with twine
     with console.status("Checking package..."):
         check_ok, check_msg = check_package(package_path)
 
     if not check_ok:
-        console.print(f"[red]✗ {check_msg}[/red]")
+        console.print(f"\n[red]✗ {check_msg}[/red]")
         raise typer.Exit(1)
 
-    console.print(f"[green]✓ {check_msg}[/green]")
+    console.print(f"\n[green]✓ {check_msg}[/green]")
 
     # Show what would be uploaded
     dist_files = list((package_path / "dist").glob("*"))
@@ -119,10 +119,10 @@ def publish_package(
         upload_ok, upload_msg = publish_to_pypi(package_path, test_pypi=test)
 
     if not upload_ok:
-        console.print(f"[red]✗ {upload_msg}[/red]")
+        console.print(f"\n[red]✗ {upload_msg}[/red]")
         raise typer.Exit(1)
 
-    console.print(f"[green]✓ {upload_msg}[/green]")
+    console.print(f"\n[green]✓ {upload_msg}[/green]")
 
     # Show package URL
     if test:

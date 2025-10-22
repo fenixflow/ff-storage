@@ -73,7 +73,7 @@ def mirror_to_github(
 
     if success:
         console.print(f"\n[green]✓ {message}[/green]")
-        console.print(f"\nView at: https://github.com/fenixflow/{package}")
+        console.print(f"View at: https://github.com/fenixflow/{package}")
     else:
         console.print(f"\n[red]✗ {message}[/red]")
         raise typer.Exit(1)

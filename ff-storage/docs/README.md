@@ -14,7 +14,7 @@ Complete documentation for ff-storage's Pydantic ORM and temporal data managemen
 ### Core Concepts
 - **[Strategy Selection](guides/strategy_selection.md)** - none vs copy_on_change vs scd2
 - **[SCD2 Foreign Keys](guides/scd2_foreign_keys.md)** - FK patterns for versioned data
-- **[Production Deployment](guides/production_deployment.md)** - Operational best practices (coming soon)
+- **[Production Deployment](FF_STORAGE_V3_PRODUCTION_GUIDE.md)** - Operational best practices
 
 ### API Reference
 - **[Pydantic ORM API](api/pydantic_orm.md)** - PydanticModel, Field, Repository (coming soon)

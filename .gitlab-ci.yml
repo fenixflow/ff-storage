@@ -38,7 +38,7 @@ cache:
 default:
   image: python:${PYTHON_VERSION}-slim
   before_script:
-    - apt-get update && apt-get install -y git curl
+    - apt-get update && apt-get install -y git curl rsync
     - curl -LsSf https://astral.sh/uv/install.sh | sh
     - source $HOME/.local/bin/env
     - export PATH="/root/.local/bin:$PATH"
@@ -144,9 +144,6 @@ default:
 # PyPI publish template
 .publish_pypi_template: &publish_pypi_template
   stage: publish_pypi
-  id_tokens:
-    PYPI_ID_TOKEN:
-      aud: pypi
   script:
     - |
       set -euo pipefail
@@ -174,8 +171,9 @@ default:
         exit 1
       fi
 
+      echo "Uploading to PyPI using API token..."
       uv pip install --system twine
-      python -m twine upload --non-interactive --verbose dist/*
+      python -m twine upload --non-interactive --verbose --username __token__ --password "${PYPI_TOKEN}" dist/*
       echo "✅ PyPI publish complete for ${PACKAGE} ${VERSION}"
 
 # GitHub mirror template
