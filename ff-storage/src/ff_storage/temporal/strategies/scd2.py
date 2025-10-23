@@ -216,9 +216,9 @@ class SCD2Strategy(TemporalStrategy[T]):
 
         # Build WHERE clause for current version with proper quoting
         where_parts = [
-            f'{self.query_builder.quote_identifier("id")} = $1',
-            f'{self.query_builder.quote_identifier("valid_to")} IS NULL',
-            f'{self.query_builder.quote_identifier("deleted_at")} IS NULL',
+            f"{self.query_builder.quote_identifier('id')} = $1",
+            f"{self.query_builder.quote_identifier('valid_to')} IS NULL",
+            f"{self.query_builder.quote_identifier('deleted_at')} IS NULL",
         ]
         where_values = [id]
 
@@ -326,9 +326,9 @@ class SCD2Strategy(TemporalStrategy[T]):
 
         # Build WHERE for current version with proper quoting
         where_parts = [
-            f'{self.query_builder.quote_identifier("id")} = $1',
-            f'{self.query_builder.quote_identifier("valid_to")} IS NULL',
-            f'{self.query_builder.quote_identifier("deleted_at")} IS NULL',
+            f"{self.query_builder.quote_identifier('id')} = $1",
+            f"{self.query_builder.quote_identifier('valid_to')} IS NULL",
+            f"{self.query_builder.quote_identifier('deleted_at')} IS NULL",
         ]
         where_values = [id]
 
@@ -415,7 +415,7 @@ class SCD2Strategy(TemporalStrategy[T]):
         quoted_table = self.query_builder.quote_identifier(table_name)
 
         # Build WHERE clause with proper quoting
-        where_parts = [f'{self.query_builder.quote_identifier("id")} = $1']
+        where_parts = [f"{self.query_builder.quote_identifier('id')} = $1"]
         where_values = [id]
 
         if self.multi_tenant:
@@ -569,7 +569,7 @@ class SCD2Strategy(TemporalStrategy[T]):
         quoted_table = self.query_builder.quote_identifier(table_name)
 
         # Build WHERE clause with proper quoting
-        where_parts = [f'{self.query_builder.quote_identifier("id")} = $1']
+        where_parts = [f"{self.query_builder.quote_identifier('id')} = $1"]
         where_values = [id]
 
         if self.multi_tenant:
@@ -605,8 +605,8 @@ class SCD2Strategy(TemporalStrategy[T]):
 
         # Build WHERE clause with proper quoting
         where_parts = [
-            f'{self.query_builder.quote_identifier("id")} = $1',
-            f'{self.query_builder.quote_identifier("version")} = $2',
+            f"{self.query_builder.quote_identifier('id')} = $1",
+            f"{self.query_builder.quote_identifier('version')} = $2",
         ]
         where_values = [id, version]
 
@@ -646,7 +646,7 @@ class SCD2Strategy(TemporalStrategy[T]):
         quoted_table = self.query_builder.quote_identifier(table_name)
 
         # Build WHERE clause with proper quoting
-        where_parts = [f'{self.query_builder.quote_identifier("id")} = $1']
+        where_parts = [f"{self.query_builder.quote_identifier('id')} = $1"]
         where_values = [id]
 
         if self.multi_tenant:

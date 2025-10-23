@@ -9,6 +9,7 @@ Handles SQL Server-specific SQL generation:
 """
 
 from typing import Any, Dict, List, Optional, Tuple
+
 from .base import QueryBuilder
 
 
@@ -64,7 +65,7 @@ class SQLServerQueryBuilder(QueryBuilder):
 
         query = f"""
             INSERT INTO {quoted_table}
-            ({', '.join(quoted_columns)})
+            ({", ".join(quoted_columns)})
             {output_clause}
             VALUES ({placeholders})
         """.strip()
@@ -121,9 +122,9 @@ class SQLServerQueryBuilder(QueryBuilder):
 
         query = f"""
             UPDATE {quoted_table}
-            SET {', '.join(set_parts)}
+            SET {", ".join(set_parts)}
             {output_clause}
-            WHERE {' AND '.join(where_parts)}
+            WHERE {" AND ".join(where_parts)}
         """.strip()
 
         return query, values
@@ -167,7 +168,7 @@ class SQLServerQueryBuilder(QueryBuilder):
         query = f"""
             DELETE FROM {quoted_table}
             {output_clause}
-            WHERE {' AND '.join(where_parts)}
+            WHERE {" AND ".join(where_parts)}
         """.strip()
 
         return query, values
@@ -322,13 +323,13 @@ class SQLServerQueryBuilder(QueryBuilder):
         # Build MERGE statement
         query = f"""
             MERGE {quoted_table} AS target
-            USING (SELECT {', '.join(f'? AS {self.quote_identifier(col)}' for col in all_columns)}) AS source
-            ON {' AND '.join(merge_conditions)}
+            USING (SELECT {", ".join(f"? AS {self.quote_identifier(col)}" for col in all_columns)}) AS source
+            ON {" AND ".join(merge_conditions)}
             WHEN MATCHED THEN
-                UPDATE SET {', '.join(update_set)}
+                UPDATE SET {", ".join(update_set)}
             WHEN NOT MATCHED THEN
-                INSERT ({', '.join(insert_columns)})
-                VALUES ({', '.join(insert_values)})
+                INSERT ({", ".join(insert_columns)})
+                VALUES ({", ".join(insert_values)})
             {output_clause};
         """.strip()
 

@@ -1,7 +1,6 @@
 """Sync command for all-in-one publishing."""
 
 import subprocess
-from pathlib import Path
 
 import typer
 from rich.console import Console

@@ -4,14 +4,14 @@ Integration tests for connection resilience.
 Tests connection pool recovery, retry logic, and error handling.
 """
 
-import pytest
 import asyncio
 from unittest.mock import AsyncMock, patch
 from uuid import uuid4
 
-from ff_storage import PydanticModel, Field
-from ff_storage.temporal.repository_base import TemporalRepository
+import pytest
+from ff_storage import Field, PydanticModel
 from ff_storage.exceptions import TemporalStrategyError
+from ff_storage.temporal.repository_base import TemporalRepository
 
 
 class TestProduct(PydanticModel):
@@ -384,7 +384,7 @@ class TestConnectionResilience:
     @pytest.mark.asyncio
     async def test_exponential_backoff_retry(self):
         """Test exponential backoff in retry logic."""
-        from ff_storage.utils.retry import retry_async, exponential_backoff
+        from ff_storage.utils.retry import exponential_backoff, retry_async
 
         call_times = []
         attempts = 0

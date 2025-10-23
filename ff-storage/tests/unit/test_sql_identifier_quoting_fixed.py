@@ -7,17 +7,17 @@ by testing the actual query builders and temporal strategies.
 
 from uuid import uuid4
 
-from ff_storage import PydanticModel, Field
+from ff_storage import Field, PydanticModel
 from ff_storage.db.query_builder import PostgresQueryBuilder
+from ff_storage.temporal.strategies.none import NoneStrategy
+from ff_storage.temporal.strategies.scd2 import SCD2Strategy
 from ff_storage.utils.postgres import (
-    quote_identifier,
     build_column_list,
     build_insert_query,
     build_update_set_clause,
     build_where_clause,
+    quote_identifier,
 )
-from ff_storage.temporal.strategies.scd2 import SCD2Strategy
-from ff_storage.temporal.strategies.none import NoneStrategy
 
 
 class ModelWithReservedKeywords(PydanticModel):

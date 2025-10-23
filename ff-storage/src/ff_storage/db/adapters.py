@@ -6,9 +6,9 @@ PostgreSQL, MySQL, and SQL Server connection pools, allowing ff-storage
 to work seamlessly with different databases.
 """
 
+import re
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional, Union
-import re
 
 
 class DatabaseAdapter(ABC):
@@ -274,8 +274,7 @@ def detect_adapter(pool) -> DatabaseAdapter:
         return SQLServerAdapter()
     else:
         raise ValueError(
-            f"Unsupported database pool type: {pool_module}. "
-            "Supported: asyncpg, aiomysql, aioodbc"
+            f"Unsupported database pool type: {pool_module}. Supported: asyncpg, aiomysql, aioodbc"
         )
 
 

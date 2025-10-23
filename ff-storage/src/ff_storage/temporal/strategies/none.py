@@ -113,7 +113,7 @@ class NoneStrategy(TemporalStrategy[T]):
             data["updated_by"] = user_id
 
         # Build WHERE clause with proper quoting
-        where_parts = [f'{self.query_builder.quote_identifier("id")} = $1']
+        where_parts = [f"{self.query_builder.quote_identifier('id')} = $1"]
         where_values = [id]
 
         if self.multi_tenant:
@@ -177,7 +177,7 @@ class NoneStrategy(TemporalStrategy[T]):
         quoted_table = self.query_builder.quote_identifier(table_name)
 
         # Build WHERE clause with proper quoting
-        where_parts = [f'{self.query_builder.quote_identifier("id")} = $1']
+        where_parts = [f"{self.query_builder.quote_identifier('id')} = $1"]
         where_values = [id]
 
         if self.multi_tenant:
@@ -232,7 +232,7 @@ class NoneStrategy(TemporalStrategy[T]):
         quoted_table = self.query_builder.quote_identifier(table_name)
 
         # Build WHERE clause with proper quoting
-        where_parts = [f'{self.query_builder.quote_identifier("id")} = $1']
+        where_parts = [f"{self.query_builder.quote_identifier('id')} = $1"]
         where_values = [id]
 
         if self.multi_tenant:
@@ -343,7 +343,7 @@ class NoneStrategy(TemporalStrategy[T]):
         quoted_table = self.query_builder.quote_identifier(table_name)
 
         # Build WHERE clause with proper quoting
-        where_parts = [f'{self.query_builder.quote_identifier("id")} = $1']
+        where_parts = [f"{self.query_builder.quote_identifier('id')} = $1"]
         where_values = [id]
 
         if self.multi_tenant:

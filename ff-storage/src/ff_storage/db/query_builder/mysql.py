@@ -9,6 +9,7 @@ Handles MySQL-specific SQL generation:
 """
 
 from typing import Any, Dict, List, Optional, Tuple
+
 from .base import QueryBuilder
 
 
@@ -57,8 +58,8 @@ class MySQLQueryBuilder(QueryBuilder):
 
         query = f"""
             INSERT INTO {quoted_table}
-            ({', '.join(quoted_columns)})
-            VALUES ({', '.join(params)})
+            ({", ".join(quoted_columns)})
+            VALUES ({", ".join(params)})
         """.strip()
 
         # Convert to named parameter dict
@@ -113,8 +114,8 @@ class MySQLQueryBuilder(QueryBuilder):
 
         query = f"""
             UPDATE {quoted_table}
-            SET {', '.join(set_parts)}
-            WHERE {' AND '.join(where_parts)}
+            SET {", ".join(set_parts)}
+            WHERE {" AND ".join(where_parts)}
         """.strip()
 
         return query, param_dict
@@ -152,7 +153,7 @@ class MySQLQueryBuilder(QueryBuilder):
 
         query = f"""
             DELETE FROM {quoted_table}
-            WHERE {' AND '.join(where_parts)}
+            WHERE {" AND ".join(where_parts)}
         """.strip()
 
         return query, param_dict

@@ -5,15 +5,15 @@ Provides session-scoped fixtures for database schema setup using SchemaManager.
 """
 
 import logging
-import pytest
 
+import pytest
 from ff_storage.db import Postgres, SchemaManager
 
 # Import test models that need schema setup
 from test_sql_reserved_keywords import (
+    AuditedProduct,
     ProductWithReservedKeywords,
     SimpleProduct,
-    AuditedProduct,
 )
 
 

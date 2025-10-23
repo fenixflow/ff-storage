@@ -7,11 +7,11 @@ work correctly in all CRUD operations across all temporal strategies.
 This reproduces the bug: syntax error at or near "limit"
 """
 
-import pytest
-import pytest_asyncio
 from decimal import Decimal
 from uuid import uuid4
 
+import pytest
+import pytest_asyncio
 from ff_storage import Field, PydanticModel, PydanticRepository
 from ff_storage.db import Postgres, PostgresPool
 

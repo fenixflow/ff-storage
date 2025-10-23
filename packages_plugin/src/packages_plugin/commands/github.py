@@ -5,7 +5,7 @@ import typer
 from rich.console import Console
 
 from ..utils import check_git_status, check_github_auth, push_to_github
-from ..utils.constants import SUPPORTED_PACKAGES, REPO_ROOT
+from ..utils.constants import REPO_ROOT, SUPPORTED_PACKAGES
 
 console = Console()
 
@@ -61,19 +61,19 @@ def mirror_to_github(
         console.print("\n[yellow][DRY RUN] Would push to GitHub:[/yellow]")
         console.print(f"  - Target branch: {current_branch}")
         console.print(f"  - Package: {package}")
-        console.print(f"  - Source: origin/main (GitLab)")
-        console.print(f"  - Method: Clean snapshot (git archive, no history)")
+        console.print("  - Source: origin/main (GitLab)")
+        console.print("  - Method: Clean snapshot (git archive, no history)")
         console.print(f"  - Tags: Only {package}-v* tags")
-        console.print(f"  - Effect: Force push replaces entire GitHub repo")
+        console.print("  - Effect: Force push replaces entire GitHub repo")
         return
 
     # Confirm push
     console.print(f"\nReady to mirror [cyan]{package}[/cyan] to GitHub")
-    console.print(f"  Source: origin/main (committed code from GitLab)")
+    console.print("  Source: origin/main (committed code from GitLab)")
     console.print(f"  Target branch: {current_branch}")
-    console.print(f"  Method: Clean snapshot (single commit, no history)")
+    console.print("  Method: Clean snapshot (single commit, no history)")
     console.print(f"  Tags: Only {package}-v* tags will be pushed")
-    console.print(f"  [yellow]⚠ This will REPLACE all content on GitHub[/yellow]")
+    console.print("  [yellow]⚠ This will REPLACE all content on GitHub[/yellow]")
 
     if not typer.confirm("\nProceed?"):
         console.print("Aborted")

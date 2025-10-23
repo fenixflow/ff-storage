@@ -17,6 +17,13 @@ from .metrics import (
     set_global_collector,
     timer,
 )
+from .postgres import (
+    build_column_list,
+    build_insert_query,
+    build_update_set_clause,
+    build_where_clause,
+    quote_identifier,
+)
 from .retry import (
     DATABASE_RETRY,
     DEFAULT_RETRY,
@@ -27,13 +34,6 @@ from .retry import (
     exponential_backoff,
     retry,
     retry_async,
-)
-from .postgres import (
-    build_column_list,
-    build_insert_query,
-    build_update_set_clause,
-    build_where_clause,
-    quote_identifier,
 )
 from .validation import (
     SQLValidator,
