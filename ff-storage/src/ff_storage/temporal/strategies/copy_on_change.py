@@ -177,6 +177,7 @@ class CopyOnChangeStrategy(TemporalStrategy[T]):
         self,
         data: Dict[str, Any],
         db_pool,
+        adapter,
         tenant_id: Optional[UUID] = None,
         user_id: Optional[UUID] = None,
     ) -> T:
@@ -260,6 +261,7 @@ class CopyOnChangeStrategy(TemporalStrategy[T]):
         id: UUID,
         data: Dict[str, Any],
         db_pool,
+        adapter,
         tenant_id: Optional[UUID] = None,
         user_id: Optional[UUID] = None,
     ) -> T:
@@ -392,6 +394,7 @@ class CopyOnChangeStrategy(TemporalStrategy[T]):
         self,
         id: UUID,
         db_pool,
+        adapter,
         tenant_id: Optional[UUID] = None,
         user_id: Optional[UUID] = None,
     ) -> bool:

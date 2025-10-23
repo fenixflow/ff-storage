@@ -42,6 +42,7 @@ class NoneStrategy(TemporalStrategy[T]):
         self,
         data: Dict[str, Any],
         db_pool,
+        adapter,
         tenant_id: Optional[UUID] = None,
         user_id: Optional[UUID] = None,
     ) -> T:
@@ -84,9 +85,8 @@ class NoneStrategy(TemporalStrategy[T]):
         serialized_data = self._serialize_jsonb_fields(data)
         query, values = self.query_builder.build_insert(table_name, serialized_data)
 
-        # Execute
-        async with db_pool.acquire() as conn:
-            row = await conn.fetchrow(query, *values)
+        # Execute using adapter
+        row = await adapter.execute_with_returning(db_pool, query, values, table_name)
 
         return self._row_to_model(row)
 
@@ -95,6 +95,7 @@ class NoneStrategy(TemporalStrategy[T]):
         id: UUID,
         data: Dict[str, Any],
         db_pool,
+        adapter,
         tenant_id: Optional[UUID] = None,
         user_id: Optional[UUID] = None,
     ) -> T:
@@ -151,9 +152,9 @@ class NoneStrategy(TemporalStrategy[T]):
             RETURNING *
         """
 
-        # Execute
-        async with db_pool.acquire() as conn:
-            row = await conn.fetchrow(query, *where_values, *set_values)
+        # Execute using adapter
+        all_values = where_values + set_values
+        row = await adapter.execute_with_returning(db_pool, query, all_values, table_name)
 
         if not row:
             raise ValueError(f"Record not found: {id}")
@@ -164,6 +165,7 @@ class NoneStrategy(TemporalStrategy[T]):
         self,
         id: UUID,
         db_pool,
+        adapter,
         tenant_id: Optional[UUID] = None,
         user_id: Optional[UUID] = None,
     ) -> bool:
@@ -208,9 +210,8 @@ class NoneStrategy(TemporalStrategy[T]):
             """
             values = where_values
 
-        # Execute
-        async with db_pool.acquire() as conn:
-            row = await conn.fetchrow(query, *values)
+        # Execute using adapter
+        row = await adapter.execute_with_returning(db_pool, query, values, table_name)
 
         return row is not None
 
@@ -329,6 +330,7 @@ class NoneStrategy(TemporalStrategy[T]):
         self,
         id: UUID,
         db_pool,
+        adapter,
         tenant_id: Optional[UUID] = None,
     ) -> Optional[T]:
         """
@@ -366,9 +368,9 @@ class NoneStrategy(TemporalStrategy[T]):
             RETURNING *
         """
 
-        # Execute
-        async with db_pool.acquire() as conn:
-            row = await conn.fetchrow(query, *where_values, datetime.now(timezone.utc))
+        # Execute using adapter
+        all_values = where_values + [datetime.now(timezone.utc)]
+        row = await adapter.execute_with_returning(db_pool, query, all_values, table_name)
 
         if not row:
             return None

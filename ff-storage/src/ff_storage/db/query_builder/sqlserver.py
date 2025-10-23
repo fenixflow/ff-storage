@@ -44,15 +44,15 @@ class SQLServerQueryBuilder(QueryBuilder):
             returning_fields: Fields to return (uses OUTPUT clause)
 
         Returns:
-            Tuple of (query, values) with positional parameters
+            Tuple of (query with $1 placeholders, list of values)
         """
         quoted_table = self.quote_identifier(table)
         columns = list(data.keys())
         quoted_columns = [self.quote_identifier(col) for col in columns]
         values = list(data.values())
 
-        # SQL Server uses ? placeholders
-        placeholders = ", ".join(["?" for _ in columns])
+        # Use $1, $2, $3 placeholders (adapter will convert to ? format)
+        placeholders = ", ".join([f"${i + 1}" for i in range(len(columns))])
 
         # Build OUTPUT clause if returning fields requested
         output_clause = ""
@@ -89,17 +89,19 @@ class SQLServerQueryBuilder(QueryBuilder):
             returning_fields: Fields to return (uses OUTPUT clause)
 
         Returns:
-            Tuple of (query, values)
+            Tuple of (query with $1 placeholders, list of values)
         """
         quoted_table = self.quote_identifier(table)
         values = []
+        param_counter = 1
 
         # Build SET clause
         set_parts = []
         for col, value in data.items():
             quoted_col = self.quote_identifier(col)
-            set_parts.append(f"{quoted_col} = ?")
+            set_parts.append(f"{quoted_col} = ${param_counter}")
             values.append(value)
+            param_counter += 1
 
         # Build OUTPUT clause if returning fields requested
         output_clause = ""
@@ -117,8 +119,9 @@ class SQLServerQueryBuilder(QueryBuilder):
             if value is None:
                 where_parts.append(f"{quoted_col} IS NULL")
             else:
-                where_parts.append(f"{quoted_col} = ?")
+                where_parts.append(f"{quoted_col} = ${param_counter}")
                 values.append(value)
+                param_counter += 1
 
         query = f"""
             UPDATE {quoted_table}
@@ -141,10 +144,11 @@ class SQLServerQueryBuilder(QueryBuilder):
             returning_fields: Fields to return (uses OUTPUT clause)
 
         Returns:
-            Tuple of (query, values)
+            Tuple of (query with $1 placeholders, list of values)
         """
         quoted_table = self.quote_identifier(table)
         values = []
+        param_counter = 1
 
         # Build OUTPUT clause if returning fields requested
         output_clause = ""
@@ -162,8 +166,9 @@ class SQLServerQueryBuilder(QueryBuilder):
             if value is None:
                 where_parts.append(f"{quoted_col} IS NULL")
             else:
-                where_parts.append(f"{quoted_col} = ?")
+                where_parts.append(f"{quoted_col} = ${param_counter}")
                 values.append(value)
+                param_counter += 1
 
         query = f"""
             DELETE FROM {quoted_table}
@@ -196,10 +201,11 @@ class SQLServerQueryBuilder(QueryBuilder):
             offset: Number of rows to skip
 
         Returns:
-            Tuple of (query, values)
+            Tuple of (query with $1 placeholders, list of values)
         """
         quoted_table = self.quote_identifier(table)
         values = []
+        param_counter = 1
 
         # SELECT clause
         if columns:
@@ -219,12 +225,16 @@ class SQLServerQueryBuilder(QueryBuilder):
                     where_parts.append(f"{quoted_col} IS NULL")
                 elif isinstance(value, list):
                     # IN clause
-                    placeholders = ", ".join(["?" for _ in value])
-                    where_parts.append(f"{quoted_col} IN ({placeholders})")
-                    values.extend(value)
+                    placeholders = []
+                    for v in value:
+                        placeholders.append(f"${param_counter}")
+                        values.append(v)
+                        param_counter += 1
+                    where_parts.append(f"{quoted_col} IN ({', '.join(placeholders)})")
                 else:
-                    where_parts.append(f"{quoted_col} = ?")
+                    where_parts.append(f"{quoted_col} = ${param_counter}")
                     values.append(value)
+                    param_counter += 1
 
             if where_parts:
                 query_parts.append(f"WHERE {' AND '.join(where_parts)}")
@@ -279,7 +289,7 @@ class SQLServerQueryBuilder(QueryBuilder):
             returning_fields: Fields to return via OUTPUT
 
         Returns:
-            Tuple of (query, values)
+            Tuple of (query with $1 placeholders, list of values)
         """
         quoted_table = self.quote_identifier(table)
         values = []
@@ -289,10 +299,9 @@ class SQLServerQueryBuilder(QueryBuilder):
         if update_columns is None:
             update_columns = [col for col in all_columns if col not in conflict_columns]
 
-        # Build source values
-        source_values = []
+        # Build source values with $1, $2, $3 placeholders
+        source_placeholders = [f"${i + 1}" for i in range(len(all_columns))]
         for col in all_columns:
-            source_values.append("?")
             values.append(data[col])
 
         # Build merge conditions
@@ -323,7 +332,7 @@ class SQLServerQueryBuilder(QueryBuilder):
         # Build MERGE statement
         query = f"""
             MERGE {quoted_table} AS target
-            USING (SELECT {", ".join(f"? AS {self.quote_identifier(col)}" for col in all_columns)}) AS source
+            USING (SELECT {", ".join(f"{placeholder} AS {self.quote_identifier(col)}" for placeholder, col in zip(source_placeholders, all_columns))}) AS source
             ON {" AND ".join(merge_conditions)}
             WHEN MATCHED THEN
                 UPDATE SET {", ".join(update_set)}
@@ -343,17 +352,18 @@ class SQLServerQueryBuilder(QueryBuilder):
 
         Args:
             filters: Dict of column -> value filters
-            base_param_count: Starting parameter count (unused for SQL Server)
+            base_param_count: Starting parameter count (1-indexed for $1, $2, etc.)
             operator: AND or OR
 
         Returns:
-            Tuple of (where_clause, values)
+            Tuple of (where_clause with $N placeholders, list of values)
         """
         if not filters:
             return "", []
 
         where_parts = []
         values = []
+        param_counter = base_param_count + 1
 
         for col, value in filters.items():
             quoted_col = self.quote_identifier(col)
@@ -361,12 +371,16 @@ class SQLServerQueryBuilder(QueryBuilder):
                 where_parts.append(f"{quoted_col} IS NULL")
             elif isinstance(value, list):
                 # IN clause
-                placeholders = ", ".join(["?" for _ in value])
-                where_parts.append(f"{quoted_col} IN ({placeholders})")
-                values.extend(value)
+                placeholders = []
+                for v in value:
+                    placeholders.append(f"${param_counter}")
+                    values.append(v)
+                    param_counter += 1
+                where_parts.append(f"{quoted_col} IN ({', '.join(placeholders)})")
             else:
-                where_parts.append(f"{quoted_col} = ?")
+                where_parts.append(f"{quoted_col} = ${param_counter}")
                 values.append(value)
+                param_counter += 1
 
         where_clause = f" {operator} ".join(where_parts)
         return where_clause, values

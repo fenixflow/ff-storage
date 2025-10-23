@@ -390,7 +390,31 @@ class SchemaDifferBase:
                         f"type: {current_col.column_type.value} → {desired_col.column_type.value}"
                     )
                 if current_col.nullable != desired_col.nullable:
-                    differences.append(f"nullable: {current_col.nullable} → {desired_col.nullable}")
+                    # SPECIAL HANDLING: nullable → NOT NULL change
+                    if current_col.nullable and not desired_col.nullable:
+                        # This is destructive because existing NULL values cannot be made NOT NULL
+                        if desired_col.default is None:
+                            # FAIL - cannot convert NULL values without a DEFAULT
+                            raise ValueError(
+                                f"Cannot alter column '{col_name}' from nullable to NOT NULL without DEFAULT value.\n"
+                                f"Existing NULL values in table '{desired.name}' cannot be converted.\n\n"
+                                f"Options:\n"
+                                f"  1. Add DEFAULT value to the field definition:\n"
+                                f'     {col_name}: <type> = Field(default="value")\n\n'
+                                f"  2. Backfill NULL values manually, then re-run migration:\n"
+                                f"     UPDATE {desired.schema}.{desired.name} SET {col_name} = 'value' WHERE {col_name} IS NULL;\n\n"
+                                f"  3. Drop and recreate the column (DATA LOSS):\n"
+                                f"     ALTER TABLE {desired.schema}.{desired.name} DROP COLUMN {col_name};"
+                            )
+                        # If we reach here, DEFAULT exists - will backfill
+                        differences.append(
+                            f"nullable: {current_col.nullable} → {desired_col.nullable} (will backfill with DEFAULT)"
+                        )
+                    else:
+                        differences.append(
+                            f"nullable: {current_col.nullable} → {desired_col.nullable}"
+                        )
+
                 if current_col.default != desired_col.default:
                     differences.append(f"default: {current_col.default} → {desired_col.default}")
                 if current_col.max_length != desired_col.max_length:

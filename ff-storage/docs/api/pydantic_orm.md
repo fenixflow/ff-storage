@@ -390,16 +390,24 @@ class Admin(User):
     super_admin: bool = Field(default=False)
 ```
 
-### Database Adapter Usage
+### Multi-Database Support
 
 ```python
-from ff_storage.db.adapters import UniversalPool
+# PydanticRepository auto-detects database adapter from pool
+# Works transparently with PostgreSQL, MySQL, or SQL Server
 
-# Wrap any pool type for cross-database compatibility
-universal_pool = UniversalPool(original_pool)
+# PostgreSQL
+from ff_storage.db.postgres import PostgresPool
+postgres_pool = PostgresPool(...)
+repo = PydanticRepository(User, postgres_pool, tenant_id=tenant_id)
 
-# Now works with PostgreSQL, MySQL, or SQL Server
-repo = PydanticRepository(User, universal_pool, tenant_id=tenant_id)
+# MySQL
+from ff_storage.db.mysql import MySQLPool
+mysql_pool = MySQLPool(...)
+repo = PydanticRepository(User, mysql_pool, tenant_id=tenant_id)
+
+# The repository automatically handles database-specific SQL generation
+# including identifier quoting, parameter styles, and RETURNING clauses
 ```
 
 ## Error Handling

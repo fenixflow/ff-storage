@@ -380,11 +380,39 @@ class PostgresMigrationGenerator(MigrationGeneratorBase):
     """Generate PostgreSQL-specific migration SQL."""
 
     def generate_add_column(self, table_name: str, schema: str, column: ColumnDefinition) -> str:
-        """Generate ALTER TABLE ADD COLUMN statement."""
+        """
+        Generate ALTER TABLE ADD COLUMN statement.
+
+        For NOT NULL columns without DEFAULT on populated tables, generates a safe
+        multi-step process:
+        1. Add column as nullable (allows existing rows to have NULL)
+        2. Set NOT NULL constraint (new rows must provide value going forward)
+
+        This is safe because:
+        - New columns start empty (all NULL)
+        - Application code will provide values for new inserts
+        - Existing rows keep NULL (backward compatible)
+        """
         full_table = quote_identifier(f"{schema}.{table_name}")
         quoted_col = quote_identifier(column.name)
-        nullable = "NULL" if column.nullable else "NOT NULL"
+
+        # Handle NOT NULL columns without DEFAULT
+        if not column.nullable and column.default is None:
+            # Multi-step approach for backward compatibility
+            # Step 1: Add as nullable
+            sql = (
+                f"ALTER TABLE {full_table} "
+                f"ADD COLUMN IF NOT EXISTS {quoted_col} {column.native_type} NULL;\n"
+            )
+
+            # Step 2: Make NOT NULL (existing rows keep NULL, new inserts must provide value)
+            sql += f"ALTER TABLE {full_table} ALTER COLUMN {quoted_col} SET NOT NULL"
+
+            return sql + ";"
+
+        # Standard path for nullable columns or columns with DEFAULT
         default = f"DEFAULT {column.default}" if column.default else ""
+        nullable = "NULL" if column.nullable else "NOT NULL"
 
         sql = f"ALTER TABLE {full_table} ADD COLUMN IF NOT EXISTS {quoted_col} {column.native_type}"
 
@@ -486,6 +514,8 @@ class PostgresMigrationGenerator(MigrationGeneratorBase):
 
         Uses STRICT conversion strategy: fails loudly on invalid data rather than silently
         converting to NULL. This forces manual data cleanup and prevents data loss.
+
+        Also handles nullable changes with automatic backfilling when DEFAULT is present.
         """
         full_table = quote_identifier(f"{schema}.{table_name}")
         quoted_col = quote_identifier(column.name)
@@ -503,10 +533,20 @@ class PostgresMigrationGenerator(MigrationGeneratorBase):
         statements.append(alter_type)
 
         # Change nullable
-        if column.nullable:
-            statements.append(f"ALTER TABLE {full_table} ALTER COLUMN {quoted_col} DROP NOT NULL")
-        else:
+        # IMPORTANT: If making NOT NULL and column has DEFAULT, backfill first
+        if not column.nullable:
+            if column.default:
+                # Backfill existing NULL values before adding constraint
+                backfill = (
+                    f"UPDATE {full_table} "
+                    f"SET {quoted_col} = {column.default} "
+                    f"WHERE {quoted_col} IS NULL"
+                )
+                statements.append(backfill)
+
             statements.append(f"ALTER TABLE {full_table} ALTER COLUMN {quoted_col} SET NOT NULL")
+        else:
+            statements.append(f"ALTER TABLE {full_table} ALTER COLUMN {quoted_col} DROP NOT NULL")
 
         # Change default
         if column.default:

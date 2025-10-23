@@ -255,8 +255,11 @@ def detect_adapter(pool) -> DatabaseAdapter:
     """
     Automatically detect database type from pool and return appropriate adapter.
 
+    Handles both raw driver pools (asyncpg, aiomysql, aioodbc) and wrapper
+    classes (PostgresPool, MySQLPool) that have a .pool attribute.
+
     Args:
-        pool: Database connection pool
+        pool: Database connection pool (raw or wrapped)
 
     Returns:
         Appropriate DatabaseAdapter instance
@@ -264,139 +267,31 @@ def detect_adapter(pool) -> DatabaseAdapter:
     Raises:
         ValueError: If pool type cannot be determined
     """
-    pool_module = pool.__module__ if hasattr(pool, "__module__") else str(type(pool))
+    # Unwrap wrapper classes (PostgresPool, MySQLPool, etc.)
+    # These wrappers have a .pool attribute containing the actual driver pool
+    actual_pool = pool
+    if hasattr(pool, "pool") and pool.pool is not None:
+        actual_pool = pool.pool
 
+    # Get module name from the actual pool
+    pool_module = (
+        actual_pool.__module__ if hasattr(actual_pool, "__module__") else str(type(actual_pool))
+    )
+
+    # Check for raw driver pools (after unwrapping or direct usage)
     if "asyncpg" in pool_module:
         return PostgresAdapter()
     elif "aiomysql" in pool_module:
         return MySQLAdapter()
     elif "aioodbc" in pool_module:
         return SQLServerAdapter()
+    # Check for wrapper classes (before connect() when .pool is None)
+    elif "ff_storage.db.connections.postgres" in pool_module:
+        return PostgresAdapter()
+    elif "ff_storage.db.connections.mysql" in pool_module:
+        return MySQLAdapter()
     else:
         raise ValueError(
-            f"Unsupported database pool type: {pool_module}. Supported: asyncpg, aiomysql, aioodbc"
+            f"Unsupported database pool type: {pool_module}. "
+            f"Supported: asyncpg, aiomysql, aioodbc, PostgresPool, MySQLPool"
         )
-
-
-class UniversalPool:
-    """
-    Universal pool wrapper that abstracts database differences.
-
-    This wrapper:
-    - Auto-detects database type
-    - Converts parameters to correct format
-    - Handles RETURNING clause differences
-    - Preserves original pool interface for compatibility
-    """
-
-    def __init__(self, pool):
-        """
-        Initialize universal pool wrapper.
-
-        Args:
-            pool: Original database connection pool
-        """
-        self.pool = pool
-        self.adapter = detect_adapter(pool)
-
-    def acquire(self):
-        """
-        Preserve original acquire() interface for compatibility.
-
-        This allows UniversalPool to be used as drop-in replacement.
-        """
-        return self.pool.acquire()
-
-    async def execute_with_returning(
-        self, query: str, params: Union[List, Dict], table: Optional[str] = None
-    ) -> Optional[Dict[str, Any]]:
-        """
-        Execute query with RETURNING-like behavior across all databases.
-
-        Args:
-            query: SQL query (may contain RETURNING clause)
-            params: Query parameters (list or dict)
-            table: Table name (needed for MySQL)
-
-        Returns:
-            Dict of returned row or None
-        """
-        return await self.adapter.execute_with_returning(self.pool, query, params, table)
-
-    async def fetch_all(self, query: str, params: Union[List, Dict]) -> List[Dict[str, Any]]:
-        """
-        Fetch all rows from query.
-
-        Args:
-            query: SELECT query
-            params: Query parameters
-
-        Returns:
-            List of row dicts
-        """
-        query, params = self.adapter.convert_params(query, params)
-
-        if self.adapter.get_param_style() == "positional":
-            # PostgreSQL
-            async with self.pool.acquire() as conn:
-                if isinstance(params, list):
-                    rows = await conn.fetch(query, *params)
-                else:
-                    rows = await conn.fetch(query, *list(params.values()))
-                return [dict(row) for row in rows]
-        elif self.adapter.get_param_style() == "named":
-            # MySQL
-            async with self.pool.acquire() as conn:
-                async with conn.cursor() as cursor:
-                    await cursor.execute(query, params)
-                    rows = await cursor.fetchall()
-                    return rows
-        else:
-            # SQL Server
-            async with self.pool.acquire() as conn:
-                async with conn.cursor() as cursor:
-                    await cursor.execute(query, params)
-                    rows = await cursor.fetchall()
-                    if rows and cursor.description:
-                        columns = [col[0] for col in cursor.description]
-                        return [dict(zip(columns, row)) for row in rows]
-                    return []
-
-    async def fetch_one(self, query: str, params: Union[List, Dict]) -> Optional[Dict[str, Any]]:
-        """
-        Fetch single row from query.
-
-        Args:
-            query: SELECT query
-            params: Query parameters
-
-        Returns:
-            Row dict or None
-        """
-        query, params = self.adapter.convert_params(query, params)
-
-        if self.adapter.get_param_style() == "positional":
-            # PostgreSQL
-            async with self.pool.acquire() as conn:
-                if isinstance(params, list):
-                    row = await conn.fetchrow(query, *params)
-                else:
-                    row = await conn.fetchrow(query, *list(params.values()))
-                return dict(row) if row else None
-        elif self.adapter.get_param_style() == "named":
-            # MySQL
-            async with self.pool.acquire() as conn:
-                async with conn.cursor() as cursor:
-                    await cursor.execute(query, params)
-                    row = await cursor.fetchone()
-                    return row
-        else:
-            # SQL Server
-            async with self.pool.acquire() as conn:
-                async with conn.cursor() as cursor:
-                    await cursor.execute(query, params)
-                    row = await cursor.fetchone()
-                    if row and cursor.description:
-                        columns = [col[0] for col in cursor.description]
-                        return dict(zip(columns, row))
-                    return None

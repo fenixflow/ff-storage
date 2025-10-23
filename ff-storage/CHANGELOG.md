@@ -7,6 +7,180 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.2.0] - 2025-10-23
+
+### Fixed
+
+- **NOT NULL Column Handling**: Fixed PostgreSQL errors when adding NOT NULL columns without DEFAULT values to tables with existing data
+  - **ADD_COLUMN NOT NULL without DEFAULT**: Now generates safe multi-step SQL that allows existing rows to have NULL while enforcing constraint for new inserts
+  - **ALTER_COLUMN nullable→NOT NULL without DEFAULT**: Now fails fast with clear error message providing 3 resolution options (add DEFAULT, manual backfill, or drop column)
+  - **ALTER_COLUMN nullable→NOT NULL with DEFAULT**: Now automatically backfills NULL values before adding constraint
+  - **Root Cause**: Schema sync generated single-step SQL that PostgreSQL rejected when existing rows couldn't satisfy NOT NULL constraint
+  - **Impact**: Schema migrations no longer fail when adding required fields to existing tables
+
+### Changed
+
+- **SQL Generation for ADD_COLUMN NOT NULL without DEFAULT**:
+  ```sql
+  -- Step 1: Add as nullable (safe for existing rows)
+  ALTER TABLE schema.table ADD COLUMN IF NOT EXISTS col TYPE NULL;
+  -- Step 2: Enforce NOT NULL (for future inserts only)
+  ALTER TABLE schema.table ALTER COLUMN col SET NOT NULL;
+  ```
+  - **Existing rows**: `col = NULL` (backward compatible, no data modified)
+  - **New inserts**: Must provide value (enforced by constraint)
+  - **Applications**: Should handle NULL values for records created before migration
+
+- **Enhanced ALTER_COLUMN for nullable changes**:
+  - Automatically backfills NULL values when DEFAULT is present
+  - Generates clear validation error when DEFAULT is missing
+  - Provides 3 explicit resolution paths for developers
+
+### Architecture
+
+**Safety Model** for different scenarios:
+
+| Scenario | is_destructive | Requires Flag | Behavior |
+|----------|---------------|---------------|----------|
+| ADD NOT NULL without DEFAULT | `False` | No | Always runs, existing rows NULL |
+| ADD NOT NULL with DEFAULT | `False` | No | Always runs, all rows get DEFAULT |
+| ALTER nullable→NOT NULL with DEFAULT | `True` | Yes | Backfills, requires allow_destructive=True |
+| ALTER nullable→NOT NULL without DEFAULT | N/A | N/A | Validation error, never generates SQL |
+
+**Multi-step SQL generation**:
+```
+ADD_COLUMN NOT NULL without DEFAULT (non-destructive):
+  1. ALTER TABLE ... ADD COLUMN col TYPE NULL;
+  2. ALTER TABLE ... ALTER COLUMN col SET NOT NULL;
+  → Existing rows: NULL | New inserts: required
+
+ALTER nullable→NOT NULL with DEFAULT (destructive):
+  1. UPDATE ... SET col = DEFAULT WHERE col IS NULL;
+  2. ALTER TABLE ... ALTER COLUMN col SET NOT NULL;
+  → All rows backfilled, constraint enforced
+
+ALTER nullable→NOT NULL without DEFAULT:
+  → ValueError: "Cannot alter column from nullable to NOT NULL without DEFAULT value"
+  → Options: (1) Add DEFAULT, (2) Manual backfill, (3) Drop column
+```
+
+### Migration Notes
+
+**Behavior Change for ADD_COLUMN**:
+- **Before v3.2.0**: Migration failed with PostgreSQL error
+- **After v3.2.0**: Migration succeeds, existing rows have NULL
+
+**If you need ALL rows to have non-NULL values**, add a DEFAULT:
+```python
+# All rows get the default value immediately
+new_field: str = Field(default="")
+```
+
+**Or use two-step migration**:
+```python
+# Step 1: Add as nullable
+new_field: Optional[str] = None
+
+# Manually backfill, then Step 2: Make required with DEFAULT
+new_field: str = Field(default="backfilled_value")
+```
+
+### Real-World Example
+
+**Problem (before v3.2.0)**:
+```python
+class InscopingContingencySUI(PydanticModel):
+    ixr_number: str = Field(..., max_length=50)  # Adding required field
+
+# ❌ Migration failed: column "ixr_number" contains null values
+```
+
+**Solution (v3.2.0)**:
+```sql
+-- Generated SQL (safe multi-step):
+ALTER TABLE inscoping_contingency_sui ADD COLUMN IF NOT EXISTS "ixr_number" VARCHAR(50) NULL;
+ALTER TABLE inscoping_contingency_sui ALTER COLUMN "ixr_number" SET NOT NULL;
+
+-- ✅ Migration succeeds
+-- Existing rows: ixr_number = NULL
+-- New inserts: ixr_number required
+```
+
+## [3.1.1] - 2025-10-23
+
+### Changed
+
+- **Architecture Refactor**: Established clean separation between database adapters, query builders, and temporal strategies
+  - Removed `UniversalPool` wrapper class - no longer needed with clean adapter architecture
+  - Made `DatabaseAdapter` parameter optional in `TemporalRepository` and `PydanticRepository`
+  - Repository now auto-detects adapter from pool type using `detect_adapter()`
+  - **Benefits**:
+    - Simpler API: No need to manually wrap pools or pass adapters
+    - Backward compatible: All existing code continues to work without changes
+    - Clean architecture: Clear separation of concerns (pool → adapter → query builder → strategy)
+    - Future-proof: Easy to add support for new database types
+
+### Fixed
+
+- **Adapter Detection**: Fixed `detect_adapter()` to handle wrapper classes (PostgresPool, MySQLPool) before `connect()` is called
+  - Previously failed when repository was instantiated before pool connection
+  - Now checks wrapper class module paths in addition to underlying pool
+  - **Impact**: Repositories can now be created at application startup before database connection
+
+- **Identifier Quoting in Repository Methods**: Fixed unquoted identifiers in `count()` and `get_many()` methods
+  - Both methods now use `QueryBuilder.quote_identifier()` for tenant field
+  - Completes the identifier quoting work started in v3.0.1, v3.0.2, and v3.1.0
+  - **Impact**: Repository methods work correctly with reserved keyword tenant fields
+
+- **Version Filter Quoting**: Enhanced `get_current_version_filters()` to quote field names
+  - Base strategy now quotes `deleted_at` field
+  - SCD2 strategy override now quotes `valid_to` field
+  - **Impact**: Prevents SQL errors when soft_delete or SCD2 fields use reserved keywords
+
+### Architecture
+
+The refactored architecture provides clean layering without unnecessary wrappers:
+
+```
+┌─────────────────────────┐
+│  PydanticRepository     │
+│  (High-level API)       │
+└───────────┬─────────────┘
+            │ auto-detects
+            ▼
+┌─────────────────────────┐
+│  DatabaseAdapter        │  ← Removed UniversalPool
+│  (Database Abstraction) │  ← Made optional (auto-detect)
+│  - PostgresAdapter      │
+│  - MySQLAdapter         │
+│  - SQLServerAdapter     │
+└───────────┬─────────────┘
+            │ provides
+            ▼
+┌─────────────────────────┐
+│  QueryBuilder           │
+│  (SQL Generation)       │
+│  - PostgresQueryBuilder │
+└───────────┬─────────────┘
+            │ used by
+            ▼
+┌─────────────────────────┐
+│  Temporal Strategies    │
+│  (Business Logic)       │
+│  - NoneStrategy         │
+│  - CopyOnChangeStrategy │
+│  - SCD2Strategy         │
+└─────────────────────────┘
+```
+
+### Backward Compatibility
+
+**v3.1.1 is fully backward compatible with v3.1.0 and v3.0.x**:
+- All existing code continues to work without changes
+- Adapter parameter can still be explicitly provided if needed
+- Auto-detection only used when adapter is not provided
+- No breaking changes to any public APIs
+
 ## [3.1.0] - 2025-10-22
 
 ### Changed

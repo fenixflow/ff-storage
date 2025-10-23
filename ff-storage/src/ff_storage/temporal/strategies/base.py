@@ -376,6 +376,9 @@ class TemporalStrategy(ABC, Generic[T]):
         This is used to prevent data leakage where historical or deleted
         records are inadvertently returned in queries.
 
+        Uses QueryBuilder to properly quote identifiers, preventing SQL errors
+        when field names are reserved keywords.
+
         Returns:
             List of SQL WHERE conditions (without the WHERE keyword)
 
@@ -387,8 +390,10 @@ class TemporalStrategy(ABC, Generic[T]):
         filters = []
 
         # Soft delete filter (for active records only)
+        # Use QueryBuilder to quote identifier in case field name is a reserved keyword
         if self.soft_delete:
-            filters.append("deleted_at IS NULL")
+            quoted_deleted_at = self.query_builder.quote_identifier("deleted_at")
+            filters.append(f"{quoted_deleted_at} IS NULL")
 
         return filters
 

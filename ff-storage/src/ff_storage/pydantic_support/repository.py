@@ -9,7 +9,7 @@ import logging
 from typing import Optional, TypeVar
 from uuid import UUID
 
-from ..db.query_builder import PostgresQueryBuilder
+from ..db.adapters import detect_adapter
 from ..temporal.registry import get_strategy
 from ..temporal.repository_base import TemporalRepository
 
@@ -81,15 +81,17 @@ class PydanticRepository(TemporalRepository[T]):
         if not hasattr(model_class, "get_temporal_strategy"):
             raise ValueError(f"{model_class.__name__} must inherit from PydanticModel")
 
+        # Auto-detect database adapter from pool
+        adapter = detect_adapter(db_pool)
+
         # Auto-detect strategy from model
         strategy_type = model_class.get_temporal_strategy()
         soft_delete = getattr(model_class, "__soft_delete__", True)
         multi_tenant = getattr(model_class, "__multi_tenant__", True)
         tenant_field = getattr(model_class, "__tenant_field__", "tenant_id")
 
-        # Create QueryBuilder for database-agnostic SQL generation
-        # TODO: Auto-detect database type from db_pool and select appropriate QueryBuilder
-        query_builder = PostgresQueryBuilder()
+        # Get QueryBuilder from adapter for database-specific SQL generation
+        query_builder = adapter.get_query_builder()
 
         # Create strategy instance
         strategy = get_strategy(
@@ -105,6 +107,7 @@ class PydanticRepository(TemporalRepository[T]):
         super().__init__(
             model_class=model_class,
             db_pool=db_pool,
+            adapter=adapter,
             strategy=strategy,
             tenant_id=tenant_id,
             logger=logger or logging.getLogger(__name__),

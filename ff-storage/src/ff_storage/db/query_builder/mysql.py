@@ -47,14 +47,15 @@ class MySQLQueryBuilder(QueryBuilder):
             returning_fields: Ignored for MySQL
 
         Returns:
-            Tuple of (query, values) with named parameters
+            Tuple of (query with $1 placeholders, list of values)
         """
         quoted_table = self.quote_identifier(table)
         columns = list(data.keys())
         quoted_columns = [self.quote_identifier(col) for col in columns]
+        values = [data[col] for col in columns]
 
-        # MySQL uses named parameters
-        params = [f"%(col_{i})s" for i in range(len(columns))]
+        # Use $1, $2, $3 placeholders (adapter will convert to %(p1)s format)
+        params = [f"${i + 1}" for i in range(len(columns))]
 
         query = f"""
             INSERT INTO {quoted_table}
@@ -62,10 +63,7 @@ class MySQLQueryBuilder(QueryBuilder):
             VALUES ({", ".join(params)})
         """.strip()
 
-        # Convert to named parameter dict
-        param_dict = {f"col_{i}": data[col] for i, col in enumerate(columns)}
-
-        return query, param_dict
+        return query, values
 
     def build_update(
         self,
@@ -84,32 +82,29 @@ class MySQLQueryBuilder(QueryBuilder):
             returning_fields: Ignored for MySQL
 
         Returns:
-            Tuple of (query, param_dict)
+            Tuple of (query with $1 placeholders, list of values)
         """
         quoted_table = self.quote_identifier(table)
+        values = []
+        param_counter = 1
 
         # Build SET clause
         set_parts = []
-        param_dict = {}
-        param_counter = 0
-
         for col, value in data.items():
             quoted_col = self.quote_identifier(col)
-            param_name = f"set_{param_counter}"
-            set_parts.append(f"{quoted_col} = %({param_name})s")
-            param_dict[param_name] = value
+            set_parts.append(f"{quoted_col} = ${param_counter}")
+            values.append(value)
             param_counter += 1
 
         # Build WHERE clause
         where_parts = []
         for col, value in where.items():
             quoted_col = self.quote_identifier(col)
-            param_name = f"where_{param_counter}"
             if value is None:
                 where_parts.append(f"{quoted_col} IS NULL")
             else:
-                where_parts.append(f"{quoted_col} = %({param_name})s")
-                param_dict[param_name] = value
+                where_parts.append(f"{quoted_col} = ${param_counter}")
+                values.append(value)
                 param_counter += 1
 
         query = f"""
@@ -118,7 +113,7 @@ class MySQLQueryBuilder(QueryBuilder):
             WHERE {" AND ".join(where_parts)}
         """.strip()
 
-        return query, param_dict
+        return query, values
 
     def build_delete(
         self, table: str, where: Dict[str, Any], returning_fields: Optional[List[str]] = None
@@ -132,23 +127,21 @@ class MySQLQueryBuilder(QueryBuilder):
             returning_fields: Ignored for MySQL
 
         Returns:
-            Tuple of (query, param_dict)
+            Tuple of (query with $1 placeholders, list of values)
         """
         quoted_table = self.quote_identifier(table)
+        values = []
+        param_counter = 1
 
         # Build WHERE clause
         where_parts = []
-        param_dict = {}
-        param_counter = 0
-
         for col, value in where.items():
             quoted_col = self.quote_identifier(col)
             if value is None:
                 where_parts.append(f"{quoted_col} IS NULL")
             else:
-                param_name = f"where_{param_counter}"
-                where_parts.append(f"{quoted_col} = %({param_name})s")
-                param_dict[param_name] = value
+                where_parts.append(f"{quoted_col} = ${param_counter}")
+                values.append(value)
                 param_counter += 1
 
         query = f"""
@@ -156,7 +149,7 @@ class MySQLQueryBuilder(QueryBuilder):
             WHERE {" AND ".join(where_parts)}
         """.strip()
 
-        return query, param_dict
+        return query, values
 
     def build_select(
         self,
@@ -179,7 +172,7 @@ class MySQLQueryBuilder(QueryBuilder):
             offset: OFFSET value
 
         Returns:
-            Tuple of (query, param_dict)
+            Tuple of (query with $1 placeholders, list of values)
         """
         quoted_table = self.quote_identifier(table)
 
@@ -191,12 +184,12 @@ class MySQLQueryBuilder(QueryBuilder):
             select_clause = "*"
 
         query_parts = [f"SELECT {select_clause}", f"FROM {quoted_table}"]
-        param_dict = {}
+        values = []
+        param_counter = 1
 
         # WHERE clause
         if where:
             where_parts = []
-            param_counter = 0
             for col, value in where.items():
                 quoted_col = self.quote_identifier(col)
                 if value is None:
@@ -205,15 +198,13 @@ class MySQLQueryBuilder(QueryBuilder):
                     # IN clause
                     placeholders = []
                     for v in value:
-                        param_name = f"where_{param_counter}"
-                        placeholders.append(f"%({param_name})s")
-                        param_dict[param_name] = v
+                        placeholders.append(f"${param_counter}")
+                        values.append(v)
                         param_counter += 1
                     where_parts.append(f"{quoted_col} IN ({', '.join(placeholders)})")
                 else:
-                    param_name = f"where_{param_counter}"
-                    where_parts.append(f"{quoted_col} = %({param_name})s")
-                    param_dict[param_name] = value
+                    where_parts.append(f"{quoted_col} = ${param_counter}")
+                    values.append(value)
                     param_counter += 1
 
             if where_parts:
@@ -234,7 +225,7 @@ class MySQLQueryBuilder(QueryBuilder):
             query_parts.append(f"OFFSET {offset}")
 
         query = " ".join(query_parts)
-        return query, param_dict
+        return query, values
 
     def get_param_style(self) -> str:
         """MySQL uses named parameters."""
@@ -248,18 +239,18 @@ class MySQLQueryBuilder(QueryBuilder):
 
         Args:
             filters: Dict of column -> value filters
-            base_param_count: Starting parameter count
+            base_param_count: Starting parameter count (1-indexed for $1, $2, etc.)
             operator: AND or OR
 
         Returns:
-            Tuple of (where_clause, values)
+            Tuple of (where_clause with $N placeholders, list of values)
         """
         if not filters:
             return "", []
 
         where_parts = []
-        param_dict = {}
-        param_counter = base_param_count
+        values = []
+        param_counter = base_param_count + 1
 
         for col, value in filters.items():
             quoted_col = self.quote_identifier(col)
@@ -269,16 +260,14 @@ class MySQLQueryBuilder(QueryBuilder):
                 # IN clause
                 placeholders = []
                 for v in value:
-                    param_name = f"filter_{param_counter}"
-                    placeholders.append(f"%({param_name})s")
-                    param_dict[param_name] = v
+                    placeholders.append(f"${param_counter}")
+                    values.append(v)
                     param_counter += 1
                 where_parts.append(f"{quoted_col} IN ({', '.join(placeholders)})")
             else:
-                param_name = f"filter_{param_counter}"
-                where_parts.append(f"{quoted_col} = %({param_name})s")
-                param_dict[param_name] = value
+                where_parts.append(f"{quoted_col} = ${param_counter}")
+                values.append(value)
                 param_counter += 1
 
         where_clause = f" {operator} ".join(where_parts)
-        return where_clause, param_dict
+        return where_clause, values

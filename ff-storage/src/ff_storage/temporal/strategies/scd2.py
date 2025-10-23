@@ -139,6 +139,7 @@ class SCD2Strategy(TemporalStrategy[T]):
         self,
         data: Dict[str, Any],
         db_pool,
+        adapter,
         tenant_id: Optional[UUID] = None,
         user_id: Optional[UUID] = None,
     ) -> T:
@@ -197,6 +198,7 @@ class SCD2Strategy(TemporalStrategy[T]):
         id: UUID,
         data: Dict[str, Any],
         db_pool,
+        adapter,
         tenant_id: Optional[UUID] = None,
         user_id: Optional[UUID] = None,
     ) -> T:
@@ -303,6 +305,7 @@ class SCD2Strategy(TemporalStrategy[T]):
         self,
         id: UUID,
         db_pool,
+        adapter,
         tenant_id: Optional[UUID] = None,
         user_id: Optional[UUID] = None,
     ) -> bool:
@@ -735,10 +738,15 @@ class SCD2Strategy(TemporalStrategy[T]):
         - deleted_at IS NULL (not deleted)
 
         Returns:
-            List of SQL WHERE conditions
+            List of SQL WHERE conditions (with properly quoted identifiers)
         """
-        filters = super().get_current_version_filters()  # Gets deleted_at IS NULL
-        filters.append("valid_to IS NULL")  # Add SCD2 current version filter
+        # Get base filters (deleted_at IS NULL) with proper quoting
+        filters = super().get_current_version_filters()
+
+        # Add SCD2 current version filter with proper quoting
+        quoted_valid_to = self.query_builder.quote_identifier("valid_to")
+        filters.append(f"{quoted_valid_to} IS NULL")
+
         return filters
 
     def _get_table_name(self) -> str:
