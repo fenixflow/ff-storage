@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.2.1] - 2025-10-23
+
+### Fixed
+
+- **PostgreSQL Float Type Normalization**: Fixed invalid DDL generation for float/double precision columns
+  - **Problem**: Introspecting DOUBLE PRECISION columns stored raw native types (e.g., "float8", "DOUBLE") which caused "type does not exist" errors when generating DDL
+  - **Root Cause**: Schema introspection didn't normalize PostgreSQL float type names or map them to ColumnType.DECIMAL
+  - **Solution**:
+    - Added float type mappings to `_map_postgres_type` (float8, float4, double precision, real)
+    - Normalized `native_type` during introspection to PostgreSQL-valid forms (DOUBLE PRECISION, REAL)
+    - Updated SQL parser to handle DOUBLE PRECISION and REAL types
+  - **Impact**: Pydantic float fields and introspected float columns now generate valid PostgreSQL DDL
+
 ## [3.2.0] - 2025-10-23
 
 ### Fixed

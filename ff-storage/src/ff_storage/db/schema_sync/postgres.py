@@ -65,6 +65,16 @@ class PostgresSchemaIntrospector(SchemaIntrospectorBase):
                 final_precision = None
                 final_scale = None
 
+            # Normalize float types to PostgreSQL-valid forms
+            native_type_raw = udt_name or data_type
+            native_lower = native_type_raw.lower()
+            if native_lower in ("float8", "double precision", "double"):
+                native_type_normalized = "DOUBLE PRECISION"
+            elif native_lower in ("float4", "real"):
+                native_type_normalized = "REAL"
+            else:
+                native_type_normalized = native_type_raw
+
             columns.append(
                 ColumnDefinition(
                     name=col_name,
@@ -74,7 +84,7 @@ class PostgresSchemaIntrospector(SchemaIntrospectorBase):
                     max_length=max_len,
                     precision=final_precision,
                     scale=final_scale,
-                    native_type=udt_name or data_type,
+                    native_type=native_type_normalized,
                 )
             )
 
@@ -154,6 +164,12 @@ class PostgresSchemaIntrospector(SchemaIntrospectorBase):
             "jsonb": ColumnType.JSONB,
             "numeric": ColumnType.DECIMAL,
             "decimal": ColumnType.DECIMAL,
+            # Float types
+            "float8": ColumnType.DECIMAL,  # DOUBLE PRECISION internal name
+            "double precision": ColumnType.DECIMAL,
+            "float4": ColumnType.DECIMAL,  # REAL internal name
+            "real": ColumnType.DECIMAL,
+            "double": ColumnType.DECIMAL,  # Handle if someone uses just "double"
         }
 
         # Check for array types
@@ -245,9 +261,9 @@ class PostgresSQLParser(SQLParserBase):
                 col_def = col_match.group(2).rstrip(",").strip()
 
                 # Extract type (first word or multi-word type)
-                # Handle types like: UUID, VARCHAR(255), TIMESTAMP WITH TIME ZONE
+                # Handle types like: UUID, VARCHAR(255), TIMESTAMP WITH TIME ZONE, DOUBLE PRECISION
                 type_match = re.match(
-                    r"([A-Z]+(?:\s+WITH\s+TIME\s+ZONE)?(?:\s+VARYING)?(?:\([^)]+\))?)",
+                    r"([A-Z]+(?:\s+(?:WITH\s+TIME\s+ZONE|VARYING|PRECISION))?(?:\([^)]+\))?)",
                     col_def,
                     re.IGNORECASE,
                 )
@@ -358,6 +374,10 @@ class PostgresSQLParser(SQLParserBase):
             return ColumnType.JSONB
         elif type_upper.endswith("[]"):
             return ColumnType.ARRAY
+        elif "DOUBLE" in type_upper or "FLOAT8" in type_upper:
+            return ColumnType.DECIMAL
+        elif "REAL" in type_upper or "FLOAT4" in type_upper or type_upper == "FLOAT":
+            return ColumnType.DECIMAL
         elif type_upper.startswith("NUMERIC") or type_upper.startswith("DECIMAL"):
             return ColumnType.DECIMAL
         else:
