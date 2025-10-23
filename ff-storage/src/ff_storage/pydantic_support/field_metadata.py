@@ -150,17 +150,26 @@ def Field(
         if isinstance(existing_extra, dict):
             json_schema_extra.update(existing_extra)
 
+    # Build Field arguments - don't pass both default and default_factory
+    field_args = {
+        "description": description,
+        "max_length": max_length,
+        "min_length": min_length,
+        "ge": ge,
+        "le": le,
+        "gt": gt,
+        "lt": lt,
+        "json_schema_extra": json_schema_extra if json_schema_extra else None,
+    }
+
+    # Only add default OR default_factory, not both
+    if default_factory is not None:
+        field_args["default_factory"] = default_factory
+    else:
+        field_args["default"] = default
+
+    # Add any additional kwargs
+    field_args.update(kwargs)
+
     # Return Pydantic Field with enriched metadata
-    return PydanticField(
-        default=default,
-        default_factory=default_factory,
-        description=description,
-        max_length=max_length,
-        min_length=min_length,
-        ge=ge,
-        le=le,
-        gt=gt,
-        lt=lt,
-        json_schema_extra=json_schema_extra if json_schema_extra else None,
-        **kwargs,
-    )
+    return PydanticField(**field_args)

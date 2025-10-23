@@ -265,8 +265,11 @@ class TestCacheMutation:
             TestModel(id=ids[2], name="Model3", value=3, tags=["c"]),
         ]
 
-        strategy = AsyncMock()
+        from unittest.mock import MagicMock
+
+        strategy = MagicMock()  # Use regular MagicMock instead of AsyncMock
         strategy.multi_tenant = False
+        strategy.get_current_version_filters.return_value = []  # Return empty list for no filters
 
         db_pool = AsyncMock()
         # Mock fetch_all to return rows

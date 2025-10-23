@@ -333,3 +333,39 @@ class SQLServerQueryBuilder(QueryBuilder):
         """.strip()
 
         return query, values
+
+    def build_where_clause(
+        self, filters: Dict[str, Any], base_param_count: int = 0, operator: str = "AND"
+    ) -> Tuple[str, List[Any]]:
+        """
+        Build WHERE clause from filters.
+
+        Args:
+            filters: Dict of column -> value filters
+            base_param_count: Starting parameter count (unused for SQL Server)
+            operator: AND or OR
+
+        Returns:
+            Tuple of (where_clause, values)
+        """
+        if not filters:
+            return "", []
+
+        where_parts = []
+        values = []
+
+        for col, value in filters.items():
+            quoted_col = self.quote_identifier(col)
+            if value is None:
+                where_parts.append(f"{quoted_col} IS NULL")
+            elif isinstance(value, list):
+                # IN clause
+                placeholders = ", ".join(["?" for _ in value])
+                where_parts.append(f"{quoted_col} IN ({placeholders})")
+                values.extend(value)
+            else:
+                where_parts.append(f"{quoted_col} = ?")
+                values.append(value)
+
+        where_clause = f" {operator} ".join(where_parts)
+        return where_clause, values

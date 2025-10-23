@@ -77,9 +77,14 @@ class TestPostgresAdapter:
     async def test_execute_with_returning(self):
         """Test PostgreSQL RETURNING clause execution."""
         adapter = PostgresAdapter()
-        pool = AsyncMock()
+        pool = MagicMock()  # Use regular MagicMock for pool
         conn = AsyncMock()
-        pool.acquire.return_value.__aenter__.return_value = conn
+
+        # Configure pool.acquire() to return an async context manager
+        acquire_cm = MagicMock()
+        acquire_cm.__aenter__ = AsyncMock(return_value=conn)
+        acquire_cm.__aexit__ = AsyncMock(return_value=None)
+        pool.acquire.return_value = acquire_cm
 
         query = "INSERT INTO users (name, email) VALUES ($1, $2) RETURNING *"
         params = ["John", "john@test.com"]
@@ -116,12 +121,21 @@ class TestMySQLAdapter:
     async def test_execute_with_returning(self):
         """Test MySQL INSERT with LAST_INSERT_ID fallback."""
         adapter = MySQLAdapter()
-        pool = AsyncMock()
-        conn = AsyncMock()
+        pool = MagicMock()  # Use regular MagicMock for pool
+        conn = MagicMock()
         cursor = AsyncMock()
 
-        pool.acquire.return_value.__aenter__.return_value = conn
-        conn.cursor.return_value.__aenter__.return_value = cursor
+        # Configure pool.acquire() to return an async context manager
+        acquire_cm = MagicMock()
+        acquire_cm.__aenter__ = AsyncMock(return_value=conn)
+        acquire_cm.__aexit__ = AsyncMock(return_value=None)
+        pool.acquire.return_value = acquire_cm
+
+        # Configure conn.cursor() to return an async context manager
+        cursor_cm = MagicMock()
+        cursor_cm.__aenter__ = AsyncMock(return_value=cursor)
+        cursor_cm.__aexit__ = AsyncMock(return_value=None)
+        conn.cursor.return_value = cursor_cm
 
         query = "INSERT INTO users (name, email) VALUES (%(p1)s, %(p2)s)"
         params = {"p1": "John", "p2": "john@test.com"}
@@ -161,19 +175,33 @@ class TestSQLServerAdapter:
     async def test_execute_with_returning(self):
         """Test SQL Server OUTPUT clause execution."""
         adapter = SQLServerAdapter()
-        pool = AsyncMock()
-        conn = AsyncMock()
-        cursor = AsyncMock()
+        pool = MagicMock()  # Use regular MagicMock for pool
+        conn = MagicMock()
+        cursor = MagicMock()
 
-        pool.acquire.return_value.__aenter__.return_value = conn
-        conn.cursor.return_value.__aenter__.return_value = cursor
+        # Configure pool.acquire() to return an async context manager
+        acquire_cm = MagicMock()
+        acquire_cm.__aenter__ = AsyncMock(return_value=conn)
+        acquire_cm.__aexit__ = AsyncMock(return_value=None)
+        pool.acquire.return_value = acquire_cm
+
+        # Configure conn.cursor() to return an async context manager
+        cursor_cm = MagicMock()
+        cursor_cm.__aenter__ = AsyncMock(return_value=cursor)
+        cursor_cm.__aexit__ = AsyncMock(return_value=None)
+        conn.cursor.return_value = cursor_cm
 
         # SQL Server uses OUTPUT instead of RETURNING
         query = "INSERT INTO users (name, email) OUTPUT INSERTED.* VALUES (?, ?)"
         params = ["John", "john@test.com"]
 
         expected_row = {"id": uuid4(), "name": "John", "email": "john@test.com"}
-        cursor.fetchone.return_value = expected_row
+        # SQL Server cursor returns tuples, not dicts
+        cursor.fetchone = AsyncMock(
+            return_value=(expected_row["id"], expected_row["name"], expected_row["email"])
+        )
+        cursor.description = [("id",), ("name",), ("email",)]
+        cursor.execute = AsyncMock()
 
         result = await adapter.execute_with_returning(pool, query, params)
 
@@ -214,10 +242,15 @@ class TestUniversalPool:
     async def test_postgres_pool_operations(self):
         """Test operations with PostgreSQL pool."""
         # Mock asyncpg pool
-        base_pool = AsyncMock()
+        base_pool = MagicMock()
         base_pool.__module__ = "asyncpg.pool"
         conn = AsyncMock()
-        base_pool.acquire.return_value.__aenter__.return_value = conn
+
+        # Configure pool.acquire() to return an async context manager
+        acquire_cm = MagicMock()
+        acquire_cm.__aenter__ = AsyncMock(return_value=conn)
+        acquire_cm.__aexit__ = AsyncMock(return_value=None)
+        base_pool.acquire.return_value = acquire_cm
 
         pool = UniversalPool(base_pool)
 
@@ -239,12 +272,22 @@ class TestUniversalPool:
     async def test_mysql_pool_operations(self):
         """Test operations with MySQL pool."""
         # Mock aiomysql pool
-        base_pool = AsyncMock()
+        base_pool = MagicMock()
         base_pool.__module__ = "aiomysql.pool"
-        conn = AsyncMock()
+        conn = MagicMock()
         cursor = AsyncMock()
-        base_pool.acquire.return_value.__aenter__.return_value = conn
-        conn.cursor.return_value.__aenter__.return_value = cursor
+
+        # Configure pool.acquire() to return an async context manager
+        acquire_cm = MagicMock()
+        acquire_cm.__aenter__ = AsyncMock(return_value=conn)
+        acquire_cm.__aexit__ = AsyncMock(return_value=None)
+        base_pool.acquire.return_value = acquire_cm
+
+        # Configure conn.cursor() to return an async context manager
+        cursor_cm = MagicMock()
+        cursor_cm.__aenter__ = AsyncMock(return_value=cursor)
+        cursor_cm.__aexit__ = AsyncMock(return_value=None)
+        conn.cursor.return_value = cursor_cm
 
         pool = UniversalPool(base_pool)
 
@@ -265,12 +308,22 @@ class TestUniversalPool:
     async def test_sqlserver_pool_operations(self):
         """Test operations with SQL Server pool."""
         # Mock aioodbc pool
-        base_pool = AsyncMock()
+        base_pool = MagicMock()
         base_pool.__module__ = "aioodbc.pool"
-        conn = AsyncMock()
-        cursor = AsyncMock()
-        base_pool.acquire.return_value.__aenter__.return_value = conn
-        conn.cursor.return_value.__aenter__.return_value = cursor
+        conn = MagicMock()
+        cursor = MagicMock()
+
+        # Configure pool.acquire() to return an async context manager
+        acquire_cm = MagicMock()
+        acquire_cm.__aenter__ = AsyncMock(return_value=conn)
+        acquire_cm.__aexit__ = AsyncMock(return_value=None)
+        base_pool.acquire.return_value = acquire_cm
+
+        # Configure conn.cursor() to return an async context manager
+        cursor_cm = MagicMock()
+        cursor_cm.__aenter__ = AsyncMock(return_value=cursor)
+        cursor_cm.__aexit__ = AsyncMock(return_value=None)
+        conn.cursor.return_value = cursor_cm
 
         pool = UniversalPool(base_pool)
 
@@ -278,7 +331,10 @@ class TestUniversalPool:
         query = "UPDATE users SET name = $1 WHERE id = $2 RETURNING *"
         params = ["Jane", 42]
         expected = {"id": 42, "name": "Jane"}
-        cursor.fetchone.return_value = expected
+        # SQL Server cursor returns tuples, not dicts
+        cursor.fetchone = AsyncMock(return_value=(expected["id"], expected["name"]))
+        cursor.description = [("id",), ("name",)]
+        cursor.execute = AsyncMock()
 
         result = await pool.execute_with_returning(query, params)
         assert result == expected
@@ -292,8 +348,15 @@ class TestUniversalPool:
     @pytest.mark.asyncio
     async def test_universal_pool_preserves_original_interface(self):
         """Test that UniversalPool preserves the original pool's acquire() interface."""
-        base_pool = AsyncMock()
+        base_pool = MagicMock()
         base_pool.__module__ = "asyncpg.pool"
+
+        # Configure pool.acquire() to return an async context manager
+        conn = AsyncMock()
+        acquire_cm = MagicMock()
+        acquire_cm.__aenter__ = AsyncMock(return_value=conn)
+        acquire_cm.__aexit__ = AsyncMock(return_value=None)
+        base_pool.acquire.return_value = acquire_cm
 
         pool = UniversalPool(base_pool)
 
@@ -301,8 +364,8 @@ class TestUniversalPool:
         assert hasattr(pool, "acquire")
 
         # Test that acquire returns a connection
-        async with pool.acquire() as conn:
-            assert conn is not None
+        async with pool.acquire() as test_conn:
+            assert test_conn is conn
 
 
 if __name__ == "__main__":

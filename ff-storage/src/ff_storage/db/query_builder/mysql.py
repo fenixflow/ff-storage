@@ -238,3 +238,46 @@ class MySQLQueryBuilder(QueryBuilder):
     def get_param_style(self) -> str:
         """MySQL uses named parameters."""
         return "named"
+
+    def build_where_clause(
+        self, filters: Dict[str, Any], base_param_count: int = 0, operator: str = "AND"
+    ) -> Tuple[str, List[Any]]:
+        """
+        Build WHERE clause from filters.
+
+        Args:
+            filters: Dict of column -> value filters
+            base_param_count: Starting parameter count
+            operator: AND or OR
+
+        Returns:
+            Tuple of (where_clause, values)
+        """
+        if not filters:
+            return "", []
+
+        where_parts = []
+        param_dict = {}
+        param_counter = base_param_count
+
+        for col, value in filters.items():
+            quoted_col = self.quote_identifier(col)
+            if value is None:
+                where_parts.append(f"{quoted_col} IS NULL")
+            elif isinstance(value, list):
+                # IN clause
+                placeholders = []
+                for v in value:
+                    param_name = f"filter_{param_counter}"
+                    placeholders.append(f"%({param_name})s")
+                    param_dict[param_name] = v
+                    param_counter += 1
+                where_parts.append(f"{quoted_col} IN ({', '.join(placeholders)})")
+            else:
+                param_name = f"filter_{param_counter}"
+                where_parts.append(f"{quoted_col} = %({param_name})s")
+                param_dict[param_name] = value
+                param_counter += 1
+
+        where_clause = f" {operator} ".join(where_parts)
+        return where_clause, param_dict
