@@ -56,6 +56,15 @@ class PostgresSchemaIntrospector(SchemaIntrospectorBase):
             # Map PostgreSQL type to generic type
             column_type = self._map_postgres_type(data_type, udt_name)
 
+            # Normalize boolean defaults for consistent comparison
+            # PostgreSQL returns lowercase 'false'/'true', but we use uppercase 'FALSE'/'TRUE'
+            if default and column_type == ColumnType.BOOLEAN:
+                default_lower = default.lower().strip()
+                if default_lower in ("false", "f", "0", "no"):
+                    default = "FALSE"
+                elif default_lower in ("true", "t", "1", "yes"):
+                    default = "TRUE"
+
             # Only DECIMAL types have user-specified precision/scale
             # (Other numeric types like INTEGER have DB-generated precision we ignore)
             if column_type == ColumnType.DECIMAL:

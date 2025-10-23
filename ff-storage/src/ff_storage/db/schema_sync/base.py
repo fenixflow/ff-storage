@@ -270,6 +270,26 @@ class SchemaDifferBase:
     def __init__(self, logger=None):
         self.logger = logger
 
+    def _normalize_default(self, default: Optional[str]) -> Optional[str]:
+        """
+        Normalize default values for comparison (case-insensitive booleans).
+
+        Args:
+            default: Default value string
+
+        Returns:
+            Normalized default value
+        """
+        if default is None:
+            return None
+        default_lower = default.lower().strip()
+        # Normalize boolean values to uppercase
+        if default_lower in ("false", "f", "0", "no"):
+            return "FALSE"
+        elif default_lower in ("true", "t", "1", "yes"):
+            return "TRUE"
+        return default
+
     def _columns_equal(self, col1: ColumnDefinition, col2: ColumnDefinition) -> bool:
         """
         Deep comparison of column definitions.
@@ -286,7 +306,7 @@ class SchemaDifferBase:
         return (
             col1.column_type == col2.column_type
             and col1.nullable == col2.nullable
-            and col1.default == col2.default
+            and self._normalize_default(col1.default) == self._normalize_default(col2.default)
             and col1.max_length == col2.max_length
             and col1.precision == col2.precision
             and col1.scale == col2.scale

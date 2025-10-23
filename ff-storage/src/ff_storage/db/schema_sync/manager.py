@@ -428,9 +428,24 @@ class SchemaManager:
                 transaction_sql,
                 context={"trusted_source": True, "source": "schema_manager.apply_changes"},
             )
+
+            # Group changes by table for better readability
+            changes_by_table = {}
+            for change in changes_to_apply:
+                table = change.table_name
+                if table not in changes_by_table:
+                    changes_by_table[table] = []
+                changes_by_table[table].append(change.description)
+
+            # Build formatted summary
+            summary_lines = []
+            for table, table_changes in sorted(changes_by_table.items()):
+                summary_lines.append(f"\n  {table}: ({len(table_changes)} changes)")
+                for desc in table_changes:
+                    summary_lines.append(f"    - {desc}")
+
             self.logger.info(
-                f"Applied {len(statements)} schema changes successfully",
-                extra={"changes": [c.description for c in changes_to_apply]},
+                f"Applied {len(statements)} schema changes successfully:{''.join(summary_lines)}"
             )
             return len(statements)
         except Exception as e:

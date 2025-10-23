@@ -10,6 +10,7 @@ from uuid import uuid4
 
 import pytest
 from ff_storage import Field, PydanticModel
+from ff_storage.db.adapters import PostgresAdapter
 from ff_storage.exceptions import TemporalStrategyError
 from ff_storage.temporal.repository_base import TemporalRepository
 
@@ -52,6 +53,7 @@ class TestConnectionResilience:
             model_class=TestProduct,
             db_pool=pool,
             strategy=strategy,
+            adapter=PostgresAdapter(),
             max_retries=3,
         )
 
@@ -81,6 +83,7 @@ class TestConnectionResilience:
             model_class=TestProduct,
             db_pool=pool,
             strategy=strategy,
+            adapter=PostgresAdapter(),
             max_retries=2,
         )
 
@@ -127,6 +130,7 @@ class TestConnectionResilience:
             model_class=TestProduct,
             db_pool=pool,
             strategy=strategy,
+            adapter=PostgresAdapter(),
             max_retries=3,
         )
 
@@ -164,6 +168,7 @@ class TestConnectionResilience:
             model_class=TestProduct,
             db_pool=pool,
             strategy=strategy,
+            adapter=PostgresAdapter(),
         )
 
         # Operation should fail and rollback
@@ -229,6 +234,7 @@ class TestConnectionResilience:
             model_class=TestProduct,
             db_pool=pool,
             strategy=strategy,
+            adapter=PostgresAdapter(),
         )
 
         # Run concurrent operations
@@ -278,6 +284,7 @@ class TestConnectionResilience:
             model_class=TestProduct,
             db_pool=pool,
             strategy=strategy,
+            adapter=PostgresAdapter(),
         )
 
         # Try to get multiple records
@@ -338,6 +345,7 @@ class TestConnectionResilience:
             model_class=TestProduct,
             db_pool=pool,
             strategy=strategy,
+            adapter=PostgresAdapter(),
         )
 
         # Operation fails

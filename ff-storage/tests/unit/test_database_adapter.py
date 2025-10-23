@@ -27,9 +27,12 @@ class TestDatabaseAdapterDetection:
 
     def test_detect_postgres_pool(self):
         """Test detection of PostgreSQL asyncpg pool."""
-        # Mock asyncpg pool
-        pool = MagicMock()
-        pool.__module__ = "asyncpg.pool"
+
+        # Create a mock class with the correct __module__
+        class MockAsyncpgPool:
+            __module__ = "asyncpg.pool"
+
+        pool = MockAsyncpgPool()
 
         adapter = detect_adapter(pool)
         assert isinstance(adapter, PostgresAdapter)
@@ -37,9 +40,12 @@ class TestDatabaseAdapterDetection:
 
     def test_detect_mysql_pool(self):
         """Test detection of MySQL aiomysql pool."""
-        # Mock aiomysql pool
-        pool = MagicMock()
-        pool.__module__ = "aiomysql.pool"
+
+        # Create a mock class with the correct __module__
+        class MockAiomysqlPool:
+            __module__ = "aiomysql.pool"
+
+        pool = MockAiomysqlPool()
 
         adapter = detect_adapter(pool)
         assert isinstance(adapter, MySQLAdapter)
@@ -47,9 +53,12 @@ class TestDatabaseAdapterDetection:
 
     def test_detect_sqlserver_pool(self):
         """Test detection of SQL Server aioodbc pool."""
-        # Mock aioodbc pool
-        pool = MagicMock()
-        pool.__module__ = "aioodbc.pool"
+
+        # Create a mock class with the correct __module__
+        class MockAioodbcPool:
+            __module__ = "aioodbc.pool"
+
+        pool = MockAioodbcPool()
 
         adapter = detect_adapter(pool)
         assert isinstance(adapter, SQLServerAdapter)

@@ -10,6 +10,7 @@ from uuid import uuid4
 
 import pytest
 from ff_storage import Field, PydanticModel
+from ff_storage.db.adapters import PostgresAdapter
 from ff_storage.temporal.repository_base import TemporalRepository
 
 
@@ -52,6 +53,7 @@ class TestCacheMutation:
             model_class=TestModel,
             db_pool=db_pool,
             strategy=strategy,
+            adapter=PostgresAdapter(),
             cache_enabled=True,
             cache_ttl=300,
         )
@@ -98,6 +100,7 @@ class TestCacheMutation:
             model_class=TestModel,
             db_pool=db_pool,
             strategy=strategy,
+            adapter=PostgresAdapter(),
             cache_enabled=True,
             cache_ttl=300,
         )
@@ -131,7 +134,11 @@ class TestCacheMutation:
 
         db_pool = AsyncMock()
         repo = TemporalRepository(
-            model_class=TestModel, db_pool=db_pool, strategy=strategy, cache_enabled=True
+            model_class=TestModel,
+            db_pool=db_pool,
+            strategy=strategy,
+            adapter=PostgresAdapter(),
+            cache_enabled=True,
         )
 
         # Get and cache
@@ -167,7 +174,11 @@ class TestCacheMutation:
 
         db_pool = AsyncMock()
         repo = TemporalRepository(
-            model_class=TestModel, db_pool=db_pool, strategy=strategy, cache_enabled=True
+            model_class=TestModel,
+            db_pool=db_pool,
+            strategy=strategy,
+            adapter=PostgresAdapter(),
+            cache_enabled=True,
         )
 
         # Get and cache
@@ -198,7 +209,11 @@ class TestCacheMutation:
 
         db_pool = AsyncMock()
         repo = TemporalRepository(
-            model_class=TestModel, db_pool=db_pool, strategy=strategy, cache_enabled=True
+            model_class=TestModel,
+            db_pool=db_pool,
+            strategy=strategy,
+            adapter=PostgresAdapter(),
+            cache_enabled=True,
         )
 
         # Get multiple times from cache
@@ -239,7 +254,11 @@ class TestCacheMutation:
 
         db_pool = AsyncMock()
         repo = TemporalRepository(
-            model_class=TestModel, db_pool=db_pool, strategy=strategy, cache_enabled=True
+            model_class=TestModel,
+            db_pool=db_pool,
+            strategy=strategy,
+            adapter=PostgresAdapter(),
+            cache_enabled=True,
         )
 
         # Get and cache original
@@ -281,7 +300,11 @@ class TestCacheMutation:
         db_pool.fetch_all = AsyncMock(return_value=rows)
 
         repo = TemporalRepository(
-            model_class=TestModel, db_pool=db_pool, strategy=strategy, cache_enabled=True
+            model_class=TestModel,
+            db_pool=db_pool,
+            strategy=strategy,
+            adapter=PostgresAdapter(),
+            cache_enabled=True,
         )
 
         # Mock _dict_to_model
@@ -318,6 +341,7 @@ class TestCacheMutation:
             model_class=TestModel,
             db_pool=db_pool,
             strategy=strategy,
+            adapter=PostgresAdapter(),
             cache_enabled=False,  # Cache disabled
         )
 
