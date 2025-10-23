@@ -157,7 +157,10 @@ class TemporalRepository(Generic[T]):
                 if time.time() < expiry:
                     if self._metrics:
                         self._metrics.increment("cache.hits")
-                    return value
+                    # Return a deep copy to prevent mutation
+                    import copy
+
+                    return copy.deepcopy(value)
                 else:
                     # Expired, remove from cache
                     del self._cache[cache_key]
@@ -171,9 +174,14 @@ class TemporalRepository(Generic[T]):
         if not self.cache_enabled:
             return
 
+        # Store a deep copy to prevent mutation
+        import copy
+
+        cached_value = copy.deepcopy(value)
+
         expiry = time.time() + self.cache_ttl
         async with self._cache_lock:
-            self._cache[cache_key] = (value, expiry)
+            self._cache[cache_key] = (cached_value, expiry)
 
             # Limit cache size (simple LRU by removing oldest entries)
             if len(self._cache) > 1000:
@@ -779,6 +787,7 @@ class TemporalRepository(Generic[T]):
             cache_key = self._get_cache_key("get", id=str(id), **kwargs)
             cached = await self._get_cached(cache_key)
             if cached is not None:
+                # _get_cached already returns a deep copy
                 results[id] = cached
             else:
                 uncached_ids.append(id)
