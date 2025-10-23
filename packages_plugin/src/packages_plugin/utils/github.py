@@ -126,9 +126,7 @@ def add_github_remote(package_name: str) -> tuple[bool, str]:
         return False, f"Failed to add remote: {e.stderr}"
 
 
-def push_to_github(
-    package_name: str, package_path: str, branch: str = "main"
-) -> tuple[bool, str]:
+def push_to_github(package_name: str, package_path: str, branch: str = "main") -> tuple[bool, str]:
     """Push package snapshot to GitHub from remote origin/main.
 
     Creates a clean GitHub mirror with:

@@ -168,23 +168,36 @@ export PYPI_TOKEN="pypi-YOUR_PRODUCTION_TOKEN"
 export TEST_PYPI_TOKEN="pypi-YOUR_TEST_TOKEN"
 ```
 
-### Using the Scripts
+### Using the Packages Plugin
+
+First, install the packages plugin:
+```bash
+uv pip install -e ./packages_plugin
+```
+
+Then use the Fenix CLI commands:
 
 ```bash
+# Check publishing configuration
+fenix ff-packages check
+
+# List all packages with current versions
+fenix ff-packages list
+
 # Test with dry-run first
-./scripts/publish_to_pypi.sh ff-storage --dry-run
+fenix ff-packages pypi ff-storage --dry-run
 
 # Publish to TestPyPI first
-./scripts/publish_to_pypi.sh ff-storage --test
+fenix ff-packages pypi ff-storage --test
 
-# Then publish to production PyPI
-./scripts/publish_to_pypi.sh ff-storage
+# Then publish to production PyPI (interactive prompts)
+fenix ff-packages pypi ff-storage
 
-# Mirror to GitHub
-./scripts/mirror_to_github.sh ff-storage
+# Create GitHub release
+fenix ff-packages github ff-storage
 
-# Or do everything at once
-./scripts/sync_package.sh ff-storage
+# Or sync to GitLab Package Registry
+fenix ff-packages sync ff-storage
 ```
 
 ## Troubleshooting
@@ -234,10 +247,11 @@ export TEST_PYPI_TOKEN="pypi-YOUR_TEST_TOKEN"
 
 After setup is complete:
 
-1. Test with dry-run: `./scripts/publish_to_pypi.sh ff-storage --dry-run`
-2. Test on TestPyPI: `./scripts/publish_to_pypi.sh ff-storage --test`
-3. Publish to production: `./scripts/publish_to_pypi.sh ff-storage`
-4. Mirror to GitHub: `./scripts/mirror_to_github.sh ff-storage`
+1. Check configuration: `fenix ff-packages check`
+2. Test with dry-run: `fenix ff-packages pypi ff-storage --dry-run`
+3. Test on TestPyPI: `fenix ff-packages pypi ff-storage --test`
+4. Publish to production: `fenix ff-packages pypi ff-storage`
+5. Create GitHub release: `fenix ff-packages github ff-storage`
 
 ---
 

@@ -8,7 +8,9 @@ from pathlib import Path
 from .constants import PYPI_API_URL, TEST_PYPI_API_URL
 
 
-def check_pypi_version(package_name: str, version: str, test_pypi: bool = False) -> tuple[bool, str]:
+def check_pypi_version(
+    package_name: str, version: str, test_pypi: bool = False
+) -> tuple[bool, str]:
     """Check if a version exists on PyPI.
 
     Args:
@@ -67,7 +69,7 @@ def publish_to_pypi(
         cmd.extend(["--publish-url", "https://test.pypi.org/legacy/"])
 
     try:
-        result = subprocess.run(
+        subprocess.run(
             cmd,
             cwd=package_path,
             capture_output=True,

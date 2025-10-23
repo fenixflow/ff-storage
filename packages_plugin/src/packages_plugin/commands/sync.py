@@ -123,7 +123,9 @@ def sync_package(
     if not skip_tests:
         console.print("[green]✓ Tests passed[/green]")
     if not skip_github and not dry_run:
-        console.print(f"[green]✓ Mirrored to GitHub[/green]: https://github.com/fenixflow/{package}")
+        console.print(
+            f"[green]✓ Mirrored to GitHub[/green]: https://github.com/fenixflow/{package}"
+        )
     if not skip_pypi and not dry_run:
         pypi_name = "TestPyPI" if test_pypi else "PyPI"
         console.print(f"[green]✓ Published to {pypi_name}[/green]")

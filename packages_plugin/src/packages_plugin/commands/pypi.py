@@ -1,6 +1,5 @@
 """PyPI publishing commands."""
 
-
 import typer
 from rich.console import Console
 
@@ -58,7 +57,7 @@ def publish_package(
         version = info["version"]
     except Exception as e:
         console.print(f"[red]Error reading package info: {e}[/red]")
-        raise typer.Exit(1)
+        raise typer.Exit(1) from None
 
     console.print(f"Package: [cyan]{pkg_name}[/cyan]")
     console.print(f"Version: [cyan]{version}[/cyan]")
@@ -151,4 +150,6 @@ def publish_package(
         else:
             console.print(f"[yellow]⚠ {tag_msg}[/yellow]")
 
-    console.print(f"\n[green bold]✓ Successfully published {pkg_name} v{version} to {pypi_name}![/green bold]")
+    console.print(
+        f"\n[green bold]✓ Successfully published {pkg_name} v{version} to {pypi_name}![/green bold]"
+    )

@@ -70,8 +70,7 @@ def check_auth(verbose: bool = False):
             )
 
         console.print(
-            "\nFor detailed setup instructions, see:\n"
-            "[cyan]docs/PUBLISHING_SETUP.md[/cyan]"
+            "\nFor detailed setup instructions, see:\n[cyan]docs/PUBLISHING_SETUP.md[/cyan]"
         )
     else:
         console.print("\n[green]✓ All authentication configured![/green]")

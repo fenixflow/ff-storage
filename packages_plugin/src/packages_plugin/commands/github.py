@@ -1,6 +1,5 @@
 """GitHub mirroring commands."""
 
-
 import typer
 from rich.console import Console
 

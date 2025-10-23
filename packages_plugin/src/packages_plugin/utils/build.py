@@ -39,7 +39,7 @@ def build_package(package_path: Path) -> tuple[bool, str]:
         clean_build(package_path)
 
         # Run build with uv (matches CI pipeline)
-        result = subprocess.run(
+        subprocess.run(
             ["uv", "build"],
             cwd=package_path,
             capture_output=True,

@@ -156,18 +156,47 @@ When changes are pushed to main, the pipeline automatically:
 
 ### Local Development
 
+**Building Packages:**
 ```bash
-# Build all packages locally
-./scripts/build_all.sh
-
 # Build a specific package
-./scripts/build_package.sh ff-storage
+cd ff-storage && python -m build
 
-# Test a package
-./scripts/test_package.sh ff-storage
+# Build all packages (run from repository root)
+for pkg in ff-storage ff-logger ff-cli ff-parsers; do
+  (cd "$pkg" && python -m build)
+done
+```
 
-# Run all tests
-./scripts/test_all.sh
+**Testing:**
+```bash
+# Test a specific package
+cd ff-storage && pytest tests/
+
+# Test all packages (run from repository root)
+for pkg in ff-storage ff-logger ff-cli ff-parsers; do
+  (cd "$pkg" && pytest tests/)
+done
+```
+
+**Package Management (using packages_plugin):**
+```bash
+# Install the packages plugin
+uv pip install -e ./packages_plugin
+
+# List all packages with versions
+fenix ff-packages list
+
+# Check publishing configuration
+fenix ff-packages check
+
+# Publish to PyPI (with interactive prompts)
+fenix ff-packages pypi ff-storage
+
+# Create GitHub release
+fenix ff-packages github ff-storage
+
+# Sync version to GitLab Package Registry
+fenix ff-packages sync ff-storage
 ```
 
 ## Installation from GitLab Package Registry
@@ -234,8 +263,10 @@ uv pip install -e "./ff-parsers[dev]"
 # Test individual package
 cd ff-storage && pytest tests/
 
-# Test all packages
-./scripts/test_all.sh
+# Test all packages (run from repository root)
+for pkg in ff-storage ff-logger ff-cli ff-parsers; do
+  (cd "$pkg" && pytest tests/)
+done
 
 # Run with coverage
 cd ff-storage && pytest --cov=ff_storage tests/

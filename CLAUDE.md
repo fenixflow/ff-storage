@@ -155,9 +155,6 @@ uv pip install -e "./ff-parsers[dev]"
 
 # Build package
 cd ff-storage && python -m build
-
-# Build all packages
-./scripts/build_all.sh
 ```
 
 ### Testing
@@ -168,25 +165,38 @@ cd ff-storage && pytest tests/
 
 # Run with coverage
 cd ff-storage && pytest --cov=ff_storage tests/
-
-# Test all packages
-./scripts/test_all.sh
-
-# Test a specific package with the script
-./scripts/test_package.sh ff-storage
 ```
 
 ### Code Quality
 
 ```bash
-# Format code with black
-cd ff-storage && black src/
+# Format code with isort and ruff
+cd ff-storage && uvx isort . && uvx ruff format .
 
 # Lint with ruff
-cd ff-storage && ruff check src/
+cd ff-storage && uvx ruff check --fix .
 
 # Type check (when mypy is added)
 cd ff-storage && mypy src/
+```
+
+### Publishing (packages_plugin)
+
+```bash
+# List all publishable packages
+fenix ff-packages list
+
+# Check authentication status
+fenix ff-packages check
+
+# Publish to PyPI
+fenix ff-packages pypi ff-storage
+
+# Mirror to GitHub
+fenix ff-packages github ff-storage
+
+# Full sync (test, build, mirror, publish)
+fenix ff-packages sync ff-storage
 ```
 
 ## Usage Examples
