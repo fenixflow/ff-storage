@@ -1,9 +1,12 @@
 """GitHub utilities for mirroring packages."""
 
 import os
+import shutil
 import subprocess
+import tempfile
+from pathlib import Path
 
-from .constants import GITHUB_REPOS
+from .constants import GITHUB_REPOS, REPO_ROOT
 
 
 def get_github_url(package_name: str) -> str:
@@ -123,45 +126,172 @@ def add_github_remote(package_name: str) -> tuple[bool, str]:
         return False, f"Failed to add remote: {e.stderr}"
 
 
-def push_to_github(package_name: str, branch: str | None = None) -> tuple[bool, str]:
-    """Push package to GitHub.
+def push_to_github(
+    package_name: str, package_path: str, branch: str = "main"
+) -> tuple[bool, str]:
+    """Push package snapshot to GitHub from remote origin/main.
+
+    Creates a clean GitHub mirror with:
+    - Single commit containing current package state
+    - No history (clean slate)
+    - Extracted from GitLab's committed origin/main (ignores local changes)
+    - Force push to completely replace GitHub repo
+
+    This matches the GitLab CI/CD pipeline behavior by using only committed code.
 
     Args:
-        package_name: Name of the package
-        branch: Branch to push (None for current)
+        package_name: Name of the package (e.g., 'ff-storage')
+        package_path: Path to package directory (e.g., 'ff-storage')
+        branch: Target branch on GitHub (default: 'main')
 
     Returns:
         Tuple of (success, message)
     """
-    remote_name = f"github-{package_name.split('-')[1]}"
+    # Get GitHub URL with token
+    github_url = get_github_url(package_name)
 
-    # Ensure remote exists
-    success, message = add_github_remote(package_name)
-    if not success:
-        return False, message
+    if not github_url:
+        return False, "GitHub URL could not be determined"
 
-    # Get current branch if not specified
-    if branch is None:
-        _, branch, _ = check_git_status()
+    # Create temp directory for mirror
+    temp_dir = None
 
     try:
-        # Push branch
-        result = subprocess.run(
-            ["git", "push", remote_name, branch],
-            capture_output=True,
-            text=True,
-            check=True,
-        )
-
-        # Push tags
+        # Step 1: Fetch latest from GitLab origin
         subprocess.run(
-            ["git", "push", remote_name, "--tags"],
+            ["git", "fetch", "origin"],
             capture_output=True,
             text=True,
             check=True,
+            cwd=str(REPO_ROOT),
         )
 
-        return True, f"Pushed {branch} and tags to GitHub"
+        # Step 2: Create temporary directory
+        temp_dir = tempfile.mkdtemp(prefix=f"github-mirror-{package_name}-")
+        temp_path = Path(temp_dir)
+
+        # Step 3: Extract package directory from origin/main using git archive
+        # This gets ONLY committed code, ignoring local uncommitted changes
+        archive_process = subprocess.run(
+            ["git", "archive", "origin/main", f"{package_path}/"],
+            capture_output=True,
+            check=True,
+            cwd=str(REPO_ROOT),
+        )
+
+        # Extract the archive to temp directory
+        subprocess.run(
+            ["tar", "-x", "-C", str(temp_path)],
+            input=archive_process.stdout,
+            check=True,
+        )
+
+        # Move package contents to root of temp dir (remove package_path prefix)
+        # CRITICAL: Extract basename to prevent absolute path concatenation bug
+        package_dir_name = Path(package_path).name  # Gets "ff-storage" from any path format
+        package_temp = temp_path / package_dir_name
+        if package_temp.exists():
+            # Move all contents from package_temp/* to temp_path/
+            for item in package_temp.iterdir():
+                shutil.move(str(item), str(temp_path / item.name))
+            # Remove now-empty package directory
+            package_temp.rmdir()
+
+        # Step 4: Initialize git repo in temp directory
+        subprocess.run(
+            ["git", "init"],
+            capture_output=True,
+            text=True,
+            check=True,
+            cwd=str(temp_path),
+        )
+
+        # Configure git user (required for commit)
+        subprocess.run(
+            ["git", "config", "user.name", "Fenixflow Bot"],
+            capture_output=True,
+            check=True,
+            cwd=str(temp_path),
+        )
+        subprocess.run(
+            ["git", "config", "user.email", "bot@fenixflow.com"],
+            capture_output=True,
+            check=True,
+            cwd=str(temp_path),
+        )
+
+        # Step 5: Add all files and create single commit
+        subprocess.run(
+            ["git", "add", "."],
+            capture_output=True,
+            text=True,
+            check=True,
+            cwd=str(temp_path),
+        )
+
+        # Get version from pyproject.toml if available for commit message
+        commit_msg = f"Mirror {package_name} from GitLab"
+        pyproject = temp_path / "pyproject.toml"
+        if pyproject.exists():
+            # Try to extract version
+            try:
+                content = pyproject.read_text()
+                for line in content.split("\n"):
+                    if line.startswith("version"):
+                        version = line.split("=")[1].strip().strip('"')
+                        commit_msg = f"Mirror {package_name} v{version}"
+                        break
+            except Exception:
+                pass  # Use default message if version extraction fails
+
+        subprocess.run(
+            ["git", "commit", "-m", commit_msg],
+            capture_output=True,
+            text=True,
+            check=True,
+            cwd=str(temp_path),
+        )
+
+        # Step 6: Force push to GitHub (completely replaces existing content)
+        subprocess.run(
+            ["git", "push", "--force", github_url, f"HEAD:{branch}"],
+            capture_output=True,
+            text=True,
+            check=True,
+            cwd=str(temp_path),
+        )
+
+        # Step 7: Push package-specific tags from main repo
+        # Get all tags matching the package name pattern
+        tag_result = subprocess.run(
+            ["git", "tag", "-l", f"{package_name}-v*"],
+            capture_output=True,
+            text=True,
+            check=True,
+            cwd=str(REPO_ROOT),
+        )
+        tags = [tag.strip() for tag in tag_result.stdout.split("\n") if tag.strip()]
+
+        if tags:
+            # Push each tag individually to avoid pushing unrelated tags
+            for tag in tags:
+                subprocess.run(
+                    ["git", "push", "--force", github_url, f"refs/tags/{tag}:refs/tags/{tag}"],
+                    capture_output=True,
+                    text=True,
+                    check=True,
+                    cwd=str(REPO_ROOT),
+                )
+
+        tag_msg = f" and {len(tags)} tag(s)" if tags else ""
+        return True, f"Mirrored {package_name} to {branch}{tag_msg}"
 
     except subprocess.CalledProcessError as e:
-        return False, f"Push failed: {e.stderr}"
+        # stderr is already a string when text=True is used
+        error_msg = e.stderr if e.stderr else str(e)
+        return False, f"Mirror failed: {error_msg}"
+
+    finally:
+        # Always clean up temp directory
+        if temp_dir and Path(temp_dir).exists():
+            shutil.rmtree(temp_dir, ignore_errors=True)

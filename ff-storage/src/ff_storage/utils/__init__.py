@@ -28,6 +28,13 @@ from .retry import (
     retry,
     retry_async,
 )
+from .postgres import (
+    build_column_list,
+    build_insert_query,
+    build_update_set_clause,
+    build_where_clause,
+    quote_identifier,
+)
 from .validation import (
     SQLValidator,
     get_validator,
@@ -66,4 +73,10 @@ __all__ = [
     "validate_query",
     "validate_identifier",
     "sanitize_like_pattern",
+    # PostgreSQL utilities
+    "quote_identifier",
+    "build_column_list",
+    "build_insert_query",
+    "build_update_set_clause",
+    "build_where_clause",
 ]

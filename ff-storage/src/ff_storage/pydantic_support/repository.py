@@ -9,6 +9,7 @@ import logging
 from typing import Optional, TypeVar
 from uuid import UUID
 
+from ..db.query_builder import PostgresQueryBuilder
 from ..temporal.registry import get_strategy
 from ..temporal.repository_base import TemporalRepository
 
@@ -86,10 +87,15 @@ class PydanticRepository(TemporalRepository[T]):
         multi_tenant = getattr(model_class, "__multi_tenant__", True)
         tenant_field = getattr(model_class, "__tenant_field__", "tenant_id")
 
+        # Create QueryBuilder for database-agnostic SQL generation
+        # TODO: Auto-detect database type from db_pool and select appropriate QueryBuilder
+        query_builder = PostgresQueryBuilder()
+
         # Create strategy instance
         strategy = get_strategy(
             strategy_type=strategy_type,
             model_class=model_class,
+            query_builder=query_builder,
             soft_delete=soft_delete,
             multi_tenant=multi_tenant,
             tenant_field=tenant_field,

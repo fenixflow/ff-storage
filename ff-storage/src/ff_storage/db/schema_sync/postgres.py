@@ -10,6 +10,7 @@ This module provides complete PostgreSQL support for:
 import re
 from typing import List
 
+from ...utils.postgres import quote_identifier
 from .base import MigrationGeneratorBase, SchemaIntrospectorBase, SQLParserBase
 from .models import ColumnDefinition, ColumnType, IndexDefinition, TableDefinition
 
@@ -165,11 +166,20 @@ class PostgresSchemaIntrospector(SchemaIntrospectorBase):
 class PostgresSQLParser(SQLParserBase):
     """Parse PostgreSQL CREATE TABLE statements."""
 
+    # Pattern to match quoted or unquoted SQL identifiers
+    _IDENTIFIER = r'(?:"[^"]+"|[a-zA-Z_][a-zA-Z0-9_]*)'
+    _QUALIFIED_NAME = rf"{_IDENTIFIER}(?:\.{_IDENTIFIER})?"
+
+    @staticmethod
+    def _strip_quotes(identifier: str) -> str:
+        """Remove surrounding quotes from identifier if present."""
+        return identifier.strip('"')
+
     def parse_create_table(self, sql: str) -> TableDefinition:
         """Parse CREATE TABLE statement into TableDefinition."""
-        # Extract schema and table name
+        # Extract schema and table name (handles both quoted and unquoted)
         table_match = re.search(
-            r"CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?([a-zA-Z_][a-zA-Z0-9_]*\.)?([a-zA-Z_][a-zA-Z0-9_]*)",
+            rf"CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?({self._QUALIFIED_NAME})",
             sql,
             re.IGNORECASE,
         )
@@ -177,9 +187,20 @@ class PostgresSQLParser(SQLParserBase):
         if not table_match:
             raise ValueError(f"Could not parse table name from SQL: {sql[:100]}")
 
-        schema_part = table_match.group(1)
-        table_name = table_match.group(2)
-        schema = schema_part.rstrip(".") if schema_part else "public"
+        full_name = table_match.group(1)
+
+        # Split schema.table and strip quotes
+        if "." in full_name:
+            # Extract schema and table (may be quoted separately)
+            parts_match = re.match(rf"({self._IDENTIFIER})\.({self._IDENTIFIER})", full_name)
+            if parts_match:
+                schema = self._strip_quotes(parts_match.group(1))
+                table_name = self._strip_quotes(parts_match.group(2))
+            else:
+                raise ValueError(f"Could not parse qualified name: {full_name}")
+        else:
+            schema = "public"
+            table_name = self._strip_quotes(full_name)
 
         # Parse columns and indexes
         columns = self.parse_columns_from_sql(sql)
@@ -216,12 +237,11 @@ class PostgresSQLParser(SQLParserBase):
             # - Multi-word types (TIMESTAMP WITH TIME ZONE)
             # - REFERENCES constraints
             # - Foreign keys and other constraints
-            col_match = re.match(
-                r"([a-zA-Z_][a-zA-Z0-9_]*)\s+(.+?)(?:,\s*$|$)", line, re.IGNORECASE
-            )
+            # - Quoted column names
+            col_match = re.match(rf"({self._IDENTIFIER})\s+(.+?)(?:,\s*$|$)", line, re.IGNORECASE)
 
             if col_match:
-                col_name = col_match.group(1)
+                col_name = self._strip_quotes(col_match.group(1))
                 col_def = col_match.group(2).rstrip(",").strip()
 
                 # Extract type (first word or multi-word type)
@@ -271,19 +291,35 @@ class PostgresSQLParser(SQLParserBase):
         """Extract index definitions from SQL (CREATE INDEX statements)."""
         indexes = []
 
-        # Find all CREATE INDEX statements
-        index_pattern = r"CREATE\s+(UNIQUE\s+)?INDEX\s+(?:IF\s+NOT\s+EXISTS\s+)?([a-zA-Z_][a-zA-Z0-9_]*)\s+ON\s+([a-zA-Z_][a-zA-Z0-9_]*\\.)?([a-zA-Z_][a-zA-Z0-9_]*)\s*(?:USING\s+([a-zA-Z]+))?\s*\(([^)]+)\)(?:\s+WHERE\s+(.+?))?;"
+        # Find all CREATE INDEX statements (handles quoted identifiers)
+        index_pattern = rf"CREATE\s+(UNIQUE\s+)?INDEX\s+(?:IF\s+NOT\s+EXISTS\s+)?({self._IDENTIFIER})\s+ON\s+({self._QUALIFIED_NAME})\s*(?:USING\s+([a-zA-Z]+))?\s*\(([^)]+)\)(?:\s+WHERE\s+(.+?))?;"
 
         for match in re.finditer(index_pattern, sql, re.IGNORECASE):
             is_unique = match.group(1) is not None
-            index_name = match.group(2)
-            table_name = match.group(4)
-            index_type = match.group(5) or "btree"
-            columns_str = match.group(6)
-            where_clause = match.group(7)
+            index_name = self._strip_quotes(match.group(2))
+            full_table_name = match.group(3)
+            index_type = match.group(4) or "btree"
+            columns_str = match.group(5)
+            where_clause = match.group(6)
 
-            # Parse column list
-            columns = [col.strip() for col in columns_str.split(",")]
+            # Extract table name from qualified name
+            if "." in full_table_name:
+                parts_match = re.match(
+                    rf"({self._IDENTIFIER})\.({self._IDENTIFIER})", full_table_name
+                )
+                if parts_match:
+                    table_name = self._strip_quotes(parts_match.group(2))
+                else:
+                    table_name = self._strip_quotes(full_table_name.split(".")[-1])
+            else:
+                table_name = self._strip_quotes(full_table_name)
+
+            # Parse column list (may contain quoted columns)
+            columns = []
+            for col in columns_str.split(","):
+                col = col.strip()
+                # Remove quotes if present
+                columns.append(self._strip_quotes(col))
 
             indexes.append(
                 IndexDefinition(
@@ -345,13 +381,12 @@ class PostgresMigrationGenerator(MigrationGeneratorBase):
 
     def generate_add_column(self, table_name: str, schema: str, column: ColumnDefinition) -> str:
         """Generate ALTER TABLE ADD COLUMN statement."""
-        full_table = f"{schema}.{table_name}"
+        full_table = quote_identifier(f"{schema}.{table_name}")
+        quoted_col = quote_identifier(column.name)
         nullable = "NULL" if column.nullable else "NOT NULL"
         default = f"DEFAULT {column.default}" if column.default else ""
 
-        sql = (
-            f"ALTER TABLE {full_table} ADD COLUMN IF NOT EXISTS {column.name} {column.native_type}"
-        )
+        sql = f"ALTER TABLE {full_table} ADD COLUMN IF NOT EXISTS {quoted_col} {column.native_type}"
 
         if not column.nullable:
             sql += f" {nullable}"
@@ -364,15 +399,16 @@ class PostgresMigrationGenerator(MigrationGeneratorBase):
     def generate_create_index(self, schema: str, index: IndexDefinition) -> str:
         """Generate CREATE INDEX statement."""
         unique = "UNIQUE " if index.unique else ""
-        columns = ", ".join(index.columns)
-        full_table = f"{schema}.{index.table_name}"
+        quoted_columns = ", ".join(quote_identifier(col) for col in index.columns)
+        full_table = quote_identifier(f"{schema}.{index.table_name}")
+        quoted_index = quote_identifier(index.name)
 
-        sql = f"CREATE {unique}INDEX IF NOT EXISTS {index.name} ON {full_table}"
+        sql = f"CREATE {unique}INDEX IF NOT EXISTS {quoted_index} ON {full_table}"
 
         if index.index_type and index.index_type != "btree":
             sql += f" USING {index.index_type}"
 
-        sql += f" ({columns})"
+        sql += f" ({quoted_columns})"
 
         if index.where_clause:
             sql += f" WHERE {index.where_clause}"
@@ -381,7 +417,7 @@ class PostgresMigrationGenerator(MigrationGeneratorBase):
 
     def generate_create_table(self, table: TableDefinition) -> str:
         """Generate CREATE TABLE statement."""
-        full_table = f"{table.schema}.{table.name}"
+        full_table = quote_identifier(f"{table.schema}.{table.name}")
 
         # Generate column definitions
         col_defs = []
@@ -389,7 +425,8 @@ class PostgresMigrationGenerator(MigrationGeneratorBase):
         foreign_keys = []
 
         for col in table.columns:
-            col_def = f"{col.name} {col.native_type}"
+            quoted_col = quote_identifier(col.name)
+            col_def = f"{quoted_col} {col.native_type}"
 
             if not col.nullable:
                 col_def += " NOT NULL"
@@ -401,11 +438,11 @@ class PostgresMigrationGenerator(MigrationGeneratorBase):
 
             # Track primary keys for composite PK constraint
             if col.is_primary_key:
-                primary_keys.append(col.name)
+                primary_keys.append(quoted_col)
 
             # Track foreign keys
             if col.is_foreign_key and col.references:
-                foreign_keys.append((col.name, col.references))
+                foreign_keys.append((quoted_col, col.references))
 
         # Add PRIMARY KEY constraint if any primary keys exist
         if primary_keys:
@@ -434,13 +471,14 @@ class PostgresMigrationGenerator(MigrationGeneratorBase):
     def generate_drop_index(self, schema: str, index: IndexDefinition) -> str:
         """Generate DROP INDEX statement."""
         # PostgreSQL DROP INDEX requires schema-qualified index name
-        full_index = f"{schema}.{index.name}"
+        full_index = quote_identifier(f"{schema}.{index.name}")
         return f"DROP INDEX IF EXISTS {full_index};"
 
     def generate_drop_column(self, table_name: str, schema: str, column: ColumnDefinition) -> str:
         """Generate ALTER TABLE DROP COLUMN statement."""
-        full_table = f"{schema}.{table_name}"
-        return f"ALTER TABLE {full_table} DROP COLUMN IF EXISTS {column.name};"
+        full_table = quote_identifier(f"{schema}.{table_name}")
+        quoted_col = quote_identifier(column.name)
+        return f"ALTER TABLE {full_table} DROP COLUMN IF EXISTS {quoted_col};"
 
     def generate_alter_column(self, table_name: str, schema: str, column: ColumnDefinition) -> str:
         """
@@ -449,7 +487,8 @@ class PostgresMigrationGenerator(MigrationGeneratorBase):
         Uses STRICT conversion strategy: fails loudly on invalid data rather than silently
         converting to NULL. This forces manual data cleanup and prevents data loss.
         """
-        full_table = f"{schema}.{table_name}"
+        full_table = quote_identifier(f"{schema}.{table_name}")
+        quoted_col = quote_identifier(column.name)
 
         # PostgreSQL ALTER COLUMN requires separate statements for type, nullable, and default
         statements = []
@@ -458,26 +497,24 @@ class PostgresMigrationGenerator(MigrationGeneratorBase):
         using_clause = self._get_type_conversion_using(column)
 
         # Change type
-        alter_type = (
-            f"ALTER TABLE {full_table} ALTER COLUMN {column.name} TYPE {column.native_type}"
-        )
+        alter_type = f"ALTER TABLE {full_table} ALTER COLUMN {quoted_col} TYPE {column.native_type}"
         if using_clause:
             alter_type += f" USING {using_clause}"
         statements.append(alter_type)
 
         # Change nullable
         if column.nullable:
-            statements.append(f"ALTER TABLE {full_table} ALTER COLUMN {column.name} DROP NOT NULL")
+            statements.append(f"ALTER TABLE {full_table} ALTER COLUMN {quoted_col} DROP NOT NULL")
         else:
-            statements.append(f"ALTER TABLE {full_table} ALTER COLUMN {column.name} SET NOT NULL")
+            statements.append(f"ALTER TABLE {full_table} ALTER COLUMN {quoted_col} SET NOT NULL")
 
         # Change default
         if column.default:
             statements.append(
-                f"ALTER TABLE {full_table} ALTER COLUMN {column.name} SET DEFAULT {column.default}"
+                f"ALTER TABLE {full_table} ALTER COLUMN {quoted_col} SET DEFAULT {column.default}"
             )
         else:
-            statements.append(f"ALTER TABLE {full_table} ALTER COLUMN {column.name} DROP DEFAULT")
+            statements.append(f"ALTER TABLE {full_table} ALTER COLUMN {quoted_col} DROP DEFAULT")
 
         return ";\n".join(statements) + ";"
 
@@ -494,42 +531,42 @@ class PostgresMigrationGenerator(MigrationGeneratorBase):
             USING clause string, or None if PostgreSQL can handle conversion automatically
         """
         target_type = column.native_type.upper()
-        col_name = column.name
+        quoted_col = quote_identifier(column.name)
 
         # text → numeric/decimal
         # Handles NULL/empty, but FAILS on non-numeric values (e.g., "abc")
         if "NUMERIC" in target_type or "DECIMAL" in target_type:
-            return f"CASE WHEN {col_name}::text IS NULL OR {col_name}::text = '' THEN NULL ELSE {col_name}::numeric END"
+            return f"CASE WHEN {quoted_col}::text IS NULL OR {quoted_col}::text = '' THEN NULL ELSE {quoted_col}::numeric END"
 
         # text → jsonb
         # Defaults to empty array for NULL/empty, but FAILS on invalid JSON
         elif "JSONB" in target_type or "JSON" in target_type:
-            return f"CASE WHEN {col_name}::text IS NULL OR {col_name}::text = '' THEN '[]'::jsonb ELSE {col_name}::jsonb END"
+            return f"CASE WHEN {quoted_col}::text IS NULL OR {quoted_col}::text = '' THEN '[]'::jsonb ELSE {quoted_col}::jsonb END"
 
         # text → integer
         # Handles NULL/empty, but FAILS on non-integer values
         elif "INTEGER" in target_type or "INT" in target_type:
-            return f"CASE WHEN {col_name}::text IS NULL OR {col_name}::text = '' THEN NULL ELSE {col_name}::integer END"
+            return f"CASE WHEN {quoted_col}::text IS NULL OR {quoted_col}::text = '' THEN NULL ELSE {quoted_col}::integer END"
 
         # text → bigint
         elif "BIGINT" in target_type:
-            return f"CASE WHEN {col_name}::text IS NULL OR {col_name}::text = '' THEN NULL ELSE {col_name}::bigint END"
+            return f"CASE WHEN {quoted_col}::text IS NULL OR {quoted_col}::text = '' THEN NULL ELSE {quoted_col}::bigint END"
 
         # text → boolean
         # Standard boolean conversions, FAILS on unrecognized values
         elif "BOOLEAN" in target_type or "BOOL" in target_type:
             return (
                 f"CASE "
-                f"WHEN {col_name}::text IS NULL OR {col_name}::text = '' THEN NULL "
-                f"WHEN {col_name}::text IN ('t', 'true', '1', 'yes', 'y') THEN true "
-                f"WHEN {col_name}::text IN ('f', 'false', '0', 'no', 'n') THEN false "
-                f"ELSE {col_name}::boolean "  # Let PostgreSQL try, will fail on invalid
+                f"WHEN {quoted_col}::text IS NULL OR {quoted_col}::text = '' THEN NULL "
+                f"WHEN {quoted_col}::text IN ('t', 'true', '1', 'yes', 'y') THEN true "
+                f"WHEN {quoted_col}::text IN ('f', 'false', '0', 'no', 'n') THEN false "
+                f"ELSE {quoted_col}::boolean "  # Let PostgreSQL try, will fail on invalid
                 f"END"
             )
 
         # text → uuid
         elif "UUID" in target_type:
-            return f"CASE WHEN {col_name}::text IS NULL OR {col_name}::text = '' THEN NULL ELSE {col_name}::uuid END"
+            return f"CASE WHEN {quoted_col}::text IS NULL OR {quoted_col}::text = '' THEN NULL ELSE {quoted_col}::uuid END"
 
         # For other conversions (e.g., varchar(100) → varchar(255), same type changes)
         # Let PostgreSQL handle it automatically without USING clause

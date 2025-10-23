@@ -7,6 +7,119 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.1.0] - 2025-10-22
+
+### Changed
+
+- **Architecture Improvement**: Refactored SQL query building to use proper QueryBuilder pattern
+  - Created `db/query_builder/` module with database-agnostic `QueryBuilder` base class
+  - Implemented `PostgresQueryBuilder` with comprehensive identifier quoting and parameter placeholder generation
+  - Refactored all temporal strategies (`NoneStrategy`, `SCD2Strategy`, `CopyOnChangeStrategy`) to use QueryBuilder
+  - Updated strategy registry to inject QueryBuilder instances into strategies
+  - **Benefits**:
+    - DRY principle: Single source of truth for SQL query generation
+    - Modular: Clear separation between business logic (strategies) and database-specific SQL syntax
+    - Testable: QueryBuilder can be unit tested independently
+    - Extensible: Easy to add support for other databases (MySQL, SQL Server)
+    - Type-safe: Returns `(query_string, [values])` tuples with proper parameter ordering
+
+### Fixed
+
+- **SQL Parser**: Updated `PostgresSQLParser` to handle quoted identifiers from v3.0.1/v3.0.2 changes
+  - Fixed regex patterns to parse both quoted (`"table_name"`) and unquoted identifiers
+  - Added `_strip_quotes()` helper to normalize identifier comparisons
+  - Updated `parse_create_table()`, `parse_columns_from_sql()`, `parse_indexes_from_sql()`
+  - **Root Cause**: v3.0.2 added identifier quoting to DDL generation, but SQL parser couldn't parse the quoted output back
+  - **Impact**: Schema sync now correctly handles tables with quoted identifiers
+
+### Added
+
+- `db/query_builder/` module:
+  - `QueryBuilder` base class defining the query building interface
+  - `PostgresQueryBuilder` implementation with:
+    - `quote_identifier()`: Always quotes identifiers for safety
+    - `build_insert()`: Generates INSERT queries with RETURNING *
+    - `build_update()`: Generates UPDATE queries with proper WHERE and SET clauses
+    - `build_where_clause()`: Handles NULL values, IN clauses, and parameter placeholders
+    - `build_column_list()`: Generates comma-separated quoted column lists
+
+### Architecture
+
+The QueryBuilder pattern provides a clean separation of concerns:
+
+```
+┌─────────────────────────┐
+│  Temporal Strategies    │
+│  (Business Logic)       │
+│  - NoneStrategy         │
+│  - SCD2Strategy         │
+│  - CopyOnChangeStrategy │
+└───────────┬─────────────┘
+            │ uses
+            ▼
+┌─────────────────────────┐
+│  QueryBuilder           │
+│  (SQL Generation)       │
+│  - PostgresQueryBuilder │
+│  - MySQLQueryBuilder    │ (future)
+│  - SQLServerQueryBuilder│ (future)
+└─────────────────────────┘
+```
+
+This architecture makes it trivial to add support for other databases - just implement a new QueryBuilder subclass without touching strategy code.
+
+## [3.0.2] - 2025-10-22
+
+### Fixed
+
+- **SQL Reserved Keywords in Data Operations (DML)**: Completed the fix started in v3.0.1 by extending identifier quoting to all CRUD operations
+  - **Root Cause**: v3.0.1 only fixed DDL (schema generation) but not DML (INSERT/UPDATE/SELECT queries)
+  - Created centralized PostgreSQL utilities module (`utils/postgres.py`) with production-grade query builders:
+    - `quote_identifier()`: Single source of truth for identifier quoting
+    - `build_insert_query()`: Generates safe INSERT statements with quoted identifiers
+    - `build_update_set_clause()`: Generates safe UPDATE SET clauses with quoted identifiers
+    - `build_where_clause()`: Generates safe WHERE clauses with quoted identifiers
+  - Refactored `PostgresMigrationGenerator` to use shared `quote_identifier()` (removed duplicate code)
+  - Updated all temporal strategies to use centralized query builders:
+    - `SCD2Strategy`: Fixed INSERT queries in create(), update(), and delete() methods
+    - `NoneStrategy`: Fixed INSERT and UPDATE queries
+    - `CopyOnChangeStrategy`: Fixed INSERT, UPDATE, and audit table queries
+    - `TemporalStrategy` base class: Fixed WHERE clause building in `_validate_and_build_filter_clauses()`
+  - **Impact**: Models can now use ANY valid Python identifier as a field name, including SQL reserved keywords like:
+    - `limit`, `order`, `user`, `select`, `where`, `from`, `join`, etc.
+  - **Breaking from v3.0.1**: The v3.0.1 fix was incomplete - it only handled schema sync (DDL), causing runtime SQL syntax errors when using reserved keywords in actual CRUD operations
+
+**What Changed This Morning**: The Pydantic ORM was added in v3.0.0 just 2 days ago, introducing automatic schema generation. Previously, developers wrote SQL manually and would naturally quote reserved keywords themselves. The automatic query generation didn't quote identifiers, exposing this bug.
+
+### Changed
+
+- **Architecture Improvement (DRY)**: Consolidated all PostgreSQL-specific query building into `utils/postgres.py`
+  - Eliminated duplicate `quote_identifier()` implementations
+  - All DDL (schema sync) and DML (CRUD operations) now use the same quoting logic
+  - Clear separation of concerns: schema sync uses shared utilities, temporal strategies use shared utilities
+  - Production-ready: Single place to update PostgreSQL query generation logic
+
+### Added
+
+- Comprehensive test suite for SQL identifier quoting (`tests/unit/test_sql_identifier_quoting_fixed.py`)
+- Test coverage for all query builders with reserved keywords
+- Integration tests demonstrating reserved keywords work across all temporal strategies
+
+## [3.0.1] - 2025-10-22
+
+### Fixed
+
+- **PostgreSQL Reserved Keywords**: Fixed SQL syntax errors when using PostgreSQL reserved keywords (like `limit`, `order`, `user`, etc.) as column names in Pydantic models
+  - Added `quote_identifier()` method to `PostgresMigrationGenerator` to properly quote all SQL identifiers
+  - All column names, table names, and index names are now wrapped in double quotes in generated SQL
+  - Affected methods: `generate_create_table()`, `generate_add_column()`, `generate_alter_column()`, `generate_drop_column()`, `generate_create_index()`, `generate_drop_index()`
+  - USING clauses in ALTER COLUMN statements also properly quote column names
+  - This ensures any valid Python identifier can be used as a field name, even if it's a SQL reserved keyword
+
+**Example**: A field named `limit` now generates `"limit" JSONB NOT NULL` instead of `limit JSONB NOT NULL`
+
+**Why this wasn't an issue before**: The Pydantic ORM automatic schema generation was added in v3.0.0 (2 days ago). Previously, users wrote SQL manually where they would naturally quote reserved keywords themselves.
+
 ## [3.0.0] - 2025-10-22
 
 ### 🚨 BREAKING CHANGES

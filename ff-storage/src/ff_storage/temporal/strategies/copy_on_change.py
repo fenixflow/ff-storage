@@ -216,18 +216,12 @@ class CopyOnChangeStrategy(TemporalStrategy[T]):
         # Transaction ID for grouping audit entries
         transaction_id = uuid4()
 
-        # Build INSERT query for main table
+        # Build INSERT query for main table using QueryBuilder
         table_name = self._get_table_name()
         audit_table_name = f"{table_name}_audit"
 
-        columns = list(data.keys())
-        placeholders = [f"${i + 1}" for i in range(len(columns))]
-
-        main_insert = f"""
-            INSERT INTO {table_name} ({", ".join(columns)})
-            VALUES ({", ".join(placeholders)})
-            RETURNING *
-        """
+        serialized_data = self._serialize_jsonb_fields(data)
+        main_insert, insert_values = self.query_builder.build_insert(table_name, serialized_data)
 
         # Build audit entries (one per field)
         audit_entries = []
@@ -253,9 +247,8 @@ class CopyOnChangeStrategy(TemporalStrategy[T]):
         # Execute in transaction
         async with db_pool.acquire() as conn:
             async with conn.transaction():
-                # Insert main record with JSONB serialization
-                serialized_data = self._serialize_jsonb_fields(data)
-                row = await conn.fetchrow(main_insert, *serialized_data.values())
+                # Insert main record
+                row = await conn.fetchrow(main_insert, *insert_values)
 
                 # Insert audit entries
                 await self._insert_audit_entries(conn, audit_table_name, audit_entries)
@@ -288,6 +281,7 @@ class CopyOnChangeStrategy(TemporalStrategy[T]):
         For higher concurrency needs, consider database triggers or optimistic locking.
         """
         table_name = self._get_table_name()
+        quoted_table = self.query_builder.quote_identifier(table_name)
         audit_table_name = f"{table_name}_audit"
 
         # Auto-set updated_at
@@ -301,25 +295,27 @@ class CopyOnChangeStrategy(TemporalStrategy[T]):
         transaction_id = uuid4()
         now = datetime.now(timezone.utc)
 
-        # Build WHERE clause
-        where_parts = ["id = $1"]
+        # Build WHERE clause with proper quoting
+        where_parts = [f'{self.query_builder.quote_identifier("id")} = $1']
         where_values = [id]
 
         if self.multi_tenant:
             if not tenant_id:
                 raise ValueError("tenant_id required for multi-tenant model")
-            where_parts.append(f"{self.tenant_field} = ${len(where_values) + 1}")
+            tenant_field_quoted = self.query_builder.quote_identifier(self.tenant_field)
+            where_parts.append(f"{tenant_field_quoted} = ${len(where_values) + 1}")
             where_values.append(tenant_id)
 
         if self.soft_delete:
-            where_parts.append("deleted_at IS NULL")
+            deleted_at_quoted = self.query_builder.quote_identifier("deleted_at")
+            where_parts.append(f"{deleted_at_quoted} IS NULL")
 
         # Execute in transaction
         async with db_pool.acquire() as conn:
             async with conn.transaction():
                 # 1. Get current record with row-level lock
                 select_query = f"""
-                    SELECT * FROM {table_name}
+                    SELECT * FROM {quoted_table}
                     WHERE {" AND ".join(where_parts)}
                     FOR UPDATE
                 """
@@ -356,16 +352,30 @@ class CopyOnChangeStrategy(TemporalStrategy[T]):
                         entry["tenant_id"] = tenant_id
                     audit_entries.append(entry)
 
-                # 3. UPDATE main table
+                # 3. UPDATE main table using QueryBuilder
+                # Build SET clause parts
+                # Filter out metadata fields to prevent overwriting with None values
+                metadata_fields = self._get_metadata_fields()
+
                 set_parts = []
                 set_values = []
+                base_param = len(where_values)
+
                 for key, value in data.items():
+                    # Skip metadata fields that should be preserved from current record
+                    if key in metadata_fields:
+                        continue
+
                     set_values.append(value)
-                    set_parts.append(f"{key} = ${len(where_values) + len(set_values)}")
+                    quoted_key = self.query_builder.quote_identifier(key)
+                    param_num = base_param + len(set_values)
+                    set_parts.append(f"{quoted_key} = ${param_num}")
+
+                set_clause = ", ".join(set_parts)
 
                 update_query = f"""
-                    UPDATE {table_name}
-                    SET {", ".join(set_parts)}
+                    UPDATE {quoted_table}
+                    SET {set_clause}
                     WHERE {" AND ".join(where_parts)}
                     RETURNING *
                 """
@@ -392,29 +402,35 @@ class CopyOnChangeStrategy(TemporalStrategy[T]):
         Otherwise: Hard DELETE, create audit entry
         """
         table_name = self._get_table_name()
+        quoted_table = self.query_builder.quote_identifier(table_name)
         audit_table_name = f"{table_name}_audit"
         now = datetime.now(timezone.utc)
         transaction_id = uuid4()
 
-        # Build WHERE clause
-        where_parts = ["id = $1"]
+        # Build WHERE clause with proper quoting
+        where_parts = [f'{self.query_builder.quote_identifier("id")} = $1']
         where_values = [id]
 
         if self.multi_tenant:
             if not tenant_id:
                 raise ValueError("tenant_id required for multi-tenant model")
-            where_parts.append(f"{self.tenant_field} = ${len(where_values) + 1}")
+            tenant_field_quoted = self.query_builder.quote_identifier(self.tenant_field)
+            where_parts.append(f"{tenant_field_quoted} = ${len(where_values) + 1}")
             where_values.append(tenant_id)
+
+        deleted_at_quoted = self.query_builder.quote_identifier("deleted_at")
+        deleted_by_quoted = self.query_builder.quote_identifier("deleted_by")
+        id_quoted = self.query_builder.quote_identifier("id")
 
         async with db_pool.acquire() as conn:
             async with conn.transaction():
                 # Get current record for audit
                 select_query = f"""
-                    SELECT * FROM {table_name}
+                    SELECT * FROM {quoted_table}
                     WHERE {" AND ".join(where_parts)}
                 """
                 if self.soft_delete:
-                    select_query += " AND deleted_at IS NULL"
+                    select_query += f" AND {deleted_at_quoted} IS NULL"
 
                 current_row = await conn.fetchrow(select_query, *where_values)
 
@@ -424,11 +440,11 @@ class CopyOnChangeStrategy(TemporalStrategy[T]):
                 if self.soft_delete:
                     # Soft delete
                     delete_query = f"""
-                        UPDATE {table_name}
-                        SET deleted_at = ${len(where_values) + 1},
-                            deleted_by = ${len(where_values) + 2}
-                        WHERE {" AND ".join(where_parts)} AND deleted_at IS NULL
-                        RETURNING id
+                        UPDATE {quoted_table}
+                        SET {deleted_at_quoted} = ${len(where_values) + 1},
+                            {deleted_by_quoted} = ${len(where_values) + 2}
+                        WHERE {" AND ".join(where_parts)} AND {deleted_at_quoted} IS NULL
+                        RETURNING {id_quoted}
                     """
                     await conn.fetchrow(delete_query, *where_values, now, user_id)
 
@@ -451,9 +467,9 @@ class CopyOnChangeStrategy(TemporalStrategy[T]):
                 else:
                     # Hard delete
                     delete_query = f"""
-                        DELETE FROM {table_name}
+                        DELETE FROM {quoted_table}
                         WHERE {" AND ".join(where_parts)}
-                        RETURNING id
+                        RETURNING {id_quoted}
                     """
                     await conn.fetchrow(delete_query, *where_values)
 
@@ -493,22 +509,25 @@ class CopyOnChangeStrategy(TemporalStrategy[T]):
     ) -> Optional[T]:
         """Get record by ID (same as none strategy)."""
         table_name = self._get_table_name()
+        quoted_table = self.query_builder.quote_identifier(table_name)
 
-        # Build WHERE clause
-        where_parts = ["id = $1"]
+        # Build WHERE clause with proper quoting
+        where_parts = [f'{self.query_builder.quote_identifier("id")} = $1']
         where_values = [id]
 
         if self.multi_tenant:
             if not tenant_id:
                 raise ValueError("tenant_id required for multi-tenant model")
-            where_parts.append(f"{self.tenant_field} = ${len(where_values) + 1}")
+            tenant_field_quoted = self.query_builder.quote_identifier(self.tenant_field)
+            where_parts.append(f"{tenant_field_quoted} = ${len(where_values) + 1}")
             where_values.append(tenant_id)
 
         if self.soft_delete and not include_deleted:
-            where_parts.append("deleted_at IS NULL")
+            deleted_at_quoted = self.query_builder.quote_identifier("deleted_at")
+            where_parts.append(f"{deleted_at_quoted} IS NULL")
 
         query = f"""
-            SELECT * FROM {table_name}
+            SELECT * FROM {quoted_table}
             WHERE {" AND ".join(where_parts)}
         """
 
@@ -532,20 +551,23 @@ class CopyOnChangeStrategy(TemporalStrategy[T]):
     ) -> List[T]:
         """List records (same as none strategy)."""
         table_name = self._get_table_name()
+        quoted_table = self.query_builder.quote_identifier(table_name)
         filters = filters or {}
 
-        # Build WHERE clause
+        # Build WHERE clause with proper quoting
         where_parts = []
         where_values = []
 
         if self.multi_tenant:
             if not tenant_id:
                 raise ValueError("tenant_id required for multi-tenant model")
-            where_parts.append(f"{self.tenant_field} = ${len(where_values) + 1}")
+            tenant_field_quoted = self.query_builder.quote_identifier(self.tenant_field)
+            where_parts.append(f"{tenant_field_quoted} = ${len(where_values) + 1}")
             where_values.append(tenant_id)
 
         if self.soft_delete and not include_deleted:
-            where_parts.append("deleted_at IS NULL")
+            deleted_at_quoted = self.query_builder.quote_identifier("deleted_at")
+            where_parts.append(f"{deleted_at_quoted} IS NULL")
 
         # User filters (with validation to prevent SQL injection)
         if filters:
@@ -556,10 +578,11 @@ class CopyOnChangeStrategy(TemporalStrategy[T]):
             where_values.extend(filter_values)
 
         where_clause = f"WHERE {' AND '.join(where_parts)}" if where_parts else ""
+        created_at_quoted = self.query_builder.quote_identifier("created_at")
         query = f"""
-            SELECT * FROM {table_name}
+            SELECT * FROM {quoted_table}
             {where_clause}
-            ORDER BY created_at DESC
+            ORDER BY {created_at_quoted} DESC
             LIMIT ${len(where_values) + 1}
             OFFSET ${len(where_values) + 2}
         """
@@ -584,20 +607,25 @@ class CopyOnChangeStrategy(TemporalStrategy[T]):
         """
         table_name = self._get_table_name()
         audit_table_name = f"{table_name}_audit"
+        quoted_audit_table = self.query_builder.quote_identifier(audit_table_name)
 
-        where_parts = ["record_id = $1"]
+        # Build WHERE clause with proper quoting
+        record_id_quoted = self.query_builder.quote_identifier("record_id")
+        where_parts = [f"{record_id_quoted} = $1"]
         where_values = [record_id]
 
         if self.multi_tenant:
             if not tenant_id:
                 raise ValueError("tenant_id required for multi-tenant model")
-            where_parts.append(f"{self.tenant_field} = ${len(where_values) + 1}")
+            tenant_field_quoted = self.query_builder.quote_identifier(self.tenant_field)
+            where_parts.append(f"{tenant_field_quoted} = ${len(where_values) + 1}")
             where_values.append(tenant_id)
 
+        changed_at_quoted = self.query_builder.quote_identifier("changed_at")
         query = f"""
-            SELECT * FROM {audit_table_name}
+            SELECT * FROM {quoted_audit_table}
             WHERE {" AND ".join(where_parts)}
-            ORDER BY changed_at ASC
+            ORDER BY {changed_at_quoted} ASC
         """
 
         async with db_pool.acquire() as conn:
@@ -615,20 +643,26 @@ class CopyOnChangeStrategy(TemporalStrategy[T]):
         """Get history of specific field."""
         table_name = self._get_table_name()
         audit_table_name = f"{table_name}_audit"
+        quoted_audit_table = self.query_builder.quote_identifier(audit_table_name)
 
-        where_parts = ["record_id = $1", "field_name = $2"]
+        # Build WHERE clause with proper quoting
+        record_id_quoted = self.query_builder.quote_identifier("record_id")
+        field_name_quoted = self.query_builder.quote_identifier("field_name")
+        where_parts = [f"{record_id_quoted} = $1", f"{field_name_quoted} = $2"]
         where_values = [record_id, field_name]
 
         if self.multi_tenant:
             if not tenant_id:
                 raise ValueError("tenant_id required for multi-tenant model")
-            where_parts.append(f"{self.tenant_field} = ${len(where_values) + 1}")
+            tenant_field_quoted = self.query_builder.quote_identifier(self.tenant_field)
+            where_parts.append(f"{tenant_field_quoted} = ${len(where_values) + 1}")
             where_values.append(tenant_id)
 
+        changed_at_quoted = self.query_builder.quote_identifier("changed_at")
         query = f"""
-            SELECT * FROM {audit_table_name}
+            SELECT * FROM {quoted_audit_table}
             WHERE {" AND ".join(where_parts)}
-            ORDER BY changed_at ASC
+            ORDER BY {changed_at_quoted} ASC
         """
 
         async with db_pool.acquire() as conn:
@@ -641,14 +675,16 @@ class CopyOnChangeStrategy(TemporalStrategy[T]):
     async def _insert_audit_entries(
         self, conn, audit_table_name: str, entries: List[Dict[str, Any]]
     ):
-        """Bulk insert audit entries."""
+        """Bulk insert audit entries with quoted identifiers."""
         if not entries:
             return
 
         # Get columns from first entry
         columns = list(entries[0].keys())
 
-        # Build multi-row INSERT
+        # Build multi-row INSERT with quoted identifiers using QueryBuilder
+        quoted_audit_table = self.query_builder.quote_identifier(audit_table_name)
+        quoted_columns = ", ".join(self.query_builder.quote_identifier(col) for col in columns)
         values_clauses = []
         all_values = []
 
@@ -657,12 +693,19 @@ class CopyOnChangeStrategy(TemporalStrategy[T]):
             for j, col in enumerate(columns):
                 idx = i * len(columns) + j + 1
                 placeholders.append(f"${idx}")
-                all_values.append(entry[col])
+
+                # Serialize JSONB values to JSON strings for asyncpg
+                value = entry[col]
+                if col in ("old_value", "new_value") and value is not None:
+                    # Convert to JSON string for JSONB column
+                    value = json.dumps(value)
+
+                all_values.append(value)
 
             values_clauses.append(f"({', '.join(placeholders)})")
 
         query = f"""
-            INSERT INTO {audit_table_name} ({", ".join(columns)})
+            INSERT INTO {quoted_audit_table} ({quoted_columns})
             VALUES {", ".join(values_clauses)}
         """
 

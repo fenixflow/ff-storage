@@ -34,6 +34,7 @@ def register_strategy(strategy_type: TemporalStrategyType):
 def get_strategy(
     strategy_type: TemporalStrategyType,
     model_class,
+    query_builder,
     soft_delete: bool = True,
     multi_tenant: bool = True,
     tenant_field: str = "tenant_id",
@@ -44,6 +45,7 @@ def get_strategy(
     Args:
         strategy_type: Type of temporal strategy
         model_class: Model class (Pydantic, dataclass, etc.)
+        query_builder: QueryBuilder instance for database-specific SQL generation
         soft_delete: Enable soft delete (deleted_at, deleted_by fields)
         multi_tenant: Enable multi-tenancy (tenant_id field)
         tenant_field: Name of tenant field (default: "tenant_id")
@@ -63,6 +65,7 @@ def get_strategy(
 
     return strategy_cls(
         model_class=model_class,
+        query_builder=query_builder,
         soft_delete=soft_delete,
         multi_tenant=multi_tenant,
         tenant_field=tenant_field,

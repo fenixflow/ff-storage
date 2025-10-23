@@ -5,7 +5,7 @@ import typer
 from rich.console import Console
 
 from ..utils import check_git_status, check_github_auth, push_to_github
-from ..utils.constants import SUPPORTED_PACKAGES
+from ..utils.constants import SUPPORTED_PACKAGES, REPO_ROOT
 
 console = Console()
 
@@ -22,6 +22,12 @@ def mirror_to_github(
         raise typer.Exit(1)
 
     console.print(f"[bold]Mirroring {package} to GitHub[/bold]\n")
+
+    # Get package path
+    package_path = REPO_ROOT / package
+    if not package_path.exists():
+        console.print(f"[red]Error: Package directory not found: {package_path}[/red]")
+        raise typer.Exit(1)
 
     # Check GitHub authentication
     github_ok, github_msg = check_github_auth()
@@ -53,23 +59,29 @@ def mirror_to_github(
 
     if dry_run:
         console.print("\n[yellow][DRY RUN] Would push to GitHub:[/yellow]")
-        console.print(f"  - Branch: {current_branch}")
+        console.print(f"  - Target branch: {current_branch}")
         console.print(f"  - Package: {package}")
-        console.print(f"  - Tags: All tags matching {package}-v*")
+        console.print(f"  - Source: origin/main (GitLab)")
+        console.print(f"  - Method: Clean snapshot (git archive, no history)")
+        console.print(f"  - Tags: Only {package}-v* tags")
+        console.print(f"  - Effect: Force push replaces entire GitHub repo")
         return
 
     # Confirm push
-    console.print(f"\nReady to push [cyan]{package}[/cyan] to GitHub")
-    console.print(f"  Branch: {current_branch}")
-    console.print("  All tags will also be pushed")
+    console.print(f"\nReady to mirror [cyan]{package}[/cyan] to GitHub")
+    console.print(f"  Source: origin/main (committed code from GitLab)")
+    console.print(f"  Target branch: {current_branch}")
+    console.print(f"  Method: Clean snapshot (single commit, no history)")
+    console.print(f"  Tags: Only {package}-v* tags will be pushed")
+    console.print(f"  [yellow]⚠ This will REPLACE all content on GitHub[/yellow]")
 
     if not typer.confirm("\nProceed?"):
         console.print("Aborted")
         raise typer.Exit(0)
 
-    # Push to GitHub
+    # Push to GitHub (uses git subtree split to push only package directory)
     with console.status(f"Pushing {package} to GitHub..."):
-        success, message = push_to_github(package, current_branch)
+        success, message = push_to_github(package, str(package_path), current_branch)
 
     if success:
         console.print(f"\n[green]✓ {message}[/green]")

@@ -12,6 +12,7 @@ from uuid import UUID, uuid4
 from pydantic import BaseModel, ConfigDict, Field
 from pydantic.fields import FieldInfo
 
+from ..db.query_builder import PostgresQueryBuilder
 from ..temporal.enums import TemporalStrategyType
 
 
@@ -278,10 +279,15 @@ class PydanticModel(BaseModel):
         """
         from ..temporal.registry import get_strategy
 
+        # Create QueryBuilder for database-agnostic SQL generation
+        # TODO: Auto-detect database type and select appropriate QueryBuilder
+        query_builder = PostgresQueryBuilder()
+
         # Get strategy instance
         strategy = get_strategy(
             strategy_type=cls.get_temporal_strategy(),
             model_class=cls,
+            query_builder=query_builder,
             soft_delete=cls.__soft_delete__,
             multi_tenant=cls.__multi_tenant__,
             tenant_field=cls.__tenant_field__,
@@ -311,9 +317,13 @@ class PydanticModel(BaseModel):
         """
         from ..temporal.registry import get_strategy
 
+        # Create QueryBuilder for database-agnostic SQL generation
+        query_builder = PostgresQueryBuilder()
+
         strategy = get_strategy(
             strategy_type=cls.get_temporal_strategy(),
             model_class=cls,
+            query_builder=query_builder,
             soft_delete=cls.__soft_delete__,
             multi_tenant=cls.__multi_tenant__,
             tenant_field=cls.__tenant_field__,
@@ -340,9 +350,13 @@ class PydanticModel(BaseModel):
         """
         from ..temporal.registry import get_strategy
 
+        # Create QueryBuilder for database-agnostic SQL generation
+        query_builder = PostgresQueryBuilder()
+
         strategy = get_strategy(
             strategy_type=cls.get_temporal_strategy(),
             model_class=cls,
+            query_builder=query_builder,
             soft_delete=cls.__soft_delete__,
             multi_tenant=cls.__multi_tenant__,
             tenant_field=cls.__tenant_field__,

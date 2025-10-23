@@ -22,6 +22,7 @@ class TemporalStrategy(ABC, Generic[T]):
     def __init__(
         self,
         model_class: type,
+        query_builder,
         soft_delete: bool = True,
         multi_tenant: bool = True,
         tenant_field: str = "tenant_id",
@@ -31,11 +32,13 @@ class TemporalStrategy(ABC, Generic[T]):
 
         Args:
             model_class: Model class this strategy operates on
+            query_builder: QueryBuilder instance for database-specific SQL generation
             soft_delete: Enable soft delete (adds deleted_at, deleted_by)
             multi_tenant: Enable multi-tenancy (adds tenant_id)
             tenant_field: Name of tenant field
         """
         self.model_class = model_class
+        self.query_builder = query_builder
         self.soft_delete = soft_delete
         self.multi_tenant = multi_tenant
         self.tenant_field = tenant_field
@@ -297,58 +300,72 @@ class TemporalStrategy(ABC, Generic[T]):
 
         return indexes
 
+    def _get_metadata_fields(self) -> set[str]:
+        """
+        Get set of metadata/system fields that should be excluded from user updates.
+
+        These fields are managed by the system and should not be overwritten
+        when applying user-provided data during updates.
+
+        Returns:
+            Set of field names that are system-managed
+
+        Example:
+            >>> metadata = strategy._get_metadata_fields()
+            >>> metadata
+            {'id', 'created_at', 'updated_at', 'created_by', 'deleted_at', 'deleted_by', 'tenant_id'}
+        """
+        metadata = {
+            "id",
+            "created_at",
+            "updated_at",
+            "created_by",
+            "deleted_at",
+            "deleted_by",
+        }
+
+        # Add tenant_field if multi-tenant
+        if self.multi_tenant:
+            metadata.add(self.tenant_field)
+
+        return metadata
+
     def _validate_and_build_filter_clauses(
         self, filters: Dict[str, Any], base_param_count: int = 0
     ) -> tuple[List[str], List[Any]]:
         """
         Validate filter keys and build safe WHERE clause components.
 
-        This method prevents SQL injection by validating all filter keys
-        using validate_identifier() before interpolating them into queries.
+        This method uses the QueryBuilder to generate database-specific WHERE clauses
+        with proper identifier quoting and parameter placeholders.
 
         Args:
             filters: Dictionary of field_name: value filters
             base_param_count: Number of parameters already in the query (for $N numbering)
 
         Returns:
-            Tuple of (where_clauses, parameter_values)
-
-        Raises:
-            ValidationError: If any filter key is invalid
+            Tuple of (where_clauses list, parameter_values list)
 
         Example:
             >>> clauses, values = self._validate_and_build_filter_clauses(
             ...     {"status": "active", "price": 100}, base_param_count=2
             ... )
             >>> clauses
-            ['status = $3', 'price = $4']
+            ['"status" = $3', '"price" = $4']
             >>> values
             ['active', 100]
         """
-        from ...utils.validation import validate_identifier
+        if not filters:
+            return [], []
 
-        where_clauses = []
-        where_values = []
+        # Use QueryBuilder to generate WHERE clause
+        where_clause_str, where_values = self.query_builder.build_where_clause(
+            filters, base_param_count=base_param_count, operator="AND"
+        )
 
-        for key, value in filters.items():
-            # SECURITY: Validate identifier to prevent SQL injection
-            validate_identifier(key)
-
-            if value is None:
-                # Handle NULL values
-                where_clauses.append(f"{key} IS NULL")
-            elif isinstance(value, (list, tuple)):
-                # Handle IN clause
-                placeholders = ", ".join(
-                    [f"${base_param_count + len(where_values) + i + 1}" for i in range(len(value))]
-                )
-                where_clauses.append(f"{key} IN ({placeholders})")
-                where_values.extend(value)
-            else:
-                # Handle equality
-                param_num = base_param_count + len(where_values) + 1
-                where_clauses.append(f"{key} = ${param_num}")
-                where_values.append(value)
+        # Split into individual clauses for compatibility with existing code
+        # that expects a list of clause strings
+        where_clauses = where_clause_str.split(" AND ")
 
         return where_clauses, where_values
 

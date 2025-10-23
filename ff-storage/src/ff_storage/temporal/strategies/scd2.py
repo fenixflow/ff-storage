@@ -40,13 +40,18 @@ class SCD2Strategy(TemporalStrategy[T]):
     def __init__(
         self,
         model_class: type,
+        query_builder,
         soft_delete: bool = True,  # Always True for SCD2
         multi_tenant: bool = True,
         tenant_field: str = "tenant_id",
     ):
         # SCD2 always has soft delete (deleted_at field)
         super().__init__(
-            model_class, soft_delete=True, multi_tenant=multi_tenant, tenant_field=tenant_field
+            model_class,
+            query_builder,
+            soft_delete=True,
+            multi_tenant=multi_tenant,
+            tenant_field=tenant_field,
         )
 
     def get_temporal_fields(self) -> Dict[str, tuple[type, Any]]:
@@ -176,22 +181,14 @@ class SCD2Strategy(TemporalStrategy[T]):
         data["deleted_by"] = None
         data["updated_by"] = None  # First version has no updater, only creator
 
-        # Build INSERT query
+        # Build INSERT query using QueryBuilder
         table_name = self._get_table_name()
-        columns = list(data.keys())
-        placeholders = [f"${i + 1}" for i in range(len(columns))]
-
-        query = f"""
-            INSERT INTO {table_name} ({", ".join(columns)})
-            VALUES ({", ".join(placeholders)})
-            RETURNING *
-        """
+        serialized_data = self._serialize_jsonb_fields(data)
+        query, values = self.query_builder.build_insert(table_name, serialized_data)
 
         # Execute
         async with db_pool.acquire() as conn:
-            # Serialize JSONB fields to JSON strings for database insertion
-            serialized_data = self._serialize_jsonb_fields(data)
-            row = await conn.fetchrow(query, *serialized_data.values())
+            row = await conn.fetchrow(query, *values)
 
         return self._row_to_model(row)
 
@@ -214,23 +211,29 @@ class SCD2Strategy(TemporalStrategy[T]):
         Transaction ensures atomicity.
         """
         table_name = self._get_table_name()
+        quoted_table = self.query_builder.quote_identifier(table_name)
         now = datetime.now(timezone.utc)
 
-        # Build WHERE clause for current version
-        where_parts = ["id = $1", "valid_to IS NULL", "deleted_at IS NULL"]
+        # Build WHERE clause for current version with proper quoting
+        where_parts = [
+            f'{self.query_builder.quote_identifier("id")} = $1',
+            f'{self.query_builder.quote_identifier("valid_to")} IS NULL',
+            f'{self.query_builder.quote_identifier("deleted_at")} IS NULL',
+        ]
         where_values = [id]
 
         if self.multi_tenant:
             if not tenant_id:
                 raise ValueError("tenant_id required for multi-tenant model")
-            where_parts.append(f"{self.tenant_field} = ${len(where_values) + 1}")
+            tenant_field_quoted = self.query_builder.quote_identifier(self.tenant_field)
+            where_parts.append(f"{tenant_field_quoted} = ${len(where_values) + 1}")
             where_values.append(tenant_id)
 
         async with db_pool.acquire() as conn:
             async with conn.transaction():
                 # 1. Get current version
                 select_query = f"""
-                    SELECT * FROM {table_name}
+                    SELECT * FROM {quoted_table}
                     WHERE {" AND ".join(where_parts)}
                 """
                 current_row = await conn.fetchrow(select_query, *where_values)
@@ -242,19 +245,9 @@ class SCD2Strategy(TemporalStrategy[T]):
                 current_version = current_data["version"]
 
                 # 2. Check if data actually changed (prevent no-op updates)
-                # Exclude metadata fields from comparison
-                metadata_fields = {
-                    "id",
-                    "version",
-                    "valid_from",
-                    "valid_to",
-                    "created_at",
-                    "updated_at",
-                    "created_by",
-                    "deleted_at",
-                    "deleted_by",
-                    "tenant_id",
-                }
+                # Get base metadata fields and add SCD2-specific temporal fields
+                metadata_fields = self._get_metadata_fields()
+                metadata_fields.update({"version", "valid_from", "valid_to"})
 
                 # Compare only user-defined fields
                 has_changes = False
@@ -270,16 +263,22 @@ class SCD2Strategy(TemporalStrategy[T]):
                     return self._row_to_model(current_row)
 
                 # 3. Close current version
+                valid_to_quoted = self.query_builder.quote_identifier("valid_to")
                 close_query = f"""
-                    UPDATE {table_name}
-                    SET valid_to = ${len(where_values) + 1}
+                    UPDATE {quoted_table}
+                    SET {valid_to_quoted} = ${len(where_values) + 1}
                     WHERE {" AND ".join(where_parts)}
                 """
                 await conn.execute(close_query, *where_values, now)
 
                 # 4. Build new version
                 new_data = current_data.copy()
-                new_data.update(data)
+
+                # Only update with user-defined fields, preserving metadata/temporal fields
+                # This prevents tenant_id, created_at, etc. from being overwritten with None
+                for key, value in data.items():
+                    if key not in metadata_fields:
+                        new_data[key] = value
 
                 # Update version fields
                 new_data["version"] = current_version + 1
@@ -291,19 +290,12 @@ class SCD2Strategy(TemporalStrategy[T]):
                 if user_id:
                     new_data["updated_by"] = user_id
 
-                # Insert new version
-                columns = list(new_data.keys())
-                placeholders = [f"${i + 1}" for i in range(len(columns))]
-
-                insert_query = f"""
-                    INSERT INTO {table_name} ({", ".join(columns)})
-                    VALUES ({", ".join(placeholders)})
-                    RETURNING *
-                """
-
-                # Serialize JSONB fields to JSON strings for database insertion
+                # Insert new version using QueryBuilder
                 serialized_data = self._serialize_jsonb_fields(new_data)
-                row = await conn.fetchrow(insert_query, *serialized_data.values())
+                insert_query, insert_values = self.query_builder.build_insert(
+                    table_name, serialized_data
+                )
+                row = await conn.fetchrow(insert_query, *insert_values)
 
         return self._row_to_model(row)
 
@@ -329,23 +321,29 @@ class SCD2Strategy(TemporalStrategy[T]):
             True if deleted, False if not found or already deleted
         """
         table_name = self._get_table_name()
+        quoted_table = self.query_builder.quote_identifier(table_name)
         now = datetime.now(timezone.utc)
 
-        # Build WHERE for current version
-        where_parts = ["id = $1", "valid_to IS NULL", "deleted_at IS NULL"]
+        # Build WHERE for current version with proper quoting
+        where_parts = [
+            f'{self.query_builder.quote_identifier("id")} = $1',
+            f'{self.query_builder.quote_identifier("valid_to")} IS NULL',
+            f'{self.query_builder.quote_identifier("deleted_at")} IS NULL',
+        ]
         where_values = [id]
 
         if self.multi_tenant:
             if not tenant_id:
                 raise ValueError("tenant_id required for multi-tenant model")
-            where_parts.append(f"{self.tenant_field} = ${len(where_values) + 1}")
+            tenant_field_quoted = self.query_builder.quote_identifier(self.tenant_field)
+            where_parts.append(f"{tenant_field_quoted} = ${len(where_values) + 1}")
             where_values.append(tenant_id)
 
         async with db_pool.acquire() as conn:
             async with conn.transaction():
                 # 1. Get current version
                 select_query = f"""
-                    SELECT * FROM {table_name}
+                    SELECT * FROM {quoted_table}
                     WHERE {" AND ".join(where_parts)}
                 """
                 current_row = await conn.fetchrow(select_query, *where_values)
@@ -357,9 +355,10 @@ class SCD2Strategy(TemporalStrategy[T]):
                 current_version = current_data["version"]
 
                 # 2. Close current version
+                valid_to_quoted = self.query_builder.quote_identifier("valid_to")
                 close_query = f"""
-                    UPDATE {table_name}
-                    SET valid_to = ${len(where_values) + 1}
+                    UPDATE {quoted_table}
+                    SET {valid_to_quoted} = ${len(where_values) + 1}
                     WHERE {" AND ".join(where_parts)}
                 """
                 await conn.execute(close_query, *where_values, now)
@@ -373,18 +372,14 @@ class SCD2Strategy(TemporalStrategy[T]):
                 new_data["deleted_by"] = user_id
                 new_data["updated_at"] = now
 
-                # INSERT new version
-                columns = list(new_data.keys())
-                placeholders = [f"${i + 1}" for i in range(len(columns))]
-
-                insert_query = f"""
-                    INSERT INTO {table_name} ({", ".join(columns)})
-                    VALUES ({", ".join(placeholders)})
-                """
-
-                # Serialize JSONB fields to JSON strings for database insertion
+                # INSERT new version using QueryBuilder (without RETURNING)
                 serialized_data = self._serialize_jsonb_fields(new_data)
-                await conn.execute(insert_query, *serialized_data.values())
+                insert_query, insert_values = self.query_builder.build_insert(
+                    table_name, serialized_data
+                )
+                # Remove RETURNING * since we don't need the row back
+                insert_query = insert_query.replace(" RETURNING *", "")
+                await conn.execute(insert_query, *insert_values)
 
         return True
 
@@ -417,27 +412,35 @@ class SCD2Strategy(TemporalStrategy[T]):
         at that point in time (deleted_at IS NULL OR deleted_at > as_of).
         """
         table_name = self._get_table_name()
+        quoted_table = self.query_builder.quote_identifier(table_name)
 
-        # Build WHERE clause
-        where_parts = ["id = $1"]
+        # Build WHERE clause with proper quoting
+        where_parts = [f'{self.query_builder.quote_identifier("id")} = $1']
         where_values = [id]
 
         if self.multi_tenant:
             if not tenant_id:
                 raise ValueError("tenant_id required for multi-tenant model")
-            where_parts.append(f"{self.tenant_field} = ${len(where_values) + 1}")
+            tenant_field_quoted = self.query_builder.quote_identifier(self.tenant_field)
+            where_parts.append(f"{tenant_field_quoted} = ${len(where_values) + 1}")
             where_values.append(tenant_id)
+
+        valid_to_quoted = self.query_builder.quote_identifier("valid_to")
+        valid_from_quoted = self.query_builder.quote_identifier("valid_from")
+        deleted_at_quoted = self.query_builder.quote_identifier("deleted_at")
 
         if as_of is None:
             # Current version
-            where_parts.append("valid_to IS NULL")
+            where_parts.append(f"{valid_to_quoted} IS NULL")
             if not include_deleted:
-                where_parts.append("deleted_at IS NULL")
+                where_parts.append(f"{deleted_at_quoted} IS NULL")
         else:
             # Time travel: Get version valid at as_of time
-            where_parts.append(f"valid_from <= ${len(where_values) + 1}")
+            where_parts.append(f"{valid_from_quoted} <= ${len(where_values) + 1}")
             where_values.append(as_of)
-            where_parts.append(f"(valid_to IS NULL OR valid_to > ${len(where_values)})")
+            where_parts.append(
+                f"({valid_to_quoted} IS NULL OR {valid_to_quoted} > ${len(where_values)})"
+            )
             where_values.append(as_of)
 
             if not include_deleted:
@@ -445,11 +448,13 @@ class SCD2Strategy(TemporalStrategy[T]):
                 # Record is visible only if:
                 # - deleted_at IS NULL (never deleted), OR
                 # - deleted_at > as_of (deletion happened AFTER as_of)
-                where_parts.append(f"(deleted_at IS NULL OR deleted_at > ${len(where_values)})")
+                where_parts.append(
+                    f"({deleted_at_quoted} IS NULL OR {deleted_at_quoted} > ${len(where_values)})"
+                )
                 where_values.append(as_of)
 
         query = f"""
-            SELECT * FROM {table_name}
+            SELECT * FROM {quoted_table}
             WHERE {" AND ".join(where_parts)}
         """
 
@@ -480,9 +485,10 @@ class SCD2Strategy(TemporalStrategy[T]):
         With as_of, returns versions valid at that time.
         """
         table_name = self._get_table_name()
+        quoted_table = self.query_builder.quote_identifier(table_name)
         filters = filters or {}
 
-        # Build WHERE clause
+        # Build WHERE clause with proper quoting
         where_parts = []
         where_values = []
 
@@ -490,26 +496,35 @@ class SCD2Strategy(TemporalStrategy[T]):
         if self.multi_tenant:
             if not tenant_id:
                 raise ValueError("tenant_id required for multi-tenant model")
-            where_parts.append(f"{self.tenant_field} = ${len(where_values) + 1}")
+            tenant_field_quoted = self.query_builder.quote_identifier(self.tenant_field)
+            where_parts.append(f"{tenant_field_quoted} = ${len(where_values) + 1}")
             where_values.append(tenant_id)
+
+        valid_to_quoted = self.query_builder.quote_identifier("valid_to")
+        valid_from_quoted = self.query_builder.quote_identifier("valid_from")
+        deleted_at_quoted = self.query_builder.quote_identifier("deleted_at")
 
         # Temporal filter
         if as_of is None:
             # Current versions
-            where_parts.append("valid_to IS NULL")
+            where_parts.append(f"{valid_to_quoted} IS NULL")
             if not include_deleted:
-                where_parts.append("deleted_at IS NULL")
+                where_parts.append(f"{deleted_at_quoted} IS NULL")
         else:
             # Time travel: Get versions valid at as_of time
-            where_parts.append(f"valid_from <= ${len(where_values) + 1}")
+            where_parts.append(f"{valid_from_quoted} <= ${len(where_values) + 1}")
             where_values.append(as_of)
-            where_parts.append(f"(valid_to IS NULL OR valid_to > ${len(where_values)})")
+            where_parts.append(
+                f"({valid_to_quoted} IS NULL OR {valid_to_quoted} > ${len(where_values)})"
+            )
             where_values.append(as_of)
 
             if not include_deleted:
                 # CRITICAL: Check if records were deleted at as_of time
                 # Same logic as get(): deleted_at IS NULL OR deleted_at > as_of
-                where_parts.append(f"(deleted_at IS NULL OR deleted_at > ${len(where_values)})")
+                where_parts.append(
+                    f"({deleted_at_quoted} IS NULL OR {deleted_at_quoted} > ${len(where_values)})"
+                )
                 where_values.append(as_of)
 
         # User filters (with validation to prevent SQL injection)
@@ -522,10 +537,11 @@ class SCD2Strategy(TemporalStrategy[T]):
 
         # Build query
         where_clause = f"WHERE {' AND '.join(where_parts)}" if where_parts else ""
+        created_at_quoted = self.query_builder.quote_identifier("created_at")
         query = f"""
-            SELECT * FROM {table_name}
+            SELECT * FROM {quoted_table}
             {where_clause}
-            ORDER BY created_at DESC
+            ORDER BY {created_at_quoted} DESC
             LIMIT ${len(where_values) + 1}
             OFFSET ${len(where_values) + 2}
         """
@@ -550,21 +566,24 @@ class SCD2Strategy(TemporalStrategy[T]):
         Returns every version from creation to present.
         """
         table_name = self._get_table_name()
+        quoted_table = self.query_builder.quote_identifier(table_name)
 
-        # Build WHERE clause
-        where_parts = ["id = $1"]
+        # Build WHERE clause with proper quoting
+        where_parts = [f'{self.query_builder.quote_identifier("id")} = $1']
         where_values = [id]
 
         if self.multi_tenant:
             if not tenant_id:
                 raise ValueError("tenant_id required for multi-tenant model")
-            where_parts.append(f"{self.tenant_field} = ${len(where_values) + 1}")
+            tenant_field_quoted = self.query_builder.quote_identifier(self.tenant_field)
+            where_parts.append(f"{tenant_field_quoted} = ${len(where_values) + 1}")
             where_values.append(tenant_id)
 
+        version_quoted = self.query_builder.quote_identifier("version")
         query = f"""
-            SELECT * FROM {table_name}
+            SELECT * FROM {quoted_table}
             WHERE {" AND ".join(where_parts)}
-            ORDER BY version ASC
+            ORDER BY {version_quoted} ASC
         """
 
         # Execute
@@ -582,19 +601,24 @@ class SCD2Strategy(TemporalStrategy[T]):
     ) -> Optional[T]:
         """Get specific version of a record."""
         table_name = self._get_table_name()
+        quoted_table = self.query_builder.quote_identifier(table_name)
 
-        # Build WHERE clause
-        where_parts = ["id = $1", "version = $2"]
+        # Build WHERE clause with proper quoting
+        where_parts = [
+            f'{self.query_builder.quote_identifier("id")} = $1',
+            f'{self.query_builder.quote_identifier("version")} = $2',
+        ]
         where_values = [id, version]
 
         if self.multi_tenant:
             if not tenant_id:
                 raise ValueError("tenant_id required for multi-tenant model")
-            where_parts.append(f"{self.tenant_field} = ${len(where_values) + 1}")
+            tenant_field_quoted = self.query_builder.quote_identifier(self.tenant_field)
+            where_parts.append(f"{tenant_field_quoted} = ${len(where_values) + 1}")
             where_values.append(tenant_id)
 
         query = f"""
-            SELECT * FROM {table_name}
+            SELECT * FROM {quoted_table}
             WHERE {" AND ".join(where_parts)}
         """
 
@@ -619,22 +643,30 @@ class SCD2Strategy(TemporalStrategy[T]):
         Returns list of VersionInfo with version number, validity range, status.
         """
         table_name = self._get_table_name()
+        quoted_table = self.query_builder.quote_identifier(table_name)
 
-        # Build WHERE clause
-        where_parts = ["id = $1"]
+        # Build WHERE clause with proper quoting
+        where_parts = [f'{self.query_builder.quote_identifier("id")} = $1']
         where_values = [id]
 
         if self.multi_tenant:
             if not tenant_id:
                 raise ValueError("tenant_id required for multi-tenant model")
-            where_parts.append(f"{self.tenant_field} = ${len(where_values) + 1}")
+            tenant_field_quoted = self.query_builder.quote_identifier(self.tenant_field)
+            where_parts.append(f"{tenant_field_quoted} = ${len(where_values) + 1}")
             where_values.append(tenant_id)
 
+        # Quote column names for SELECT
+        version_quoted = self.query_builder.quote_identifier("version")
+        valid_from_quoted = self.query_builder.quote_identifier("valid_from")
+        valid_to_quoted = self.query_builder.quote_identifier("valid_to")
+        deleted_at_quoted = self.query_builder.quote_identifier("deleted_at")
+
         query = f"""
-            SELECT version, valid_from, valid_to, deleted_at
-            FROM {table_name}
+            SELECT {version_quoted}, {valid_from_quoted}, {valid_to_quoted}, {deleted_at_quoted}
+            FROM {quoted_table}
             WHERE {" AND ".join(where_parts)}
-            ORDER BY version ASC
+            ORDER BY {version_quoted} ASC
         """
 
         # Execute

@@ -79,22 +79,14 @@ class NoneStrategy(TemporalStrategy[T]):
             data["deleted_at"] = None
             data["deleted_by"] = None
 
-        # Build INSERT query
+        # Build INSERT query using QueryBuilder
         table_name = self._get_table_name()
-        columns = list(data.keys())
-        placeholders = [f"${i + 1}" for i in range(len(columns))]
-
-        query = f"""
-            INSERT INTO {table_name} ({", ".join(columns)})
-            VALUES ({", ".join(placeholders)})
-            RETURNING *
-        """
+        serialized_data = self._serialize_jsonb_fields(data)
+        query, values = self.query_builder.build_insert(table_name, serialized_data)
 
         # Execute
         async with db_pool.acquire() as conn:
-            # Serialize JSONB fields to JSON strings for database insertion
-            serialized_data = self._serialize_jsonb_fields(data)
-            row = await conn.fetchrow(query, *serialized_data.values())
+            row = await conn.fetchrow(query, *values)
 
         return self._row_to_model(row)
 
@@ -120,30 +112,41 @@ class NoneStrategy(TemporalStrategy[T]):
         if user_id:
             data["updated_by"] = user_id
 
-        # Build WHERE clause
-        where_parts = ["id = $1"]
+        # Build WHERE clause with proper quoting
+        where_parts = [f'{self.query_builder.quote_identifier("id")} = $1']
         where_values = [id]
 
         if self.multi_tenant:
             if not tenant_id:
                 raise ValueError("tenant_id required for multi-tenant model")
-            where_parts.append(f"{self.tenant_field} = ${len(where_values) + 1}")
+            tenant_field_quoted = self.query_builder.quote_identifier(self.tenant_field)
+            where_parts.append(f"{tenant_field_quoted} = ${len(where_values) + 1}")
             where_values.append(tenant_id)
 
         if self.soft_delete:
-            where_parts.append("deleted_at IS NULL")
+            deleted_at_quoted = self.query_builder.quote_identifier("deleted_at")
+            where_parts.append(f"{deleted_at_quoted} IS NULL")
 
-        # Build SET clause
+        # Build SET clause using QueryBuilder
+        table_name = self._get_table_name()
+        quoted_table = self.query_builder.quote_identifier(table_name)
+
+        # Build SET clause parts
         set_parts = []
         set_values = []
+        base_param = len(where_values)
+
         for key, value in data.items():
             set_values.append(value)
-            set_parts.append(f"{key} = ${len(where_values) + len(set_values)}")
+            quoted_key = self.query_builder.quote_identifier(key)
+            param_num = base_param + len(set_values)
+            set_parts.append(f"{quoted_key} = ${param_num}")
 
-        table_name = self._get_table_name()
+        set_clause = ", ".join(set_parts)
+
         query = f"""
-            UPDATE {table_name}
-            SET {", ".join(set_parts)}
+            UPDATE {quoted_table}
+            SET {set_clause}
             WHERE {" AND ".join(where_parts)}
             RETURNING *
         """
@@ -171,33 +174,37 @@ class NoneStrategy(TemporalStrategy[T]):
         Otherwise: Hard DELETE
         """
         table_name = self._get_table_name()
+        quoted_table = self.query_builder.quote_identifier(table_name)
 
-        # Build WHERE clause
-        where_parts = ["id = $1"]
+        # Build WHERE clause with proper quoting
+        where_parts = [f'{self.query_builder.quote_identifier("id")} = $1']
         where_values = [id]
 
         if self.multi_tenant:
             if not tenant_id:
                 raise ValueError("tenant_id required for multi-tenant model")
-            where_parts.append(f"{self.tenant_field} = ${len(where_values) + 1}")
+            tenant_field_quoted = self.query_builder.quote_identifier(self.tenant_field)
+            where_parts.append(f"{tenant_field_quoted} = ${len(where_values) + 1}")
             where_values.append(tenant_id)
 
         if self.soft_delete:
             # Soft delete
+            deleted_at_quoted = self.query_builder.quote_identifier("deleted_at")
+            deleted_by_quoted = self.query_builder.quote_identifier("deleted_by")
             query = f"""
-                UPDATE {table_name}
-                SET deleted_at = ${len(where_values) + 1},
-                    deleted_by = ${len(where_values) + 2}
-                WHERE {" AND ".join(where_parts)} AND deleted_at IS NULL
-                RETURNING id
+                UPDATE {quoted_table}
+                SET {deleted_at_quoted} = ${len(where_values) + 1},
+                    {deleted_by_quoted} = ${len(where_values) + 2}
+                WHERE {" AND ".join(where_parts)} AND {deleted_at_quoted} IS NULL
+                RETURNING {self.query_builder.quote_identifier("id")}
             """
             values = where_values + [datetime.now(timezone.utc), user_id]
         else:
             # Hard delete
             query = f"""
-                DELETE FROM {table_name}
+                DELETE FROM {quoted_table}
                 WHERE {" AND ".join(where_parts)}
-                RETURNING id
+                RETURNING {self.query_builder.quote_identifier("id")}
             """
             values = where_values
 
@@ -222,22 +229,25 @@ class NoneStrategy(TemporalStrategy[T]):
             include_deleted: If True, include soft-deleted records
         """
         table_name = self._get_table_name()
+        quoted_table = self.query_builder.quote_identifier(table_name)
 
-        # Build WHERE clause
-        where_parts = ["id = $1"]
+        # Build WHERE clause with proper quoting
+        where_parts = [f'{self.query_builder.quote_identifier("id")} = $1']
         where_values = [id]
 
         if self.multi_tenant:
             if not tenant_id:
                 raise ValueError("tenant_id required for multi-tenant model")
-            where_parts.append(f"{self.tenant_field} = ${len(where_values) + 1}")
+            tenant_field_quoted = self.query_builder.quote_identifier(self.tenant_field)
+            where_parts.append(f"{tenant_field_quoted} = ${len(where_values) + 1}")
             where_values.append(tenant_id)
 
         if self.soft_delete and not include_deleted:
-            where_parts.append("deleted_at IS NULL")
+            deleted_at_quoted = self.query_builder.quote_identifier("deleted_at")
+            where_parts.append(f"{deleted_at_quoted} IS NULL")
 
         query = f"""
-            SELECT * FROM {table_name}
+            SELECT * FROM {quoted_table}
             WHERE {" AND ".join(where_parts)}
         """
 
@@ -268,9 +278,10 @@ class NoneStrategy(TemporalStrategy[T]):
             include_deleted: If True, include soft-deleted records
         """
         table_name = self._get_table_name()
+        quoted_table = self.query_builder.quote_identifier(table_name)
         filters = filters or {}
 
-        # Build WHERE clause
+        # Build WHERE clause with proper quoting
         where_parts = []
         where_values = []
 
@@ -278,12 +289,14 @@ class NoneStrategy(TemporalStrategy[T]):
         if self.multi_tenant:
             if not tenant_id:
                 raise ValueError("tenant_id required for multi-tenant model")
-            where_parts.append(f"{self.tenant_field} = ${len(where_values) + 1}")
+            tenant_field_quoted = self.query_builder.quote_identifier(self.tenant_field)
+            where_parts.append(f"{tenant_field_quoted} = ${len(where_values) + 1}")
             where_values.append(tenant_id)
 
         # Soft delete filter
         if self.soft_delete and not include_deleted:
-            where_parts.append("deleted_at IS NULL")
+            deleted_at_quoted = self.query_builder.quote_identifier("deleted_at")
+            where_parts.append(f"{deleted_at_quoted} IS NULL")
 
         # User filters (with validation to prevent SQL injection)
         if filters:
@@ -295,10 +308,11 @@ class NoneStrategy(TemporalStrategy[T]):
 
         # Build query
         where_clause = f"WHERE {' AND '.join(where_parts)}" if where_parts else ""
+        created_at_quoted = self.query_builder.quote_identifier("created_at")
         query = f"""
-            SELECT * FROM {table_name}
+            SELECT * FROM {quoted_table}
             {where_clause}
-            ORDER BY created_at DESC
+            ORDER BY {created_at_quoted} DESC
             LIMIT ${len(where_values) + 1}
             OFFSET ${len(where_values) + 2}
         """
@@ -326,23 +340,29 @@ class NoneStrategy(TemporalStrategy[T]):
             raise ValueError("restore() only available with soft_delete enabled")
 
         table_name = self._get_table_name()
+        quoted_table = self.query_builder.quote_identifier(table_name)
 
-        # Build WHERE clause
-        where_parts = ["id = $1"]
+        # Build WHERE clause with proper quoting
+        where_parts = [f'{self.query_builder.quote_identifier("id")} = $1']
         where_values = [id]
 
         if self.multi_tenant:
             if not tenant_id:
                 raise ValueError("tenant_id required for multi-tenant model")
-            where_parts.append(f"{self.tenant_field} = ${len(where_values) + 1}")
+            tenant_field_quoted = self.query_builder.quote_identifier(self.tenant_field)
+            where_parts.append(f"{tenant_field_quoted} = ${len(where_values) + 1}")
             where_values.append(tenant_id)
 
+        deleted_at_quoted = self.query_builder.quote_identifier("deleted_at")
+        deleted_by_quoted = self.query_builder.quote_identifier("deleted_by")
+        updated_at_quoted = self.query_builder.quote_identifier("updated_at")
+
         query = f"""
-            UPDATE {table_name}
-            SET deleted_at = NULL,
-                deleted_by = NULL,
-                updated_at = ${len(where_values) + 1}
-            WHERE {" AND ".join(where_parts)} AND deleted_at IS NOT NULL
+            UPDATE {quoted_table}
+            SET {deleted_at_quoted} = NULL,
+                {deleted_by_quoted} = NULL,
+                {updated_at_quoted} = ${len(where_values) + 1}
+            WHERE {" AND ".join(where_parts)} AND {deleted_at_quoted} IS NOT NULL
             RETURNING *
         """
 
