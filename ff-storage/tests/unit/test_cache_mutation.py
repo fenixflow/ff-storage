@@ -291,13 +291,18 @@ class TestCacheMutation:
         strategy.get_current_version_filters.return_value = []  # Return empty list for no filters
 
         db_pool = AsyncMock()
-        # Mock fetch_all to return rows
+        # Mock conn.fetch() to return rows
         rows = [
             {"id": ids[0], "name": "Model1", "value": 1, "tags": ["a"]},
             {"id": ids[1], "name": "Model2", "value": 2, "tags": ["b"]},
             {"id": ids[2], "name": "Model3", "value": 3, "tags": ["c"]},
         ]
-        db_pool.fetch_all = AsyncMock(return_value=rows)
+        conn = AsyncMock()
+        conn.fetch = AsyncMock(return_value=rows)
+        acquire_context = AsyncMock()
+        acquire_context.__aenter__.return_value = conn
+        acquire_context.__aexit__.return_value = None
+        db_pool.acquire.return_value = acquire_context
 
         repo = TemporalRepository(
             model_class=TestModel,

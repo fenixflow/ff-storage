@@ -18,7 +18,49 @@ from test_sql_reserved_keywords import (
 
 
 @pytest.fixture(scope="session")
-def setup_integration_schema():
+def ensure_test_database():
+    """
+    Create test_temporal database if it doesn't exist.
+
+    Connects to the default 'postgres' database to check and create
+    the test_temporal database. This ensures the database exists before
+    any tests attempt to connect to it.
+
+    This fixture runs once per test session.
+    """
+    import psycopg2
+
+    # Use raw psycopg2 connection with autocommit for CREATE DATABASE
+    conn = psycopg2.connect(
+        dbname="postgres",
+        user="postgres",
+        password="postgres",
+        host="localhost",
+        port=5438,
+    )
+    conn.autocommit = True
+
+    try:
+        with conn.cursor() as cursor:
+            # Check if test_temporal database exists
+            cursor.execute("SELECT 1 FROM pg_database WHERE datname = %s", ("test_temporal",))
+            result = cursor.fetchone()
+
+            if not result:
+                # Create database if it doesn't exist
+                cursor.execute("CREATE DATABASE test_temporal")
+                logging.info("Created test_temporal database")
+            else:
+                logging.info("test_temporal database already exists")
+
+        yield
+
+    finally:
+        conn.close()
+
+
+@pytest.fixture(scope="session")
+def setup_integration_schema(ensure_test_database):
     """
     Create test database schema before integration tests run.
 
@@ -37,7 +79,7 @@ def setup_integration_schema():
     """
     # Create synchronous database connection (SchemaManager requires sync)
     db = Postgres(
-        dbname="insurx",
+        dbname="test_temporal",
         user="postgres",
         password="postgres",
         host="localhost",

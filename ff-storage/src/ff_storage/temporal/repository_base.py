@@ -832,7 +832,8 @@ class TemporalRepository(Generic[T]):
                         query += f" AND {' AND '.join(current_filters)}"
 
                     # Execute query
-                    rows = await self.db_pool.fetch_all(query, *values)
+                    async with self.db_pool.acquire() as conn:
+                        rows = await conn.fetch(query, *values)
 
                     # Convert rows to models and cache
                     for row in rows:
@@ -885,13 +886,19 @@ class TemporalRepository(Generic[T]):
         return f"{schema}.{table}"
 
     def _model_to_dict(self, model: T) -> Dict[str, Any]:
-        """Convert model instance to dict."""
+        """
+        Convert model instance to dict.
+
+        For updates, only includes fields that were explicitly set by the user.
+        This prevents accidentally overwriting managed fields (id, tenant_id,
+        created_at, etc.) with None values.
+        """
         if hasattr(model, "model_dump"):
-            # Pydantic v2
-            return model.model_dump()
+            # Pydantic v2: Only include explicitly set fields for partial updates
+            return model.model_dump(exclude_unset=True)
         elif hasattr(model, "dict"):
-            # Pydantic v1
-            return model.dict()
+            # Pydantic v1: Only include explicitly set fields
+            return model.dict(exclude_unset=True)
         elif hasattr(model, "__dataclass_fields__"):
             # Dataclass
             from dataclasses import asdict

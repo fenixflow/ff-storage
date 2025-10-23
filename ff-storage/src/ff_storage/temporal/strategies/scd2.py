@@ -442,7 +442,7 @@ class SCD2Strategy(TemporalStrategy[T]):
             where_parts.append(f"{valid_from_quoted} <= ${len(where_values) + 1}")
             where_values.append(as_of)
             where_parts.append(
-                f"({valid_to_quoted} IS NULL OR {valid_to_quoted} > ${len(where_values)})"
+                f"({valid_to_quoted} IS NULL OR {valid_to_quoted} > ${len(where_values) + 1})"
             )
             where_values.append(as_of)
 
@@ -452,7 +452,7 @@ class SCD2Strategy(TemporalStrategy[T]):
                 # - deleted_at IS NULL (never deleted), OR
                 # - deleted_at > as_of (deletion happened AFTER as_of)
                 where_parts.append(
-                    f"({deleted_at_quoted} IS NULL OR {deleted_at_quoted} > ${len(where_values)})"
+                    f"({deleted_at_quoted} IS NULL OR {deleted_at_quoted} > ${len(where_values) + 1})"
                 )
                 where_values.append(as_of)
 
@@ -518,7 +518,7 @@ class SCD2Strategy(TemporalStrategy[T]):
             where_parts.append(f"{valid_from_quoted} <= ${len(where_values) + 1}")
             where_values.append(as_of)
             where_parts.append(
-                f"({valid_to_quoted} IS NULL OR {valid_to_quoted} > ${len(where_values)})"
+                f"({valid_to_quoted} IS NULL OR {valid_to_quoted} > ${len(where_values) + 1})"
             )
             where_values.append(as_of)
 
@@ -526,7 +526,7 @@ class SCD2Strategy(TemporalStrategy[T]):
                 # CRITICAL: Check if records were deleted at as_of time
                 # Same logic as get(): deleted_at IS NULL OR deleted_at > as_of
                 where_parts.append(
-                    f"({deleted_at_quoted} IS NULL OR {deleted_at_quoted} > ${len(where_values)})"
+                    f"({deleted_at_quoted} IS NULL OR {deleted_at_quoted} > ${len(where_values) + 1})"
                 )
                 where_values.append(as_of)
 

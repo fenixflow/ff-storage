@@ -61,10 +61,10 @@ class AuditedProduct(PydanticModel):
 
 
 @pytest.fixture
-def db():
+def db(ensure_test_database):
     """Create synchronous database connection."""
     connection = Postgres(
-        dbname="insurx", user="postgres", password="postgres", host="localhost", port=5438
+        dbname="test_temporal", user="postgres", password="postgres", host="localhost", port=5438
     )
     connection.connect()
     yield connection
@@ -72,10 +72,10 @@ def db():
 
 
 @pytest_asyncio.fixture
-async def db_pool():
+async def db_pool(ensure_test_database):
     """Create async database pool."""
     pool = PostgresPool(
-        dbname="insurx", user="postgres", password="postgres", host="localhost", port=5438
+        dbname="test_temporal", user="postgres", password="postgres", host="localhost", port=5438
     )
     await pool.connect()
     yield pool
