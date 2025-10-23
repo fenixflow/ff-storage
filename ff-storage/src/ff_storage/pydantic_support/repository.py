@@ -64,6 +64,7 @@ class PydanticRepository(TemporalRepository[T]):
         db_pool,
         tenant_id: Optional[UUID] = None,
         logger=None,
+        **kwargs,
     ):
         """
         Initialize Pydantic repository.
@@ -73,6 +74,8 @@ class PydanticRepository(TemporalRepository[T]):
             db_pool: Database connection pool (asyncpg, aiomysql, etc.)
             tenant_id: Tenant context (required if model is multi-tenant)
             logger: Optional logger instance
+            **kwargs: Additional arguments for TemporalRepository
+                     (cache_enabled, cache_ttl, collect_metrics, max_retries, etc.)
 
         Raises:
             ValueError: If model requires tenant_id but none provided
@@ -111,6 +114,7 @@ class PydanticRepository(TemporalRepository[T]):
             strategy=strategy,
             tenant_id=tenant_id,
             logger=logger or logging.getLogger(__name__),
+            **kwargs,  # Forward cache_enabled, cache_ttl, collect_metrics, etc.
         )
 
     # All CRUD methods inherited from TemporalRepository

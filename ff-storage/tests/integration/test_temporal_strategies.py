@@ -15,6 +15,7 @@ from decimal import Decimal
 from uuid import uuid4
 
 import pytest
+import pytest_asyncio
 from ff_storage import Field, PydanticModel, PydanticRepository
 
 # Test models for each strategy
@@ -59,7 +60,7 @@ class ProductSCD2(PydanticModel):
     status: str = Field(default="active")
 
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def db_pool():
     """Mock database pool for testing."""
     import asyncpg
@@ -78,7 +79,7 @@ async def db_pool():
     await pool.close()
 
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def setup_tables(db_pool):
     """Create test tables."""
     async with db_pool.acquire() as conn:
