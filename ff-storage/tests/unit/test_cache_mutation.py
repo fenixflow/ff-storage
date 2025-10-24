@@ -299,10 +299,13 @@ class TestCacheMutation:
         ]
         conn = AsyncMock()
         conn.fetch = AsyncMock(return_value=rows)
-        acquire_context = AsyncMock()
-        acquire_context.__aenter__.return_value = conn
-        acquire_context.__aexit__.return_value = None
-        db_pool.acquire.return_value = acquire_context
+
+        # Create a proper async context manager mock
+        acquire_context = MagicMock()
+        acquire_context.__aenter__ = AsyncMock(return_value=conn)
+        acquire_context.__aexit__ = AsyncMock(return_value=None)
+        # Make acquire() a regular (non-async) method that returns the context manager
+        db_pool.acquire = MagicMock(return_value=acquire_context)
 
         repo = TemporalRepository(
             model_class=TestModel,
