@@ -290,6 +290,65 @@ class SchemaDifferBase:
             return "TRUE"
         return default
 
+    def _normalize_where_clause(self, where_clause: Optional[str]) -> Optional[str]:
+        """
+        Normalize WHERE clause for comparison by stripping outer parentheses.
+
+        PostgreSQL's pg_get_expr() returns WHERE clauses with parentheses like:
+        - (deleted_at IS NULL)
+        - ((valid_to IS NULL) AND (deleted_at IS NULL))
+
+        But our generated DDL uses:
+        - deleted_at IS NULL
+        - valid_to IS NULL AND deleted_at IS NULL
+
+        This method normalizes both forms to the same representation to prevent
+        false positives in schema drift detection.
+
+        Args:
+            where_clause: WHERE clause string (or None)
+
+        Returns:
+            Normalized WHERE clause with outer parens stripped
+
+        Example:
+            >>> _normalize_where_clause("(deleted_at IS NULL)")
+            "deleted_at IS NULL"
+            >>> _normalize_where_clause("((a IS NULL) AND (b = 1))")
+            "(a IS NULL) AND (b = 1)"
+        """
+        if where_clause is None:
+            return None
+
+        # Strip leading/trailing whitespace
+        normalized = where_clause.strip()
+
+        # Strip outer parentheses only (preserve inner grouping)
+        # Continue stripping while outermost chars are parens
+        while normalized.startswith("(") and normalized.endswith(")") and len(normalized) > 2:
+            # Remove outer parens
+            inner = normalized[1:-1]
+
+            # Verify parens are balanced (not removing part of a grouped expression)
+            depth = 0
+            valid_strip = True
+            for char in inner:
+                if char == "(":
+                    depth += 1
+                elif char == ")":
+                    depth -= 1
+                    if depth < 0:  # Unbalanced - don't strip
+                        valid_strip = False
+                        break
+
+            # Only strip if balanced
+            if valid_strip and depth == 0:
+                normalized = inner.strip()
+            else:
+                break
+
+        return normalized
+
     def _columns_equal(self, col1: ColumnDefinition, col2: ColumnDefinition) -> bool:
         """
         Deep comparison of column definitions.
@@ -320,6 +379,8 @@ class SchemaDifferBase:
         Deep comparison of index definitions.
 
         Compares all properties: columns, unique, index_type, where_clause.
+        WHERE clauses are normalized before comparison to handle cosmetic differences
+        like PostgreSQL's pg_get_expr() adding extra parentheses.
 
         Args:
             idx1: First index definition
@@ -332,7 +393,8 @@ class SchemaDifferBase:
             idx1.columns == idx2.columns
             and idx1.unique == idx2.unique
             and idx1.index_type == idx2.index_type
-            and idx1.where_clause == idx2.where_clause
+            and self._normalize_where_clause(idx1.where_clause)
+            == self._normalize_where_clause(idx2.where_clause)
         )
 
     def compute_changes(
