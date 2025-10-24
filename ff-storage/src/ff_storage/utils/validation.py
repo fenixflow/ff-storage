@@ -160,9 +160,10 @@ class SQLValidator:
                     "Query doesn't match safe patterns", "Query must start with allowed keywords"
                 )
 
-        # Check for reserved keywords in parameters
-        if params:
-            self._validate_parameters(params)
+        # NOTE: Parameter validation removed - parameterized queries are already safe by design.
+        # Parameters are passed separately from SQL and never interpreted as code.
+        # Checking for keywords in parameter values (filenames, content, etc.) creates
+        # false positives without adding security value.
 
         # Additional structure validation
         self._validate_query_structure(query)
