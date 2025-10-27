@@ -15,7 +15,7 @@ from ff_storage.exceptions import TemporalStrategyError
 from ff_storage.temporal.repository_base import TemporalRepository
 
 
-class TestProduct(PydanticModel):
+class ProductModel(PydanticModel):
     """Test model for resilience testing."""
 
     __table_name__ = "test_products"
@@ -36,11 +36,11 @@ class TestConnectionResilience:
         # Mock strategy that succeeds
         strategy = AsyncMock()
         strategy.multi_tenant = False
-        strategy.create.return_value = TestProduct(id=uuid4(), name="Test", value=42)
+        strategy.create.return_value = ProductModel(id=uuid4(), name="Test", value=42)
 
         # Create repository
         repo = TemporalRepository(
-            model_class=TestProduct,
+            model_class=ProductModel,
             db_pool=pool,
             strategy=strategy,
             adapter=PostgresAdapter(),
@@ -48,7 +48,7 @@ class TestConnectionResilience:
         )
 
         # Should succeed
-        result = await repo.create(TestProduct(name="Test", value=42))
+        result = await repo.create(ProductModel(name="Test", value=42))
         assert result is not None
         assert result.name == "Test"
         assert strategy.create.call_count >= 1
@@ -65,7 +65,7 @@ class TestConnectionResilience:
 
         # Create repository
         repo = TemporalRepository(
-            model_class=TestProduct,
+            model_class=ProductModel,
             db_pool=pool,
             strategy=strategy,
             adapter=PostgresAdapter(),
@@ -74,7 +74,7 @@ class TestConnectionResilience:
 
         # Should fail and wrap error
         with pytest.raises(TemporalStrategyError) as exc_info:
-            await repo.create(TestProduct(name="Test", value=42))
+            await repo.create(ProductModel(name="Test", value=42))
 
         assert "create" in str(exc_info.value)
         assert strategy.create.call_count >= 1
@@ -113,7 +113,7 @@ class TestConnectionResilience:
 
         # Create repository
         repo = TemporalRepository(
-            model_class=TestProduct,
+            model_class=ProductModel,
             db_pool=pool,
             strategy=strategy,
             adapter=PostgresAdapter(),
@@ -122,7 +122,7 @@ class TestConnectionResilience:
 
         # First operation fails but retries and succeeds
         with patch.object(strategy, "get") as mock_get:
-            mock_get.return_value = TestProduct(id=uuid4(), name="Recovered", value=100)
+            mock_get.return_value = ProductModel(id=uuid4(), name="Recovered", value=100)
 
             result = await repo.get(uuid4())
             assert result.name == "Recovered"
@@ -138,7 +138,7 @@ class TestConnectionResilience:
         strategy.create.side_effect = Exception("Constraint violation")
 
         repo = TemporalRepository(
-            model_class=TestProduct,
+            model_class=ProductModel,
             db_pool=pool,
             strategy=strategy,
             adapter=PostgresAdapter(),
@@ -146,7 +146,7 @@ class TestConnectionResilience:
 
         # Operation should fail and be wrapped in TemporalStrategyError
         with pytest.raises(TemporalStrategyError) as exc_info:
-            await repo.create(TestProduct(name="Test", value=42))
+            await repo.create(ProductModel(name="Test", value=42))
 
         # Verify error contains relevant information
         assert "create" in str(exc_info.value)
@@ -195,10 +195,10 @@ class TestConnectionResilience:
         # Mock strategy
         strategy = AsyncMock()
         strategy.multi_tenant = False
-        strategy.get.return_value = TestProduct(id=uuid4(), name="Test", value=42)
+        strategy.get.return_value = ProductModel(id=uuid4(), name="Test", value=42)
 
         repo = TemporalRepository(
-            model_class=TestProduct,
+            model_class=ProductModel,
             db_pool=pool,
             strategy=strategy,
             adapter=PostgresAdapter(),
@@ -248,7 +248,7 @@ class TestConnectionResilience:
         strategy.multi_tenant = False
 
         repo = TemporalRepository(
-            model_class=TestProduct,
+            model_class=ProductModel,
             db_pool=pool,
             strategy=strategy,
             adapter=PostgresAdapter(),
@@ -262,7 +262,7 @@ class TestConnectionResilience:
             try:
                 with patch.object(strategy, "get") as mock_get:
                     if id in success_ids:
-                        mock_get.return_value = TestProduct(id=id, name=f"Product {id}", value=100)
+                        mock_get.return_value = ProductModel(id=id, name=f"Product {id}", value=100)
                     else:
                         mock_get.side_effect = Exception("Record corrupted")
 
@@ -309,7 +309,7 @@ class TestConnectionResilience:
         strategy.get.side_effect = Exception("Query failed")
 
         repo = TemporalRepository(
-            model_class=TestProduct,
+            model_class=ProductModel,
             db_pool=pool,
             strategy=strategy,
             adapter=PostgresAdapter(),

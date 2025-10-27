@@ -14,7 +14,7 @@ from ff_storage.db.adapters import PostgresAdapter
 from ff_storage.temporal.repository_base import TemporalRepository
 
 
-class TestModel(PydanticModel):
+class CacheTestModel(PydanticModel):
     """Test model for cache mutation tests."""
 
     __table_name__ = "test_models"
@@ -34,7 +34,7 @@ class TestCacheMutation:
         """Test that get() returns a copy of the cached model, not the reference."""
         # Setup
         model_id = uuid4()
-        original_model = TestModel(
+        original_model = CacheTestModel(
             id=model_id,
             name="Original",
             value=100,
@@ -50,7 +50,7 @@ class TestCacheMutation:
         # Create repository with caching enabled
         db_pool = AsyncMock()
         repo = TemporalRepository(
-            model_class=TestModel,
+            model_class=CacheTestModel,
             db_pool=db_pool,
             strategy=strategy,
             adapter=PostgresAdapter(),
@@ -87,7 +87,7 @@ class TestCacheMutation:
         model_id = uuid4()
         nested_data = {"level1": {"level2": {"items": ["a", "b", "c"]}}}
 
-        original_model = TestModel(
+        original_model = CacheTestModel(
             id=model_id, name="Test", value=42, tags=["original"], metadata=nested_data
         )
 
@@ -97,7 +97,7 @@ class TestCacheMutation:
 
         db_pool = AsyncMock()
         repo = TemporalRepository(
-            model_class=TestModel,
+            model_class=CacheTestModel,
             db_pool=db_pool,
             strategy=strategy,
             adapter=PostgresAdapter(),
@@ -124,7 +124,7 @@ class TestCacheMutation:
     async def test_cache_mutation_with_list_operations(self):
         """Test cache protection against list mutation operations."""
         model_id = uuid4()
-        original_model = TestModel(
+        original_model = CacheTestModel(
             id=model_id, name="Test", value=1, tags=["python", "async", "cache"]
         )
 
@@ -134,7 +134,7 @@ class TestCacheMutation:
 
         db_pool = AsyncMock()
         repo = TemporalRepository(
-            model_class=TestModel,
+            model_class=CacheTestModel,
             db_pool=db_pool,
             strategy=strategy,
             adapter=PostgresAdapter(),
@@ -161,7 +161,7 @@ class TestCacheMutation:
     async def test_cache_mutation_with_dict_operations(self):
         """Test cache protection against dict mutation operations."""
         model_id = uuid4()
-        original_model = TestModel(
+        original_model = CacheTestModel(
             id=model_id,
             name="Test",
             value=1,
@@ -174,7 +174,7 @@ class TestCacheMutation:
 
         db_pool = AsyncMock()
         repo = TemporalRepository(
-            model_class=TestModel,
+            model_class=CacheTestModel,
             db_pool=db_pool,
             strategy=strategy,
             adapter=PostgresAdapter(),
@@ -201,7 +201,7 @@ class TestCacheMutation:
     async def test_multiple_cache_hits_return_independent_copies(self):
         """Test that multiple cache hits return independent copies."""
         model_id = uuid4()
-        original_model = TestModel(id=model_id, name="Shared", value=42, tags=["tag1"])
+        original_model = CacheTestModel(id=model_id, name="Shared", value=42, tags=["tag1"])
 
         strategy = AsyncMock()
         strategy.get.return_value = original_model
@@ -209,7 +209,7 @@ class TestCacheMutation:
 
         db_pool = AsyncMock()
         repo = TemporalRepository(
-            model_class=TestModel,
+            model_class=CacheTestModel,
             db_pool=db_pool,
             strategy=strategy,
             adapter=PostgresAdapter(),
@@ -243,9 +243,9 @@ class TestCacheMutation:
     async def test_cache_invalidation_after_update(self):
         """Test that cache is properly invalidated after update operations."""
         model_id = uuid4()
-        original_model = TestModel(id=model_id, name="Original", value=100)
+        original_model = CacheTestModel(id=model_id, name="Original", value=100)
 
-        updated_model = TestModel(id=model_id, name="Updated", value=200)
+        updated_model = CacheTestModel(id=model_id, name="Updated", value=200)
 
         strategy = AsyncMock()
         strategy.get.side_effect = [original_model, updated_model]
@@ -254,7 +254,7 @@ class TestCacheMutation:
 
         db_pool = AsyncMock()
         repo = TemporalRepository(
-            model_class=TestModel,
+            model_class=CacheTestModel,
             db_pool=db_pool,
             strategy=strategy,
             adapter=PostgresAdapter(),
@@ -279,9 +279,9 @@ class TestCacheMutation:
         """Test that get_many returns independent copies for each model."""
         ids = [uuid4() for _ in range(3)]
         models = [
-            TestModel(id=ids[0], name="Model1", value=1, tags=["a"]),
-            TestModel(id=ids[1], name="Model2", value=2, tags=["b"]),
-            TestModel(id=ids[2], name="Model3", value=3, tags=["c"]),
+            CacheTestModel(id=ids[0], name="Model1", value=1, tags=["a"]),
+            CacheTestModel(id=ids[1], name="Model2", value=2, tags=["b"]),
+            CacheTestModel(id=ids[2], name="Model3", value=3, tags=["c"]),
         ]
 
         from unittest.mock import MagicMock
@@ -308,7 +308,7 @@ class TestCacheMutation:
         db_pool.acquire = MagicMock(return_value=acquire_context)
 
         repo = TemporalRepository(
-            model_class=TestModel,
+            model_class=CacheTestModel,
             db_pool=db_pool,
             strategy=strategy,
             adapter=PostgresAdapter(),
@@ -337,7 +337,7 @@ class TestCacheMutation:
     async def test_cache_disabled_no_protection_needed(self):
         """Test that when cache is disabled, no copy overhead is incurred."""
         model_id = uuid4()
-        original_model = TestModel(id=model_id, name="NoCacheTest", value=42)
+        original_model = CacheTestModel(id=model_id, name="NoCacheTest", value=42)
 
         strategy = AsyncMock()
         # Return same object twice
@@ -346,7 +346,7 @@ class TestCacheMutation:
 
         db_pool = AsyncMock()
         repo = TemporalRepository(
-            model_class=TestModel,
+            model_class=CacheTestModel,
             db_pool=db_pool,
             strategy=strategy,
             adapter=PostgresAdapter(),

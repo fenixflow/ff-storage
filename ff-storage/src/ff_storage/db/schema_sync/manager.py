@@ -44,11 +44,14 @@ class SchemaManager:
         # Auto-detect provider
         self.provider = self._detect_provider()
 
+        # Create provider-specific normalizer for consistent schema comparison
+        self.normalizer = self._create_normalizer()
+
         # Initialize components
         self.introspector = self._create_introspector()
         self.parser = self._create_parser()
         self.generator = self._create_generator()
-        self.differ = SchemaDifferBase(logger=self.logger)
+        self.differ = SchemaDifferBase(normalizer=self.normalizer, logger=self.logger)
 
     def _detect_provider(self) -> str:
         """
@@ -72,6 +75,36 @@ class SchemaManager:
             return "sqlserver"
 
         raise ValueError(f"Could not detect database provider from connection: {type(self.db)}")
+
+    def _create_normalizer(self):
+        """
+        Factory method for provider-specific normalizer.
+
+        Returns provider-specific normalizer that handles database-specific quirks:
+            - PostgreSQL: float8/float4 aliases, boolean formats
+            - MySQL: (future implementation)
+            - SQL Server: (future implementation)
+
+        Returns:
+            SchemaNormalizer subclass for the detected provider
+        """
+        if self.provider == "postgres":
+            from .normalizer import PostgresNormalizer
+
+            return PostgresNormalizer()
+        elif self.provider == "mysql":
+            from .normalizer import MySQLNormalizer
+
+            return MySQLNormalizer()
+        elif self.provider == "sqlserver":
+            from .normalizer import SQLServerNormalizer
+
+            return SQLServerNormalizer()
+        else:
+            # Generic fallback
+            from .normalizer import SchemaNormalizer
+
+            return SchemaNormalizer()
 
     def _create_introspector(self) -> SchemaIntrospectorBase:
         """Factory method for provider-specific introspector."""

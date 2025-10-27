@@ -265,94 +265,28 @@ class SchemaDifferBase:
     Compute differences between desired and current schema.
 
     Mostly provider-agnostic (can be overridden if needed).
+
+    Uses SchemaNormalizer for consistent comparison across all schema elements.
     """
 
-    def __init__(self, logger=None):
+    def __init__(self, normalizer=None, logger=None):
+        """
+        Initialize schema differ.
+
+        Args:
+            normalizer: SchemaNormalizer instance for consistent comparison
+            logger: Optional logger instance
+        """
+        from .normalizer import SchemaNormalizer
+
+        self.normalizer = normalizer or SchemaNormalizer()
         self.logger = logger
-
-    def _normalize_default(self, default: Optional[str]) -> Optional[str]:
-        """
-        Normalize default values for comparison (case-insensitive booleans).
-
-        Args:
-            default: Default value string
-
-        Returns:
-            Normalized default value
-        """
-        if default is None:
-            return None
-        default_lower = default.lower().strip()
-        # Normalize boolean values to uppercase
-        if default_lower in ("false", "f", "0", "no"):
-            return "FALSE"
-        elif default_lower in ("true", "t", "1", "yes"):
-            return "TRUE"
-        return default
-
-    def _normalize_where_clause(self, where_clause: Optional[str]) -> Optional[str]:
-        """
-        Normalize WHERE clause for comparison by stripping outer parentheses.
-
-        PostgreSQL's pg_get_expr() returns WHERE clauses with parentheses like:
-        - (deleted_at IS NULL)
-        - ((valid_to IS NULL) AND (deleted_at IS NULL))
-
-        But our generated DDL uses:
-        - deleted_at IS NULL
-        - valid_to IS NULL AND deleted_at IS NULL
-
-        This method normalizes both forms to the same representation to prevent
-        false positives in schema drift detection.
-
-        Args:
-            where_clause: WHERE clause string (or None)
-
-        Returns:
-            Normalized WHERE clause with outer parens stripped
-
-        Example:
-            >>> _normalize_where_clause("(deleted_at IS NULL)")
-            "deleted_at IS NULL"
-            >>> _normalize_where_clause("((a IS NULL) AND (b = 1))")
-            "(a IS NULL) AND (b = 1)"
-        """
-        if where_clause is None:
-            return None
-
-        # Strip leading/trailing whitespace
-        normalized = where_clause.strip()
-
-        # Strip outer parentheses only (preserve inner grouping)
-        # Continue stripping while outermost chars are parens
-        while normalized.startswith("(") and normalized.endswith(")") and len(normalized) > 2:
-            # Remove outer parens
-            inner = normalized[1:-1]
-
-            # Verify parens are balanced (not removing part of a grouped expression)
-            depth = 0
-            valid_strip = True
-            for char in inner:
-                if char == "(":
-                    depth += 1
-                elif char == ")":
-                    depth -= 1
-                    if depth < 0:  # Unbalanced - don't strip
-                        valid_strip = False
-                        break
-
-            # Only strip if balanced
-            if valid_strip and depth == 0:
-                normalized = inner.strip()
-            else:
-                break
-
-        return normalized
 
     def _columns_equal(self, col1: ColumnDefinition, col2: ColumnDefinition) -> bool:
         """
-        Deep comparison of column definitions.
+        Deep comparison of column definitions using normalization.
 
+        Normalizes both columns before comparison to eliminate cosmetic differences.
         Compares all properties: type, nullable, default, max_length, precision, scale.
 
         Args:
@@ -360,41 +294,52 @@ class SchemaDifferBase:
             col2: Second column definition
 
         Returns:
-            True if columns are identical, False if any property differs
+            True if columns are identical after normalization, False if any property differs
         """
+        # Normalize both columns for comparison
+        norm1 = self.normalizer.normalize_column(col1)
+        norm2 = self.normalizer.normalize_column(col2)
+
         return (
-            col1.column_type == col2.column_type
-            and col1.nullable == col2.nullable
-            and self._normalize_default(col1.default) == self._normalize_default(col2.default)
-            and col1.max_length == col2.max_length
-            and col1.precision == col2.precision
-            and col1.scale == col2.scale
-            and col1.is_primary_key == col2.is_primary_key
-            and col1.is_foreign_key == col2.is_foreign_key
-            and col1.references == col2.references
+            norm1.column_type == norm2.column_type
+            and norm1.nullable == norm2.nullable
+            and norm1.default == norm2.default
+            and norm1.max_length == norm2.max_length
+            and norm1.precision == norm2.precision
+            and norm1.scale == norm2.scale
+            and norm1.is_primary_key == norm2.is_primary_key
+            and norm1.is_foreign_key == norm2.is_foreign_key
+            and norm1.references == norm2.references
+            and norm1.native_type == norm2.native_type  # Also compare native_type
         )
 
     def _indexes_equal(self, idx1: IndexDefinition, idx2: IndexDefinition) -> bool:
         """
-        Deep comparison of index definitions.
+        Deep comparison of index definitions using normalization.
 
+        Normalizes both indexes before comparison to eliminate cosmetic differences.
         Compares all properties: columns, unique, index_type, where_clause.
-        WHERE clauses are normalized before comparison to handle cosmetic differences
-        like PostgreSQL's pg_get_expr() adding extra parentheses.
+        WHERE clauses are normalized using SQL AST parsing to handle PostgreSQL's
+        pg_get_expr() adding extra parentheses.
 
         Args:
             idx1: First index definition
             idx2: Second index definition
 
         Returns:
-            True if indexes are identical, False if any property differs
+            True if indexes are identical after normalization, False if any property differs
         """
+        # Normalize both indexes for comparison
+        norm1 = self.normalizer.normalize_index(idx1)
+        norm2 = self.normalizer.normalize_index(idx2)
+
+        # WHERE clause comparison: Both None (full index) or both normalized strings (partial index)
+        # Empty strings are normalized to None to avoid false positives (None != "")
         return (
-            idx1.columns == idx2.columns
-            and idx1.unique == idx2.unique
-            and idx1.index_type == idx2.index_type
-            and self._normalize_where_clause(idx1.where_clause)
-            == self._normalize_where_clause(idx2.where_clause)
+            norm1.columns == norm2.columns
+            and norm1.unique == norm2.unique
+            and norm1.index_type == norm2.index_type
+            and norm1.where_clause == norm2.where_clause  # None == None for full indexes
         )
 
     def compute_changes(

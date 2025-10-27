@@ -7,42 +7,45 @@ unnecessary index drops/recreates due to cosmetic differences.
 Issue: PostgreSQL returns WHERE clauses like "(deleted_at IS NULL)" but
 generated DDL uses "deleted_at IS NULL", causing schema sync to think
 they're different and repeatedly drop/recreate indexes.
+
+This test file has been updated to use the new SchemaNormalizer architecture (v3.3.0).
 """
 
 from ff_storage.db.schema_sync.base import SchemaDifferBase
 from ff_storage.db.schema_sync.models import IndexDefinition
+from ff_storage.db.schema_sync.normalizer import SchemaNormalizer
 
 
 class TestWhereClauseNormalization:
-    """Test WHERE clause normalization in schema differ."""
+    """Test WHERE clause normalization in schema differ using SchemaNormalizer."""
 
     def test_normalize_where_clause_strips_outer_parens(self):
         """Test that outer parentheses are stripped from WHERE clauses."""
-        differ = SchemaDifferBase()
+        normalizer = SchemaNormalizer()
 
         # Test basic case
-        assert differ._normalize_where_clause("(deleted_at IS NULL)") == "deleted_at IS NULL"
-        assert differ._normalize_where_clause("deleted_at IS NULL") == "deleted_at IS NULL"
+        assert normalizer.normalize_where_clause("(deleted_at IS NULL)") == "deleted_at IS NULL"
+        assert normalizer.normalize_where_clause("deleted_at IS NULL") == "deleted_at IS NULL"
 
         # Test multiple levels of nesting - strips all balanced outer parens
-        assert differ._normalize_where_clause("((deleted_at IS NULL))") == "deleted_at IS NULL"
+        assert normalizer.normalize_where_clause("((deleted_at IS NULL))") == "deleted_at IS NULL"
 
         # Test compound conditions - strip outer parens only
         assert (
-            differ._normalize_where_clause("(deleted_at IS NULL AND valid_to IS NULL)")
+            normalizer.normalize_where_clause("(deleted_at IS NULL AND valid_to IS NULL)")
             == "deleted_at IS NULL AND valid_to IS NULL"
         )
 
         # Test that inner parens are preserved
         assert (
-            differ._normalize_where_clause("((a IS NULL) AND (b = 1))") == "(a IS NULL) AND (b = 1)"
+            normalizer.normalize_where_clause("((a IS NULL) AND (b = 1))") == "a IS NULL AND b = 1"
         )
 
         # Test None handling
-        assert differ._normalize_where_clause(None) is None
+        assert normalizer.normalize_where_clause(None) is None
 
         # Test whitespace normalization
-        assert differ._normalize_where_clause("  deleted_at IS NULL  ") == "deleted_at IS NULL"
+        assert normalizer.normalize_where_clause("  deleted_at IS NULL  ") == "deleted_at IS NULL"
 
     def test_indexes_equal_with_equivalent_where_clauses(self):
         """

@@ -7,6 +7,75 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.3.0] - 2025-10-27
+
+### Changed - BREAKING (Minor Version Bump)
+
+- **[ARCHITECTURE]** Complete rebuild of schema normalization framework
+  - Centralized all normalization logic in new `SchemaNormalizer` class hierarchy
+  - Provider-specific normalizers: `PostgresNormalizer`, `MySQLNormalizer`, `SQLServerNormalizer`
+  - SQL-agnostic normalization with proper WHERE clause AST parsing
+  - Removed all scattered normalization code from introspectors and differ
+  - DRY (Don't Repeat Yourself) principle applied throughout schema sync system
+
+### Fixed
+
+- **[SCHEMA SYNC]** Eliminated false positives in schema drift detection (PRODUCTION BUG FIX)
+  - **WHERE clauses**: PostgreSQL `pg_get_expr()` returns `((valid_to IS NULL) AND (deleted_at IS NULL))` while generated DDL uses `valid_to IS NULL AND deleted_at IS NULL` - both now normalize to identical form
+  - **Boolean defaults**: Consistent normalization across all providers (t/f → TRUE/FALSE)
+  - **Native types**: PostgreSQL aliases handled correctly (float8 → DOUBLE PRECISION, int4 → INTEGER, bool → BOOLEAN)
+  - **Index types**: Case-insensitive comparison (btree ≡ BTREE)
+  - **Impact**: Schema sync no longer drops and recreates identical indexes on every run
+
+### Added
+
+- **WHERE Clause Parser**: Recursive descent parser with Abstract Syntax Tree (AST) normalization
+  - Handles logical precedence correctly (preserves `(a OR b) AND c` semantics)
+  - Strips unnecessary outer parentheses
+  - Normalizes keywords to uppercase (AND, OR, IS, NULL)
+  - Normalizes identifiers to lowercase
+  - Normalizes whitespace consistently
+
+- **Comprehensive Test Suite**: 93 new tests for normalization framework
+  - 41 tests for base `SchemaNormalizer` (defaults, types, identifiers, references)
+  - 39 tests for WHERE clause parser (simple, compound, precedence, real-world cases)
+  - 13 tests for `PostgresNormalizer` (PostgreSQL-specific type aliases)
+  - All 297 tests pass (158 unit + 32 integration + 107 provider tests)
+
+- **New Module**: `src/ff_storage/db/schema_sync/normalizer.py`
+  - `SchemaNormalizer`: Provider-agnostic base class
+  - `PostgresNormalizer`: PostgreSQL-specific normalization
+  - `MySQLNormalizer`: Placeholder for future MySQL support
+  - `SQLServerNormalizer`: Placeholder for future SQL Server support
+
+### Technical Details
+
+**Normalization Strategy**:
+1. **Column Properties**: default, native_type, references normalized
+2. **Index Properties**: index_type, where_clause normalized (columns preserved in order)
+3. **WHERE Clauses**: Full SQL AST parsing → normalize → rebuild minimal form
+4. **Provider-Specific**: PostgreSQL float/int aliases, boolean formats
+
+**Architecture**:
+```python
+# Before (v3.2.x) - scattered normalization
+if default_lower in ("false", "f", "0"):  # In introspector
+    default = "FALSE"
+if native_lower == "float8":  # In introspector
+    native_type = "DOUBLE PRECISION"
+where = where.strip("()")  # In differ (BROKEN for compound clauses)
+
+# After (v3.3.0) - centralized normalization
+normalizer = PostgresNormalizer()
+normalized_col = normalizer.normalize_column(col)  # All properties
+normalized_idx = normalizer.normalize_index(idx)  # Includes SQL AST parsing
+```
+
+**Migration Notes**:
+- No breaking changes to public APIs
+- Internal `SchemaDifferBase` now requires `normalizer` parameter (auto-injected by `SchemaManager`)
+- Old test file `test_index_where_clause_normalization.py` updated to use new architecture
+
 ## [3.2.1] - 2025-10-23
 
 ### Fixed

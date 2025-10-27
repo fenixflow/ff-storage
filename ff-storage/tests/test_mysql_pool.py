@@ -8,6 +8,9 @@ import pytest
 import pytest_asyncio
 from ff_storage.db.connections.mysql import MySQLPool
 
+# Mark all tests in this module as requiring MySQL
+pytestmark = pytest.mark.mysql
+
 
 @pytest.fixture
 def pool_config():
