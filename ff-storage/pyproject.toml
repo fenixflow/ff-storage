@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ff-storage"
-version = "3.3.1"
+version = "3.4.0"
 description = "Fenixflow storage package with Pydantic ORM, temporal data management, and state-based schema sync"
 readme = "README.md"
 requires-python = ">=3.10"

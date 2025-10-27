@@ -803,7 +803,9 @@ class PostgresNormalizer(SchemaNormalizer):
     Handles PostgreSQL-specific quirks:
         - Float type aliases: float8 → DOUBLE PRECISION, float4 → REAL
         - Integer aliases: int4 → INTEGER, int8 → BIGINT
+        - Timestamp aliases: TIMESTAMPTZ → TIMESTAMP WITH TIME ZONE
         - Boolean defaults: 't' → TRUE, 'f' → FALSE
+        - Type parameters: Strip VARCHAR(n), NUMERIC(p,s) parameters for comparison
         - Sequence defaults: nextval(...) handling
     """
 
@@ -818,12 +820,17 @@ class PostgresNormalizer(SchemaNormalizer):
             - int8 → BIGINT
             - bool → BOOLEAN
             - varchar → CHARACTER VARYING
+            - timestamptz → TIMESTAMP WITH TIME ZONE
+
+        Additionally, PostgreSQL's information_schema returns types WITHOUT
+        parameters (e.g., VARCHAR not VARCHAR(255), NUMERIC not NUMERIC(15,2)),
+        so we strip parameters for consistent comparison.
 
         Args:
-            native_type: PostgreSQL native type (e.g., 'float8', 'int4')
+            native_type: PostgreSQL native type (e.g., 'float8', 'VARCHAR(255)')
 
         Returns:
-            Normalized type name
+            Normalized type name (without parameters)
         """
         # First apply base normalization (case, whitespace)
         normalized = super().normalize_native_type(native_type)
@@ -831,7 +838,13 @@ class PostgresNormalizer(SchemaNormalizer):
         if normalized is None:
             return None
 
-        # PostgreSQL-specific type aliases
+        # Step 1: Strip type parameters for comparison
+        # PostgreSQL information_schema returns: VARCHAR (not VARCHAR(255))
+        # Pydantic generates: VARCHAR(255)
+        # We need to normalize both to: VARCHAR
+        base_type = self._strip_type_parameters(normalized)
+
+        # Step 2: Apply PostgreSQL-specific type aliases
         type_aliases = {
             "FLOAT8": "DOUBLE PRECISION",
             "DOUBLE": "DOUBLE PRECISION",
@@ -839,9 +852,41 @@ class PostgresNormalizer(SchemaNormalizer):
             "INT4": "INTEGER",
             "INT8": "BIGINT",
             "BOOL": "BOOLEAN",
+            # Timestamp aliases
+            "TIMESTAMPTZ": "TIMESTAMP WITH TIME ZONE",
+            "TIMESTAMP WITH TIME ZONE": "TIMESTAMP WITH TIME ZONE",
+            # Array types (PostgreSQL uses _type internally, but displays as type[])
+            "TEXT[]": "TEXT[]",
+            "_TEXT": "TEXT[]",
         }
 
-        return type_aliases.get(normalized, normalized)
+        return type_aliases.get(base_type, base_type)
+
+    def _strip_type_parameters(self, type_str: str) -> str:
+        """
+        Strip type parameters from SQL type string.
+
+        Examples:
+            'VARCHAR(255)' → 'VARCHAR'
+            'NUMERIC(15,2)' → 'NUMERIC'
+            'TIMESTAMP WITH TIME ZONE' → 'TIMESTAMP WITH TIME ZONE' (no params)
+            'TEXT[]' → 'TEXT[]' (array suffix preserved)
+
+        Args:
+            type_str: Type string with optional parameters
+
+        Returns:
+            Base type without parameters
+        """
+        # Find the first opening parenthesis
+        paren_idx = type_str.find("(")
+
+        if paren_idx == -1:
+            # No parameters
+            return type_str
+
+        # Return everything before the opening parenthesis
+        return type_str[:paren_idx]
 
 
 class MySQLNormalizer(SchemaNormalizer):

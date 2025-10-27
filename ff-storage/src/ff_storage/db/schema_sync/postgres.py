@@ -74,15 +74,38 @@ class PostgresSchemaIntrospector(SchemaIntrospectorBase):
                 final_precision = None
                 final_scale = None
 
-            # Normalize float types to PostgreSQL-valid forms
+            # Determine native_type representation
             native_type_raw = udt_name or data_type
             native_lower = native_type_raw.lower()
+
+            # Normalize float types to PostgreSQL-valid forms
             if native_lower in ("float8", "double precision", "double"):
                 native_type_normalized = "DOUBLE PRECISION"
             elif native_lower in ("float4", "real"):
                 native_type_normalized = "REAL"
+            # Handle array types: PostgreSQL stores as "_text" in udt_name, display as "TEXT[]"
+            elif native_lower.startswith("_") or data_type.upper() == "ARRAY":
+                # Array type: udt_name is like "_text", "_int4", etc.
+                # Convert to display form: "TEXT[]", "INTEGER[]", etc.
+                if native_lower.startswith("_"):
+                    element_type = native_lower[1:]  # Strip leading underscore
+                    # Map element type to display name
+                    element_display = {
+                        "text": "TEXT",
+                        "int4": "INTEGER",
+                        "int8": "BIGINT",
+                        "varchar": "VARCHAR",
+                        "uuid": "UUID",
+                    }.get(element_type, element_type.upper())
+                    native_type_normalized = f"{element_display}[]"
+                else:
+                    # Fallback for generic ARRAY
+                    native_type_normalized = "TEXT[]"
+            # Handle timestamp types: normalize TIMESTAMPTZ to full form
+            elif native_lower == "timestamptz":
+                native_type_normalized = "TIMESTAMPTZ"  # Keep short form, normalizer will handle
             else:
-                native_type_normalized = native_type_raw
+                native_type_normalized = native_type_raw.upper()
 
             columns.append(
                 ColumnDefinition(
@@ -181,8 +204,9 @@ class PostgresSchemaIntrospector(SchemaIntrospectorBase):
             "double": ColumnType.DECIMAL,  # Handle if someone uses just "double"
         }
 
-        # Check for array types
-        if type_str.endswith("[]") or data_type == "ARRAY":
+        # Check for array types (case-insensitive)
+        # PostgreSQL stores arrays with udt_name like "_text", "_int4", etc.
+        if type_str.endswith("[]") or data_type.upper() == "ARRAY" or type_str.startswith("_"):
             return ColumnType.ARRAY
 
         return type_map.get(type_str, ColumnType.STRING)
@@ -270,9 +294,9 @@ class PostgresSQLParser(SQLParserBase):
                 col_def = col_match.group(2).rstrip(",").strip()
 
                 # Extract type (first word or multi-word type)
-                # Handle types like: UUID, VARCHAR(255), TIMESTAMP WITH TIME ZONE, DOUBLE PRECISION
+                # Handle types like: UUID, VARCHAR(255), TIMESTAMP WITH TIME ZONE, DOUBLE PRECISION, TEXT[]
                 type_match = re.match(
-                    r"([A-Z]+(?:\s+(?:WITH\s+TIME\s+ZONE|VARYING|PRECISION))?(?:\([^)]+\))?)",
+                    r"([A-Z]+(?:\s+(?:WITH\s+TIME\s+ZONE|VARYING|PRECISION))?(?:\([^)]+\))?(?:\[\])?)",
                     col_def,
                     re.IGNORECASE,
                 )
