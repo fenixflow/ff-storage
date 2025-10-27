@@ -127,7 +127,7 @@ class PostgresSchemaIntrospector(SchemaIntrospectorBase):
         query = """
             SELECT
                 i.relname as index_name,
-                ARRAY_AGG(a.attname ORDER BY a.attnum) as column_names,
+                ARRAY_AGG(a.attname ORDER BY array_position(ix.indkey, a.attnum)) as column_names,
                 ix.indisunique as is_unique,
                 am.amname as index_type,
                 pg_get_expr(ix.indpred, ix.indrelid) as where_clause

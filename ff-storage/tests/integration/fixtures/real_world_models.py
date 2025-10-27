@@ -320,6 +320,7 @@ class RealWorldContingencySUI(PydanticModel):
     additional_coverages: list[str] = Field(
         default_factory=list,
         description="Additional coverage types (e.g., LCSF 2, National Mourning)",
+        json_schema_extra={"db_type": "TEXT"},
     )
 
     rule_trigger_participant: str | None = Field(

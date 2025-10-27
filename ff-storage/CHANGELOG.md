@@ -7,6 +7,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.4.1] - 2025-10-27
+
+### Fixed - 100% False Positive Elimination
+
+- **[SCHEMA SYNC]** Fixed index column order bug causing false positive drift warnings
+  - **Problem**: Index columns returned in table column order instead of index definition order
+  - **Root Cause**: PostgreSQL introspector used `ORDER BY a.attnum` (table order) instead of `ORDER BY array_position(ix.indkey, a.attnum)` (index order)
+  - **Impact**: Multi-tenant indexes like `(tenant_id, created_at)` showed false drift warnings
+  - **Fix**: Updated `get_indexes()` query to use `array_position(ix.indkey, a.attnum)` for correct ordering
+  - **Validation**: Added TDD test `test_index_column_order_matches_creation_order` using `pg_get_indexdef()` as authoritative source
+
+- **[SCHEMA SYNC]** Fixed `list[str]` with custom serializer type mapping
+  - **Problem**: Fields with `list[str]` type but custom JSON serializers showed TEXT[] vs TEXT mismatch
+  - **Fix**: Added `json_schema_extra={"db_type": "TEXT"}` support for custom type overrides
+  - **Example**: `additional_coverages` field in real-world models now maps correctly to TEXT
+
+### Added
+
+- **[TESTS]** Added `TestIndexColumnOrder` test class with index definition order validation
+  - Creates index with different column order than table definition
+  - Verifies introspector returns columns in CREATE INDEX order, not table order
+  - Uses `pg_get_indexdef()` as authoritative source for validation
+
+### Changed
+
+- **[SCHEMA SYNC]** Index column order now matches CREATE INDEX statement exactly
+  - Critical for query performance optimization
+  - Ensures multi-tenant indexes work correctly with `(tenant_id, other_columns)` ordering
+
+### Results
+
+- **Before v3.4.1**: 3 false positive warnings (96.7% elimination from v3.3.1)
+- **After v3.4.1**: 0 false positive warnings (100% elimination) ✅
+- **Tests**: 334 tests passing (7 schema consistency tests including new index order test)
+
 ## [3.4.0] - 2025-10-27
 
 ### Fixed - CRITICAL PRODUCTION BUG

@@ -419,6 +419,80 @@ class TestIndexConsistency:
         )
 
 
+class TestIndexColumnOrder:
+    """Test that index column order is preserved exactly as defined."""
+
+    def test_index_column_order_matches_creation_order(self, db_connection, logger):
+        """
+        Index columns MUST be returned in the order they were defined in CREATE INDEX.
+
+        PostgreSQL stores this in pg_index.indkey array.
+        ORDER BY attnum is WRONG - returns table column order.
+        ORDER BY array_position(indkey, attnum) is CORRECT - returns index definition order.
+
+        This is critical because index column order affects query performance.
+        Multi-tenant indexes need (tenant_id, created_at) for efficient filtering.
+        """
+        from ff_storage.db.schema_sync.postgres import PostgresSchemaIntrospector
+
+        # Create table with columns in specific order
+        db_connection.execute_query(
+            """
+            CREATE TABLE IF NOT EXISTS test_idx_order (
+                id UUID PRIMARY KEY,
+                col_c TEXT,
+                col_a TEXT,
+                col_b TEXT
+            )
+        """
+        )
+
+        # Create index with DIFFERENT order than table columns
+        # Index order: col_b, col_c, col_a (NOT alphabetical, NOT attnum order)
+        db_connection.execute_query(
+            """
+            CREATE INDEX IF NOT EXISTS idx_specific_order
+            ON test_idx_order (col_b, col_c, col_a)
+        """
+        )
+
+        # Verify with pg_get_indexdef (authoritative source)
+        result = db_connection.read_query(
+            """
+            SELECT pg_get_indexdef(i.oid)
+            FROM pg_class t
+            JOIN pg_index ix ON t.oid = ix.indrelid
+            JOIN pg_class i ON i.oid = ix.indexrelid
+            WHERE t.relname = 'test_idx_order'
+              AND i.relname = 'idx_specific_order'
+        """,
+            as_dict=False,
+        )
+
+        indexdef = result[0][0]
+        assert (
+            "(col_b, col_c, col_a)" in indexdef
+        ), f"PostgreSQL stores index as (col_b, col_c, col_a), got: {indexdef}"
+
+        # Introspect the index
+        introspector = PostgresSchemaIntrospector(db_connection)
+        indexes = introspector.get_indexes("test_idx_order", "public")
+        idx = [i for i in indexes if i.name == "idx_specific_order"][0]
+
+        # MUST match CREATE INDEX order, NOT table order, NOT alphabetical
+        assert (
+            idx.columns
+            == [
+                "col_b",
+                "col_c",
+                "col_a",
+            ]
+        ), f"Introspector must return index definition order (col_b, col_c, col_a), got {idx.columns}"
+
+        # Cleanup
+        db_connection.execute_query("DROP TABLE test_idx_order CASCADE")
+
+
 class TestRealWorldModels:
     """Test schema consistency with real-world complex models from ix-ds."""
 
