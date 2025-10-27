@@ -40,7 +40,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - 41 tests for base `SchemaNormalizer` (defaults, types, identifiers, references)
   - 39 tests for WHERE clause parser (simple, compound, precedence, real-world cases)
   - 13 tests for `PostgresNormalizer` (PostgreSQL-specific type aliases)
-  - All 297 tests pass (158 unit + 32 integration + 107 provider tests)
+  - All 327 tests pass (188 unit + 32 integration + 107 provider tests)
 
 - **New Module**: `src/ff_storage/db/schema_sync/normalizer.py`
   - `SchemaNormalizer`: Provider-agnostic base class
