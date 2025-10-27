@@ -8,9 +8,23 @@ A comprehensive storage package for Fenixflow applications, providing **async co
 
 Created by **Ben Moag** at **[Fenixflow](https://fenixflow.com)**
 
+## 🔥 Version 3.3.0 - Production-Critical Schema Sync Fix
+
+**CRITICAL UPDATE in v3.3.0**: Fixes production bug causing false positives in schema drift detection!
+
+- **🐛 Production Bug Fix** - Eliminates false positives that caused index recreation on every schema sync
+- **🏗️ Normalization Framework** - Centralized schema normalization (DRY principle)
+- **🔍 SQL AST Parser** - WHERE clause parsing with proper logical precedence
+- **✅ Comprehensive Testing** - 327 tests including 93 new normalization tests
+- **💪 Zero Downtime** - Backward compatible, internal architecture improvement
+
+**If you're using schema sync (v2.0+), upgrade immediately** - v3.2.x had a critical bug causing unnecessary schema changes.
+
+---
+
 ## 🎉 Version 3.0.0 - Pydantic ORM & Temporal Data Management
 
-**NEW in v3.0.0**: Production-ready Pydantic ORM with built-in temporal data management!
+**Major features in v3.0.0**: Production-ready Pydantic ORM with built-in temporal data management!
 
 - **🔥 Pydantic Models** - Type-safe models with automatic schema generation
 - **⏱️ Temporal Strategies** - Choose from 3 strategies: none, copy_on_change (audit trail), scd2 (time travel)
@@ -28,13 +42,13 @@ Created by **Ben Moag** at **[Fenixflow](https://fenixflow.com)**
 
 ## Version 2.0.0 - Schema Sync System
 
-**New in 2.0.0**: Terraform-like automatic schema synchronization system! Define your schema in model classes and let SchemaManager handle migrations automatically.
+**Added in 2.0.0**: Terraform-like automatic schema synchronization! Define schema in model classes and let SchemaManager handle migrations automatically.
+
+**Important**: v3.3.0 fixes critical false positive detection bugs in schema sync. Upgrade from v2.x/v3.2.x immediately.
 
 **Breaking Change in 2.0.0**: Removed file-based migrations (`MigrationManager`). Use `SchemaManager` for automatic schema sync from model definitions.
 
 **New in 1.1.0**: Added Azure Blob Storage backend with support for both Azurite (local development) and production Azure Blob Storage.
-
-**Breaking Change in 1.0.0**: All connection pools are now async for better performance and scalability. Use direct connections for synchronous code.
 
 ## Quick Start
 
@@ -143,23 +157,26 @@ async def get_user(user_id: int):
     return user
 ```
 
-## Migration Guide (v0.3.0 → v1.0.0)
+## Migration Guide
 
-### Breaking Changes
+### v3.2.x → v3.3.0 (Backward Compatible)
 
-**Pools are now async** - all `*Pool` classes require `await`:
+**No action required** - Internal architecture improvements only.
 
-| v0.3.0 (Sync) | v1.0.0 (Async) |
-|---------------|----------------|
-| `pool.connect()` | `await pool.connect()` |
-| `pool.read_query()` | `await pool.fetch_all()` |
-| `pool.execute()` | `await pool.execute()` |
-| `pool.close_connection()` | `await pool.disconnect()` |
+**Changes**:
+- Schema normalization now centralized (eliminates false positives)
+- WHERE clause parser added (fixes precedence bugs)
+- All public APIs unchanged
 
-**For sync code**, use direct connections (no breaking changes):
-- `Postgres` (sync) - unchanged
-- `MySQL` (sync) - unchanged
-- `SQLServer` (sync) - unchanged
+**Impact**: If using schema sync, upgrade immediately to eliminate false positives causing index recreation on every run.
+
+### v2.x → v3.0.0 (Breaking - Pydantic ORM)
+
+See [docs/quickstart_v3.md](docs/quickstart_v3.md) for full migration guide.
+
+### v0.x → v1.0.0 (Breaking - Async Pools)
+
+**Pools are now async** - all `*Pool` classes require `await`. Use direct connections for sync code (Postgres, MySQL, SQLServer - unchanged).
 
 ## Features
 
@@ -171,7 +188,10 @@ async def get_user(user_id: int):
 - **Batch Operations**: Execute many queries efficiently
 - **Query Builder**: SQL query construction utilities
 
-### Schema Sync System (NEW in v2.0.0)
+### Schema Sync System (v2.0.0+, Fixed in v3.3.0)
+- **Production-Ready**: v3.3.0 fixes critical false positive detection bugs
+- **Normalization Framework**: Centralized schema comparison (eliminates index churn)
+- **WHERE Clause Parser**: SQL AST parsing with proper precedence handling
 - **Terraform-like Migrations**: Define schema in code, auto-sync on startup
 - **Automatic Detection**: Detects schema changes from model definitions
 - **Safe by Default**: Additive changes auto-apply, destructive changes require explicit approval

@@ -1,6 +1,8 @@
-# FF-Storage v3.0.0 Documentation
+# FF-Storage v3.3.0 Documentation
 
 Complete documentation for ff-storage's Pydantic ORM and temporal data management.
+
+> **🔥 v3.3.0 Critical Update**: Fixes production bug in schema sync causing false positives. If you're using schema sync (v2.0+), upgrade immediately.
 
 ## Getting Started
 
@@ -29,21 +31,30 @@ Complete documentation for ff-storage's Pydantic ORM and temporal data managemen
 - **[Complete Integration](examples/complete_example.py)** - Multi-model setup (coming soon)
 - **[Temporal Queries](examples/temporal_queries.py)** - Advanced query patterns (coming soon)
 
-## What's New in v3.0.0
+## What's New
 
-### Pydantic ORM
+### v3.3.0 (Critical Production Fix)
+- **Schema Normalization Framework**: Centralized comparison logic (DRY principle)
+- **WHERE Clause Parser**: SQL AST parsing with proper precedence handling
+- **Production Bug Fix**: Eliminates false positives causing index recreation on every schema sync
+- **327 Tests**: Including 93 new normalization tests for comprehensive coverage
+- **Backward Compatible**: Internal improvements only, no API changes
+
+### v3.0.0 (Pydantic ORM)
+
+**Pydantic ORM**:
 - **Type-safe models** with Pydantic validation
 - **Automatic schema generation** from model definitions
 - **Rich field metadata** for complete SQL control (FK, CHECK, defaults, partial indexes)
 
-### Temporal Data Management
+**Temporal Data Management**:
 - **Three strategies**: none, copy_on_change, scd2
 - **Multi-tenant by default** with automatic filtering
 - **Soft delete by default** with restore capability
 - **Audit trails** with copy_on_change (field-level tracking)
 - **Time travel** with scd2 (immutable versions)
 
-### Schema Management
+**Schema Management**:
 - **Auto-sync schema** from Pydantic models
 - **Auxiliary table support** (audit tables auto-created)
 - **Terraform-like migrations** (state-based, not file-based)

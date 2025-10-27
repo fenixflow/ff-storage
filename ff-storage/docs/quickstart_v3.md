@@ -1,4 +1,4 @@
-# FF-Storage v3.0.0 Quickstart Guide
+# FF-Storage v3.3.0 Quickstart Guide
 
 Get started with ff-storage's Pydantic ORM and temporal data management in 5 minutes.
 
