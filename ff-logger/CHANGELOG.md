@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.3] - 2025-10-27
+
+### Fixed
+- **PyPI Release**: Version bump to work around PyPI filename reuse restriction (v0.4.2 was previously uploaded and deleted)
+- **Pytest Configuration**: Removed deprecated `asyncio_mode = "auto"` from pytest config (now default behavior in pytest-asyncio v0.24+)
+- No functional changes from v0.4.2
+
 ## [0.4.2] - 2025-10-15
 
 ### Changed

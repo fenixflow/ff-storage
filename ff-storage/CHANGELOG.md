@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.3.1] - 2025-10-27
+
+### Fixed
+- **PyPI Release**: Version bump to work around PyPI filename reuse restriction (v3.3.0 was previously uploaded and deleted)
+- No functional changes from v3.3.0
+
 ## [3.3.0] - 2025-10-27
 
 ### Changed - BREAKING (Minor Version Bump)
