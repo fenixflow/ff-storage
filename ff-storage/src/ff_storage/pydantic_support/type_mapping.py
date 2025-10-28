@@ -127,16 +127,12 @@ def map_pydantic_type_to_column_type(
 
     # Complex types (list, dict, nested models)
     elif origin is list:
-        args = get_args(python_type)
-        if args:
-            # Check if list element is a Pydantic model or dict (both use JSONB)
-            element_type = args[0]
-            element_origin = get_origin(element_type)
-            if hasattr(element_type, "model_fields") or element_origin is dict:
-                # List of Pydantic models or dicts → JSONB
-                return ColumnType.JSONB, "JSONB"
-        # List of primitives → Array
-        return ColumnType.ARRAY, "TEXT[]"
+        # ALL lists → JSONB for consistency and portability
+        # - Consistent with dict → JSONB and list[Pydantic] → JSONB
+        # - Portable across PostgreSQL, MySQL, SQL Server
+        # - No need for custom serializers on list[str], list[int], etc.
+        # - Users wanting PostgreSQL native arrays can use json_schema_extra={"db_type": "TEXT[]"}
+        return ColumnType.JSONB, "JSONB"
 
     elif origin is dict:
         # Dict → JSONB

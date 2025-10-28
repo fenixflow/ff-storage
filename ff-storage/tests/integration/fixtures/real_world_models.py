@@ -20,10 +20,9 @@ These models have historically caught edge cases that simpler test models miss.
 from datetime import date
 from decimal import Decimal
 from typing import Any, ClassVar
-import json
 
 from ff_storage.pydantic_support import PydanticModel
-from pydantic import BaseModel, Field, field_serializer, field_validator
+from pydantic import BaseModel, Field, field_validator
 
 
 # ==================== NESTED FINANCIAL MODELS ====================
@@ -320,7 +319,6 @@ class RealWorldContingencySUI(PydanticModel):
     additional_coverages: list[str] = Field(
         default_factory=list,
         description="Additional coverage types (e.g., LCSF 2, National Mourning)",
-        json_schema_extra={"db_type": "TEXT"},
     )
 
     rule_trigger_participant: str | None = Field(
@@ -356,22 +354,7 @@ class RealWorldContingencySUI(PydanticModel):
         description="Flexible supplementary data stored as JSONB",
     )
 
-    # ==================== CUSTOM SERIALIZERS ====================
-    # ff-storage doesn't automatically JSON-encode list[str] for JSONB columns
-    # So we need to manually handle serialization/deserialization
-
-    @field_serializer("additional_coverages")
-    def serialize_additional_coverages(self, value: list[str]) -> str:
-        """Serialize list of strings to JSON for database storage."""
-        return json.dumps(value)
-
-    @field_validator("additional_coverages", mode="before")
-    @classmethod
-    def deserialize_additional_coverages(cls, value):
-        """Deserialize JSON string back to list of strings when reading from database."""
-        if isinstance(value, str):
-            return json.loads(value)
-        return value  # Already a list
+    # ==================== CUSTOM VALIDATORS ====================
 
     @field_validator("supplementary_data", mode="before")
     @classmethod

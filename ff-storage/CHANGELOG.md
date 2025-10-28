@@ -7,6 +7,67 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.5.0] - 2025-10-28
+
+### Changed - BREAKING CHANGE
+
+- **[TYPE MAPPING]** Changed `list[primitive]` mapping from TEXT[] to JSONB for consistency and portability
+  - **Problem**: `list[str]`, `list[int]`, etc. mapped to PostgreSQL native arrays (TEXT[], INTEGER[])
+  - **Issues**:
+    - Inconsistent with `list[Pydantic]` → JSONB and `dict` → JSONB
+    - Required custom serializers for `list[str]` fields
+    - Not portable across databases (PostgreSQL-specific)
+    - Created false positive schema drift warnings for existing TEXT columns
+  - **Solution**: ALL lists now map to JSONB
+    - `list[str]` → JSONB (was TEXT[])
+    - `list[int]` → JSONB (was INTEGER[])
+    - `list[UUID]` → JSONB (was UUID[])
+    - `list[Pydantic]` → JSONB (unchanged)
+  - **Benefits**:
+    - ✅ Consistent type mapping across all list types
+    - ✅ Portable across PostgreSQL, MySQL, SQL Server
+    - ✅ No need for custom serializers - Pydantic handles it
+    - ✅ Existing TEXT columns can be cast to JSONB automatically
+  - **Opt-out**: Users wanting PostgreSQL native arrays can use `json_schema_extra={"db_type": "TEXT[]"}`
+
+### Migration Guide
+
+**For existing applications with TEXT[] columns:**
+
+1. Your database has TEXT[] columns (e.g., `additional_coverages TEXT[]`)
+2. After upgrade, schema sync will detect: `TEXT[] → JSONB` migration needed
+3. Migration SQL (PostgreSQL):
+   ```sql
+   ALTER TABLE schema.table_name
+   ALTER COLUMN column_name TYPE JSONB
+   USING to_jsonb(column_name);
+   ```
+4. This is safe and non-destructive - array data converts cleanly to JSONB
+
+**For existing applications with TEXT columns (custom serializers):**
+
+1. Your database has TEXT columns with JSON strings (e.g., `additional_coverages TEXT`)
+2. Remove `@field_serializer` and `@field_validator` decorators
+3. Remove `json_schema_extra={"db_type": "TEXT"}` if present
+4. Migration SQL (PostgreSQL):
+   ```sql
+   ALTER TABLE schema.table_name
+   ALTER COLUMN column_name TYPE JSONB
+   USING column_name::jsonb;
+   ```
+5. This is safe - JSON strings convert to JSONB automatically
+
+### Removed
+
+- **[TEST FIXTURES]** Removed custom serializers from `additional_coverages` field in real-world models
+  - No longer needed with JSONB mapping
+  - Pydantic handles list[str] serialization automatically
+
+### Tests
+
+- All 334 tests passing
+- 7 schema consistency tests validate new JSONB mapping
+
 ## [3.4.1] - 2025-10-27
 
 ### Fixed - 100% False Positive Elimination
