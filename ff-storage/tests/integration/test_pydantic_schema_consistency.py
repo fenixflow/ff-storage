@@ -27,12 +27,11 @@ from typing import Any, Dict, List, Optional
 
 import pytest
 from ff_storage.db import Postgres, SchemaManager
+from ff_storage.db.schema_sync.normalizer import PostgresNormalizer
+from ff_storage.db.schema_sync.postgres import PostgresSchemaIntrospector
 from ff_storage.pydantic_support.base import PydanticModel
 from ff_storage.pydantic_support.introspector import PydanticSchemaIntrospector
-from ff_storage.db.schema_sync.postgres import PostgresSchemaIntrospector
-from ff_storage.db.schema_sync.normalizer import PostgresNormalizer
 from pydantic import Field
-
 
 # ==================== Test Models ====================
 

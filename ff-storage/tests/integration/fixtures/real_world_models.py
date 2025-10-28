@@ -24,7 +24,6 @@ from typing import Any, ClassVar
 from ff_storage.pydantic_support import PydanticModel
 from pydantic import BaseModel, Field, field_validator
 
-
 # ==================== NESTED FINANCIAL MODELS ====================
 # These are NOT PydanticModels - they're embedded as JSONB within the parent table
 
