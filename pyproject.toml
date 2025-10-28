@@ -80,7 +80,12 @@ use_parentheses = true
 ensure_newline_before_comments = true
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
+testpaths = [
+    "ff-storage/tests",
+    "ff-logger/tests",
+    "ff-cli/tests",
+    "ff-parsers/tests",
+]
 python_files = ["test_*.py", "*_test.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]

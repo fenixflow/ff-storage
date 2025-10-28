@@ -7,7 +7,7 @@ structure returned by the ingestion pipeline.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, Iterator, List, Optional
 from uuid import uuid4
 
@@ -270,7 +270,7 @@ class DocumentBundle(FFBaseModel):
 
     document: BundleNode
     attachments_dir: Optional[str] = None
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     source_path: Optional[str] = None
     options: Dict[str, Any] = Field(default_factory=dict)
 
