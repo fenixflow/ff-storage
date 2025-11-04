@@ -7,6 +7,55 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.7.0] - 2025-11-04
+
+### Added
+
+- **[MULTI-TENANT]** Support for tenant ID lists in repositories for cross-tenant queries
+  - `tenant_id` parameter now accepts `UUID | List[UUID]` in both `TemporalRepository` and `PydanticRepository`
+  - Enables admin users to query across multiple tenants by passing a list of tenant IDs
+  - Internally normalizes all tenant IDs to a list for consistent handling
+  - All SQL tenant filtering now uses `IN` clause for multi-tenant queries
+
+### Changed
+
+- **[MULTI-TENANT]** Refactored repository tenant handling
+  - Added `tenant_ids` property (plural) returning `Optional[List[UUID]]` for clean public API
+  - Internal storage uses `_tenant_ids` private attribute (always a list when multi-tenant)
+  - Updated `count()` and `get_many()` methods to use SQL `IN` clause with tenant ID lists
+  - Tenant isolation validation now checks `result_tenant in self.tenant_ids` instead of equality
+
+### Usage Examples
+
+```python
+# Single tenant (existing usage - unchanged)
+repo = PydanticRepository(
+    RuleSet,
+    db_pool,
+    tenant_id=underwriter_tenant_id,
+    logger=logger
+)
+
+# Multiple tenants for admin cross-tenant access (new)
+repo = PydanticRepository(
+    RuleSet,
+    db_pool,
+    tenant_id=[tenant1_id, tenant2_id, tenant3_id],
+    logger=logger
+)
+
+# Query returns results from all specified tenants
+rulesets = await repo.list(filters={"status": "active"})
+```
+
+### Benefits
+
+- ✅ Full backward compatibility - single UUID input still works
+- ✅ Enables admin users to see data across multiple tenants
+- ✅ Simpler codebase - always uses SQL `IN` clause (no special cases)
+- ✅ Type-safe with proper `UUID | List[UUID]` type hints
+- ✅ Maintains tenant isolation - validation ensures results match requested tenants
+
 ## [3.6.0] - 2025-11-03
 
 ### Added

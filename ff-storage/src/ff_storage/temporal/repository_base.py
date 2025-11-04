@@ -55,7 +55,7 @@ class TemporalRepository(Generic[T]):
         db_pool,
         strategy: TemporalStrategy[T],
         adapter: Optional[DatabaseAdapter] = None,
-        tenant_id: Optional[UUID] = None,
+        tenant_id: Optional[UUID | List[UUID]] = None,
         logger=None,
         cache_enabled: bool = True,
         cache_ttl: int = 300,  # 5 minutes default
@@ -82,8 +82,23 @@ class TemporalRepository(Generic[T]):
         # Adapter is optional; auto-detect based on pool when not provided
         self.adapter = adapter or detect_adapter(db_pool)
         self.strategy = strategy
-        self.tenant_id = tenant_id
         self.logger = logger or logging.getLogger(__name__)
+
+        # Normalize and validate tenant_id for multi-tenant models
+        if strategy.multi_tenant:
+            if tenant_id is None:
+                raise TenantNotConfigured(model_class.__name__)
+
+            # Always store as list for consistent SQL generation with IN clause
+            if isinstance(tenant_id, (str, UUID)):
+                # Single tenant - convert to list
+                tid = UUID(tenant_id) if isinstance(tenant_id, str) else tenant_id
+                self._tenant_ids = [tid]
+            else:
+                # Already a list - copy and ensure all are UUIDs
+                self._tenant_ids = [UUID(tid) if isinstance(tid, str) else tid for tid in tenant_id]
+        else:
+            self._tenant_ids = None
 
         # Caching configuration
         self.cache_enabled = cache_enabled
@@ -98,9 +113,15 @@ class TemporalRepository(Generic[T]):
         # Retry configuration
         self.max_retries = max_retries
 
-        # Validation
-        if strategy.multi_tenant and not tenant_id:
-            raise TenantNotConfigured(model_class.__name__)
+    @property
+    def tenant_ids(self) -> Optional[List[UUID]]:
+        """
+        Tenant ID(s) for filtering queries.
+
+        Returns list of tenant UUIDs for multi-tenant models, None for single-tenant.
+        Always use SQL IN clause for filtering even with single tenant.
+        """
+        return self._tenant_ids
 
     # ==================== Cache Management ====================
 
@@ -122,7 +143,7 @@ class TemporalRepository(Generic[T]):
         # Build structured key parts
         parts = [
             self.model_class.__name__,
-            str(self.tenant_id) if self.tenant_id else "global",
+            str(self.tenant_ids) if self.tenant_ids else "global",
             operation,  # Keep operation visible for pattern matching
         ]
 
@@ -250,7 +271,7 @@ class TemporalRepository(Generic[T]):
                     data=data,
                     db_pool=self.db_pool,
                     adapter=self.adapter,
-                    tenant_id=self.tenant_id,
+                    tenant_id=self.tenant_ids,
                     user_id=user_id,
                 )
 
@@ -265,7 +286,7 @@ class TemporalRepository(Generic[T]):
         except Exception as e:
             self.logger.error(
                 f"Failed to create {self.model_class.__name__}",
-                extra={"error": str(e), "tenant_id": self.tenant_id},
+                extra={"error": str(e), "tenant_ids": self.tenant_ids},
                 exc_info=True,
             )
             if self._metrics:
@@ -304,7 +325,7 @@ class TemporalRepository(Generic[T]):
                 data=data,
                 db_pool=self.db_pool,
                 adapter=self.adapter,
-                tenant_id=self.tenant_id,
+                tenant_id=self.tenant_ids,
                 user_id=user_id,
             )
 
@@ -319,7 +340,7 @@ class TemporalRepository(Generic[T]):
         except Exception as e:
             self.logger.error(
                 f"Failed to update {self.model_class.__name__}",
-                extra={"id": str(id), "error": str(e), "tenant_id": self.tenant_id},
+                extra={"id": str(id), "error": str(e), "tenant_ids": self.tenant_ids},
                 exc_info=True,
             )
             raise
@@ -348,12 +369,12 @@ class TemporalRepository(Generic[T]):
                 id=id,
                 db_pool=self.db_pool,
                 adapter=self.adapter,
-                tenant_id=self.tenant_id,
+                tenant_id=self.tenant_ids,
                 user_id=user_id,
             )
 
             # Invalidate ALL cached variants for this record ID
-            # (e.g., get(id), get(id, include_deleted=True), etc.)
+            # (e.g., get(id), get(id), include_deleted=True), etc.)
             await self.invalidate_cache(f":id={id}")
 
             # Also invalidate list cache since the record was deleted
@@ -363,7 +384,7 @@ class TemporalRepository(Generic[T]):
         except Exception as e:
             self.logger.error(
                 f"Failed to delete {self.model_class.__name__}",
-                extra={"id": str(id), "error": str(e), "tenant_id": self.tenant_id},
+                extra={"id": str(id), "error": str(e), "tenant_ids": self.tenant_ids},
                 exc_info=True,
             )
             raise
@@ -403,16 +424,16 @@ class TemporalRepository(Generic[T]):
                 result = await self.strategy.get(
                     id=id,
                     db_pool=self.db_pool,
-                    tenant_id=self.tenant_id,
+                    tenant_id=self.tenant_ids,
                     **kwargs,
                 )
 
                 # Validate tenant isolation if result found
                 if result and self.strategy.multi_tenant:
                     result_tenant = getattr(result, self.strategy.tenant_field, None)
-                    if result_tenant and result_tenant != self.tenant_id:
+                    if result_tenant and result_tenant not in self.tenant_ids:
                         raise TenantIsolationError(
-                            requested_tenant=str(self.tenant_id),
+                            requested_tenant=str(self.tenant_ids),
                             actual_tenant=str(result_tenant),
                             operation="get",
                         )
@@ -431,7 +452,7 @@ class TemporalRepository(Generic[T]):
         except Exception as e:
             self.logger.error(
                 f"Failed to get {self.model_class.__name__}",
-                extra={"id": str(id), "error": str(e), "tenant_id": self.tenant_id},
+                extra={"id": str(id), "error": str(e), "tenant_ids": self.tenant_ids},
                 exc_info=True,
             )
             raise TemporalStrategyError(
@@ -464,7 +485,7 @@ class TemporalRepository(Generic[T]):
             return await self.strategy.list(
                 filters=filters,
                 db_pool=self.db_pool,
-                tenant_id=self.tenant_id,
+                tenant_id=self.tenant_ids,
                 limit=limit,
                 offset=offset,
                 **kwargs,
@@ -472,7 +493,7 @@ class TemporalRepository(Generic[T]):
         except Exception as e:
             self.logger.error(
                 f"Failed to list {self.model_class.__name__}",
-                extra={"filters": filters, "error": str(e), "tenant_id": self.tenant_id},
+                extra={"filters": filters, "error": str(e), "tenant_ids": self.tenant_ids},
                 exc_info=True,
             )
             raise
@@ -501,13 +522,17 @@ class TemporalRepository(Generic[T]):
         where_parts = []
         where_values = []
 
-        # Multi-tenant filter (with proper identifier quoting)
+        # Multi-tenant filter using IN clause (with proper identifier quoting)
         if self.strategy.multi_tenant:
             quoted_tenant_field = self.strategy.query_builder.quote_identifier(
                 self.strategy.tenant_field
             )
-            where_parts.append(f"{quoted_tenant_field} = ${len(where_values) + 1}")
-            where_values.append(self.tenant_id)
+            # Build IN clause placeholders for tenant_ids list
+            tenant_placeholders = ", ".join(
+                [f"${len(where_values) + i + 1}" for i in range(len(self.tenant_ids))]
+            )
+            where_parts.append(f"{quoted_tenant_field} IN ({tenant_placeholders})")
+            where_values.extend(self.tenant_ids)
 
         # Current version filters (soft delete, SCD2, etc.)
         include_deleted = kwargs.get("include_deleted", False)
@@ -561,7 +586,7 @@ class TemporalRepository(Generic[T]):
                 id=id,
                 db_pool=self.db_pool,
                 adapter=self.adapter,
-                tenant_id=self.tenant_id,
+                tenant_id=self.tenant_ids,
             )
 
             # Invalidate ALL cached variants for this record ID
@@ -575,7 +600,7 @@ class TemporalRepository(Generic[T]):
         except Exception as e:
             self.logger.error(
                 f"Failed to restore {self.model_class.__name__}",
-                extra={"id": str(id), "error": str(e), "tenant_id": self.tenant_id},
+                extra={"id": str(id), "error": str(e), "tenant_ids": self.tenant_ids},
                 exc_info=True,
             )
             raise
@@ -600,7 +625,7 @@ class TemporalRepository(Generic[T]):
         return await self.strategy.get_audit_history(
             record_id=record_id,
             db_pool=self.db_pool,
-            tenant_id=self.tenant_id,
+            tenant_id=self.tenant_ids,
         )
 
     async def get_field_history(
@@ -623,7 +648,7 @@ class TemporalRepository(Generic[T]):
             record_id=record_id,
             field_name=field_name,
             db_pool=self.db_pool,
-            tenant_id=self.tenant_id,
+            tenant_id=self.tenant_ids,
         )
 
     async def get_version_history(
@@ -644,7 +669,7 @@ class TemporalRepository(Generic[T]):
         return await self.strategy.get_version_history(
             id=id,
             db_pool=self.db_pool,
-            tenant_id=self.tenant_id,
+            tenant_id=self.tenant_ids,
         )
 
     async def get_version(
@@ -667,7 +692,7 @@ class TemporalRepository(Generic[T]):
             id=id,
             version=version,
             db_pool=self.db_pool,
-            tenant_id=self.tenant_id,
+            tenant_id=self.tenant_ids,
         )
 
     async def compare_versions(
@@ -692,7 +717,7 @@ class TemporalRepository(Generic[T]):
             version1=version1,
             version2=version2,
             db_pool=self.db_pool,
-            tenant_id=self.tenant_id,
+            tenant_id=self.tenant_ids,
         )
 
     # ==================== Batch Operations ====================
@@ -733,7 +758,7 @@ class TemporalRepository(Generic[T]):
                             data_list=batch_data,
                             db_pool=self.db_pool,
                             adapter=self.adapter,
-                            tenant_id=self.tenant_id,
+                            tenant_id=self.tenant_ids,
                             user_id=user_id,
                         )
                     else:
@@ -744,7 +769,7 @@ class TemporalRepository(Generic[T]):
                                 data=data,
                                 db_pool=self.db_pool,
                                 adapter=self.adapter,
-                                tenant_id=self.tenant_id,
+                                tenant_id=self.tenant_ids,
                                 user_id=user_id,
                             )
                             batch_results.append(result)
@@ -769,7 +794,7 @@ class TemporalRepository(Generic[T]):
         except Exception as e:
             self.logger.error(
                 f"Failed to batch create {self.model_class.__name__}",
-                extra={"count": total, "error": str(e), "tenant_id": self.tenant_id},
+                extra={"count": total, "error": str(e), "tenant_ids": self.tenant_ids},
                 exc_info=True,
             )
             raise TemporalStrategyError(
@@ -817,14 +842,18 @@ class TemporalRepository(Generic[T]):
                         WHERE id IN ({placeholders})
                     """
 
-                    # Add tenant filter if needed (with proper identifier quoting)
+                    # Add tenant filter using IN clause (with proper identifier quoting)
                     values = list(uncached_ids)
                     if self.strategy.multi_tenant:
                         quoted_tenant_field = self.strategy.query_builder.quote_identifier(
                             self.strategy.tenant_field
                         )
-                        query += f" AND {quoted_tenant_field} = ${len(values) + 1}"
-                        values.append(self.tenant_id)
+                        # Build IN clause placeholders for tenant_ids list
+                        tenant_placeholders = ", ".join(
+                            [f"${len(values) + i + 1}" for i in range(len(self.tenant_ids))]
+                        )
+                        query += f" AND {quoted_tenant_field} IN ({tenant_placeholders})"
+                        values.extend(self.tenant_ids)
 
                     # Add current version filters (prevent data leakage)
                     current_filters = self.strategy.get_current_version_filters()
