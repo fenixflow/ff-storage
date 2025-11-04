@@ -4,9 +4,10 @@ Supports both Azurite (local development) and production Azure Blob Storage.
 """
 
 import asyncio
-from typing import AsyncIterator, Dict, List, Optional
+from typing import Any, AsyncIterator, Dict, List, Optional
 
 from azure.core.exceptions import ResourceNotFoundError
+from azure.identity import DefaultAzureCredential
 from azure.storage.blob import BlobServiceClient, ContentSettings
 from azure.storage.blob.aio import BlobServiceClient as AsyncBlobServiceClient
 
@@ -20,17 +21,35 @@ class AzureBlobObjectStorage(ObjectStorage):
     Supports both Azurite (local development) and production Azure Blob Storage
     with identical API. Uses Azure Storage SDK for blob operations.
 
+    Authentication Methods:
+        - Connection String: For Azurite (local development) or when using access keys
+        - Managed Identity: For production Azure deployments with DefaultAzureCredential
+
     Example:
-        >>> # Azurite (local development)
+        >>> # Azurite (local development with connection string)
         >>> storage = AzureBlobObjectStorage(
-        ...     connection_string="DefaultEndpointsProtocol=http;AccountName=fenixstorage;...",
-        ...     container_name="ixr-documents"
+        ...     container_name="ixr-documents",
+        ...     connection_string="DefaultEndpointsProtocol=http;AccountName=fenixstorage;..."
         ... )
         >>>
-        >>> # Production Azure Blob Storage
+        >>> # Production Azure Blob Storage with connection string
         >>> storage = AzureBlobObjectStorage(
-        ...     connection_string="DefaultEndpointsProtocol=https;AccountName=myaccount;...",
-        ...     container_name="ixr-documents"
+        ...     container_name="ixr-documents",
+        ...     connection_string="DefaultEndpointsProtocol=https;AccountName=myaccount;..."
+        ... )
+        >>>
+        >>> # Production with Managed Identity (DefaultAzureCredential)
+        >>> storage = AzureBlobObjectStorage(
+        ...     container_name="ixr-documents",
+        ...     account_url="https://mystorageaccount.blob.core.windows.net"
+        ... )
+        >>>
+        >>> # Production with custom credential
+        >>> from azure.identity import DefaultAzureCredential
+        >>> storage = AzureBlobObjectStorage(
+        ...     container_name="ixr-documents",
+        ...     account_url="https://mystorageaccount.blob.core.windows.net",
+        ...     credential=DefaultAzureCredential()
         ... )
         >>>
         >>> await storage.write("ixrs/IXR000001/renewal/file.pdf", data)
@@ -38,24 +57,45 @@ class AzureBlobObjectStorage(ObjectStorage):
 
     def __init__(
         self,
-        connection_string: str,
         container_name: str,
+        connection_string: str | None = None,
+        account_url: str | None = None,
+        credential: Any | None = None,
         prefix: str = "",
     ):
         """
         Initialize Azure Blob Storage backend.
 
         Args:
-            connection_string: Azure Storage connection string
             container_name: Name of the container for blobs
+            connection_string: Azure Storage connection string (for Azurite/local dev)
+            account_url: Azure Storage account URL (for managed identity)
+            credential: Optional credential object (defaults to DefaultAzureCredential)
             prefix: Optional prefix for all keys (similar to S3ObjectStorage)
+
+        Note:
+            Provide EITHER connection_string OR account_url, not both.
         """
+        # Validation
+        if connection_string and account_url:
+            raise ValueError("Provide either connection_string OR account_url, not both")
+        if not connection_string and not account_url:
+            raise ValueError("Must provide either connection_string or account_url")
+
         self.connection_string = connection_string
+        self.account_url = account_url
+        self.credential = credential
         self.container_name = container_name
         self.prefix = prefix.rstrip("/") + "/" if prefix else ""
 
-        # Sync client for blocking operations
-        self._sync_client = BlobServiceClient.from_connection_string(connection_string)
+        # Initialize sync client based on authentication method
+        if connection_string:
+            self._sync_client = BlobServiceClient.from_connection_string(connection_string)
+        else:
+            self._sync_client = BlobServiceClient(
+                account_url=account_url, credential=credential or DefaultAzureCredential()
+            )
+
         self._sync_container_client = self._sync_client.get_container_client(container_name)
 
         # Async client (will be initialized lazily)
@@ -89,9 +129,15 @@ class AzureBlobObjectStorage(ObjectStorage):
     async def _get_async_client(self) -> AsyncBlobServiceClient:
         """Get or create async blob service client."""
         if self._async_client is None:
-            self._async_client = AsyncBlobServiceClient.from_connection_string(
-                self.connection_string
-            )
+            if self.connection_string:
+                self._async_client = AsyncBlobServiceClient.from_connection_string(
+                    self.connection_string
+                )
+            else:
+                self._async_client = AsyncBlobServiceClient(
+                    account_url=self.account_url,
+                    credential=self.credential or DefaultAzureCredential(),
+                )
         return self._async_client
 
     async def write(self, key: str, data: bytes, metadata: Optional[Dict[str, str]] = None) -> bool:

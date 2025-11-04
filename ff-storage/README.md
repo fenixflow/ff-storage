@@ -381,20 +381,34 @@ asyncio.run(main())
 #### Azure Blob Storage
 ```python
 from ff_storage import AzureBlobObjectStorage
+from azure.identity import DefaultAzureCredential
 import asyncio
 
 async def main():
-    # Azurite (local development)
+    # Azurite (local development with connection string)
     storage = AzureBlobObjectStorage(
-        connection_string="DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;BlobEndpoint=http://127.0.0.1:10000/devstoreaccount1;",
-        container_name="fenix-documents"
+        container_name="fenix-documents",
+        connection_string="DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;BlobEndpoint=http://127.0.0.1:10000/devstoreaccount1;"
     )
 
-    # Production Azure Blob Storage
+    # Production with connection string (access key)
     storage = AzureBlobObjectStorage(
-        connection_string="DefaultEndpointsProtocol=https;AccountName=myaccount;AccountKey=...;EndpointSuffix=core.windows.net",
         container_name="fenix-documents",
+        connection_string="DefaultEndpointsProtocol=https;AccountName=myaccount;AccountKey=...;EndpointSuffix=core.windows.net",
         prefix="documents/"  # Optional prefix for all keys
+    )
+
+    # Production with Managed Identity (DefaultAzureCredential)
+    storage = AzureBlobObjectStorage(
+        container_name="fenix-documents",
+        account_url="https://mystorageaccount.blob.core.windows.net"
+    )
+
+    # Production with custom credential
+    storage = AzureBlobObjectStorage(
+        container_name="fenix-documents",
+        account_url="https://mystorageaccount.blob.core.windows.net",
+        credential=DefaultAzureCredential()
     )
 
     # Write file with metadata

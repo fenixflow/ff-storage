@@ -6,7 +6,7 @@ the strategy based on Pydantic model settings.
 """
 
 import logging
-from typing import Optional, TypeVar
+from typing import List, Optional, TypeVar
 from uuid import UUID
 
 from ..db.adapters import detect_adapter
@@ -38,11 +38,19 @@ class PydanticRepository(TemporalRepository[T]):
             name: str
             price: Decimal
 
-        # Create repository
+        # Create repository with single tenant
         repo = PydanticRepository(
             Product,
             db_pool,
             tenant_id=current_org.id,
+            logger=logger
+        )
+
+        # Or with multiple tenants for cross-tenant access
+        repo_admin = PydanticRepository(
+            Product,
+            db_pool,
+            tenant_id=[tenant1_id, tenant2_id],
             logger=logger
         )
 
@@ -62,7 +70,7 @@ class PydanticRepository(TemporalRepository[T]):
         self,
         model_class: type[T],
         db_pool,
-        tenant_id: Optional[UUID] = None,
+        tenant_id: Optional[UUID | List[UUID]] = None,
         logger=None,
         **kwargs,
     ):
@@ -72,7 +80,8 @@ class PydanticRepository(TemporalRepository[T]):
         Args:
             model_class: Pydantic model class (must inherit from PydanticModel)
             db_pool: Database connection pool (asyncpg, aiomysql, etc.)
-            tenant_id: Tenant context (required if model is multi-tenant)
+            tenant_id: Tenant context (required if model is multi-tenant).
+                      Can be single UUID or list of UUIDs for cross-tenant access.
             logger: Optional logger instance
             **kwargs: Additional arguments for TemporalRepository
                      (cache_enabled, cache_ttl, collect_metrics, max_retries, etc.)
