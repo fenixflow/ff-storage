@@ -180,6 +180,42 @@ class TemporalStrategy(ABC, Generic[T]):
         """
         pass
 
+    async def transfer_ownership(
+        self,
+        id: UUID,
+        new_tenant_id: UUID,
+        db_pool,
+        adapter,
+        current_tenant_id: Optional[UUID] = None,
+        user_id: Optional[UUID] = None,
+    ) -> T:
+        """
+        Transfer record ownership to a different tenant (optional).
+
+        Not all strategies need to implement this - it's only required for
+        superadmin operations that allow moving records between tenants.
+
+        Default implementation raises NotImplementedError. Strategies that
+        support this operation should override this method.
+
+        Args:
+            id: Record ID
+            new_tenant_id: New tenant to own this record
+            db_pool: Database connection pool
+            adapter: Database adapter
+            current_tenant_id: Current tenant context (for validation)
+            user_id: User performing the transfer (for audit trail)
+
+        Returns:
+            Updated record (model instance) with new tenant_id
+
+        Raises:
+            NotImplementedError: If strategy doesn't support ownership transfer
+        """
+        raise NotImplementedError(
+            f"{self.__class__.__name__} does not support transfer_ownership()"
+        )
+
     @abstractmethod
     async def get(
         self,

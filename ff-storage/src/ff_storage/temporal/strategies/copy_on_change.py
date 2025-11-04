@@ -502,6 +502,116 @@ class CopyOnChangeStrategy(TemporalStrategy[T]):
 
         return True
 
+    async def transfer_ownership(
+        self,
+        id: UUID,
+        new_tenant_id: UUID,
+        db_pool,
+        adapter,
+        current_tenant_id: Optional[UUID] = None,
+        user_id: Optional[UUID] = None,
+    ) -> T:
+        """
+        Transfer ownership by updating tenant_id with audit trail.
+
+        For CopyOnChange strategy, this creates audit entries tracking
+        the tenant_id change.
+
+        Args:
+            id: Record ID
+            new_tenant_id: New tenant to own this record
+            current_tenant_id: Current tenant (for validation)
+            user_id: User performing transfer (audit trail)
+
+        Returns:
+            Updated record with new tenant_id
+
+        Raises:
+            ValueError: If record not found or tenant_id unchanged
+        """
+        table_name = self._get_table_name()
+        quoted_table = self.query_builder.quote_identifier(table_name)
+        audit_table_name = self._get_audit_table_name()
+        transaction_id = uuid4()
+        now = datetime.now(timezone.utc)
+
+        # Build WHERE clause with proper quoting
+        where_parts = [f"{self.query_builder.quote_identifier('id')} = $1"]
+        where_values = [id]
+
+        # Optionally validate current tenant
+        if current_tenant_id is not None:
+            tenant_field_quoted = self.query_builder.quote_identifier(self.tenant_field)
+            where_parts.append(f"{tenant_field_quoted} = ${len(where_values) + 1}")
+            where_values.append(current_tenant_id)
+
+        if self.soft_delete:
+            deleted_at_quoted = self.query_builder.quote_identifier("deleted_at")
+            where_parts.append(f"{deleted_at_quoted} IS NULL")
+
+        # Get current record to validate tenant change
+        select_query = f"""
+            SELECT * FROM {quoted_table}
+            WHERE {" AND ".join(where_parts)}
+        """
+
+        async with db_pool.acquire() as conn:
+            async with conn.transaction():
+                # 1. Get current record
+                current_row = await conn.fetchrow(select_query, *where_values)
+
+                if not current_row:
+                    raise ValueError(f"Record not found: {id}")
+
+                current_data = dict(current_row)
+                current_tenant = current_data.get(self.tenant_field)
+
+                # 2. Validate tenant actually changed (prevent no-op transfers)
+                if current_tenant == new_tenant_id:
+                    raise ValueError(
+                        f"Cannot transfer to same tenant. Record {id} already belongs to {new_tenant_id}"
+                    )
+
+                # 3. UPDATE with new tenant_id
+                tenant_field_quoted = self.query_builder.quote_identifier(self.tenant_field)
+                updated_at_quoted = self.query_builder.quote_identifier("updated_at")
+                updated_by_quoted = self.query_builder.quote_identifier("updated_by")
+
+                update_query = f"""
+                    UPDATE {quoted_table}
+                    SET {tenant_field_quoted} = ${len(where_values) + 1},
+                        {updated_at_quoted} = ${len(where_values) + 2},
+                        {updated_by_quoted} = ${len(where_values) + 3}
+                    WHERE {" AND ".join(where_parts)}
+                    RETURNING *
+                """
+
+                row = await conn.fetchrow(update_query, *where_values, new_tenant_id, now, user_id)
+
+                # 4. Create audit entry for tenant_id change
+                audit_entry = {
+                    "audit_id": uuid4(),
+                    "record_id": id,
+                    "field_name": self.tenant_field,
+                    "old_value": self._serialize_value(current_tenant),
+                    "new_value": self._serialize_value(new_tenant_id),
+                    "operation": "TRANSFER",
+                    "changed_at": now,
+                    "changed_by": user_id,
+                    "transaction_id": transaction_id,
+                }
+                # Only add tenant_id if multi-tenant is enabled
+                if self.multi_tenant:
+                    audit_entry["tenant_id"] = new_tenant_id  # Audit under new tenant
+
+                # Insert audit entry
+                await self._insert_audit_entries(conn, audit_table_name, [audit_entry])
+
+        if not row:
+            raise ValueError(f"Failed to transfer ownership for record: {id}")
+
+        return self._row_to_model(row)
+
     async def get(
         self,
         id: UUID,
@@ -557,16 +667,20 @@ class CopyOnChangeStrategy(TemporalStrategy[T]):
         quoted_table = self.query_builder.quote_identifier(table_name)
         filters = filters or {}
 
+        # Multi-tenant filter: Add to filters if not already present
+        # This allows callers to override with a list for cross-tenant reads
+        if self.multi_tenant:
+            if self.tenant_field not in filters:
+                # Add default tenant_id if not already specified in filters
+                if not tenant_id:
+                    raise ValueError("tenant_id required for multi-tenant model")
+                filters[self.tenant_field] = tenant_id
+            # Tenant filtering will be handled by _validate_and_build_filter_clauses()
+            # which supports both single values (=) and lists (IN)
+
         # Build WHERE clause with proper quoting
         where_parts = []
         where_values = []
-
-        if self.multi_tenant:
-            if not tenant_id:
-                raise ValueError("tenant_id required for multi-tenant model")
-            tenant_field_quoted = self.query_builder.quote_identifier(self.tenant_field)
-            where_parts.append(f"{tenant_field_quoted} = ${len(where_values) + 1}")
-            where_values.append(tenant_id)
 
         if self.soft_delete and not include_deleted:
             deleted_at_quoted = self.query_builder.quote_identifier("deleted_at")

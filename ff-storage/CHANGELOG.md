@@ -7,6 +7,60 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.8.0] - 2025-11-04
+
+### Added
+
+- **[MULTI-TENANT]** Transfer ownership functionality for moving records between tenants
+  - New `transfer_ownership()` method added to all temporal strategies (SCD2, None, CopyOnChange)
+  - Enables superadmin operations to move records from one tenant to another
+  - SCD2 creates a new version with the new tenant_id (preserving immutability)
+  - None strategy directly updates the tenant_id field
+  - CopyOnChange strategy updates tenant_id and creates audit entries for the transfer
+  - Includes validation to prevent no-op transfers to the same tenant
+  - Tracks user performing the transfer for audit trail
+
+### Changed
+
+- **[MULTI-TENANT]** Simplified repository tenant handling back to single tenant
+  - Reverted from List[UUID] back to single UUID for tenant_id parameter
+  - Cross-tenant queries now handled via filters parameter instead
+  - Improved filter-based tenant handling in list operations
+  - Better separation between write operations (single tenant) and read operations (filter-based)
+
+### Improved
+
+- **[TEMPORAL]** Enhanced multi-tenant filtering in all strategies
+  - Moved tenant filtering logic into filters parameter for better flexibility
+  - Strategies now check if tenant_field is already in filters before adding default
+  - Enables cross-tenant reads by passing tenant_id list in filters
+  - Maintains backward compatibility with existing single-tenant usage
+
+### Usage Examples
+
+```python
+# Transfer record ownership (new superadmin operation)
+repo = TemporalRepository(
+    MyModel,
+    db_pool,
+    strategy=SCD2Strategy(MyModel),
+    tenant_id=admin_tenant_id
+)
+updated_record = await repo.strategy.transfer_ownership(
+    id=record_id,
+    new_tenant_id=new_tenant_id,
+    db_pool=db_pool,
+    adapter=adapter,
+    current_tenant_id=old_tenant_id,  # Optional validation
+    user_id=admin_user_id  # For audit trail
+)
+
+# Cross-tenant queries via filters
+results = await repo.list(
+    filters={"tenant_id": [tenant1_id, tenant2_id, tenant3_id]}
+)
+```
+
 ## [3.7.0] - 2025-11-04
 
 ### Added

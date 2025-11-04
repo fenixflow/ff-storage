@@ -386,6 +386,109 @@ class SCD2Strategy(TemporalStrategy[T]):
 
         return True
 
+    async def transfer_ownership(
+        self,
+        id: UUID,
+        new_tenant_id: UUID,
+        db_pool,
+        adapter,
+        current_tenant_id: Optional[UUID] = None,
+        user_id: Optional[UUID] = None,
+    ) -> T:
+        """
+        Transfer ownership by creating a new version with new tenant_id.
+
+        SCD2 immutability principle: Changing tenant_id is a state change,
+        so we create version N+1 with the new tenant_id.
+
+        Process:
+        1. SELECT current version (valid_to IS NULL, deleted_at IS NULL)
+        2. Validate old tenant_id != new tenant_id (prevent no-op transfers)
+        3. UPDATE: Close current version (set valid_to = NOW())
+        4. INSERT: New version with new tenant_id, version++
+
+        Args:
+            id: Record ID
+            new_tenant_id: New tenant to own this record
+            current_tenant_id: Current tenant (for validation)
+            user_id: User performing transfer (audit trail)
+
+        Returns:
+            New version with updated tenant_id
+
+        Raises:
+            ValueError: If record not found or tenant_id unchanged
+        """
+        table_name = self._get_table_name()
+        quoted_table = self.query_builder.quote_identifier(table_name)
+        now = datetime.now(timezone.utc)
+
+        # Build WHERE for current version with proper quoting
+        where_parts = [
+            f"{self.query_builder.quote_identifier('id')} = $1",
+            f"{self.query_builder.quote_identifier('valid_to')} IS NULL",
+            f"{self.query_builder.quote_identifier('deleted_at')} IS NULL",
+        ]
+        where_values = [id]
+
+        # Optionally validate current tenant
+        if current_tenant_id is not None:
+            tenant_field_quoted = self.query_builder.quote_identifier(self.tenant_field)
+            where_parts.append(f"{tenant_field_quoted} = ${len(where_values) + 1}")
+            where_values.append(current_tenant_id)
+
+        async with db_pool.acquire() as conn:
+            async with conn.transaction():
+                # 1. Get current version
+                select_query = f"""
+                    SELECT * FROM {quoted_table}
+                    WHERE {" AND ".join(where_parts)}
+                """
+                current_row = await conn.fetchrow(select_query, *where_values)
+
+                if not current_row:
+                    raise ValueError(f"Record not found: {id}")
+
+                current_data = dict(current_row)
+                current_version = current_data["version"]
+                current_tenant = current_data.get(self.tenant_field)
+
+                # 2. Validate tenant actually changed (prevent no-op transfers)
+                if current_tenant == new_tenant_id:
+                    raise ValueError(
+                        f"Cannot transfer to same tenant. Record {id} already belongs to {new_tenant_id}"
+                    )
+
+                # 3. Close current version
+                valid_to_quoted = self.query_builder.quote_identifier("valid_to")
+                close_query = f"""
+                    UPDATE {quoted_table}
+                    SET {valid_to_quoted} = ${len(where_values) + 1}
+                    WHERE {" AND ".join(where_parts)}
+                """
+                await conn.execute(close_query, *where_values, now)
+
+                # 4. Build new version with new tenant_id
+                new_data = current_data.copy()
+                new_data["version"] = current_version + 1
+                new_data["valid_from"] = now
+                new_data["valid_to"] = None
+                new_data["updated_at"] = now
+                new_data[self.tenant_field] = new_tenant_id  # CHANGE TENANT
+
+                # Track who made the transfer (audit trail)
+                if user_id:
+                    new_data["updated_by"] = user_id
+
+                # Insert new version using QueryBuilder
+                serialized_data = self._serialize_jsonb_fields(new_data)
+                insert_query, insert_values = self.query_builder.build_insert(
+                    table_name, serialized_data
+                )
+                row = await conn.fetchrow(insert_query, *insert_values)
+
+        return self._row_to_model(row)
+
     async def get(
         self,
         id: UUID,
@@ -491,17 +594,20 @@ class SCD2Strategy(TemporalStrategy[T]):
         quoted_table = self.query_builder.quote_identifier(table_name)
         filters = filters or {}
 
+        # Multi-tenant filter: Add to filters if not already present
+        # This allows callers to override with a list for cross-tenant reads
+        if self.multi_tenant:
+            if self.tenant_field not in filters:
+                # Add default tenant_id if not already specified in filters
+                if not tenant_id:
+                    raise ValueError("tenant_id required for multi-tenant model")
+                filters[self.tenant_field] = tenant_id
+            # Tenant filtering will be handled by _validate_and_build_filter_clauses()
+            # which supports both single values (=) and lists (IN)
+
         # Build WHERE clause with proper quoting
         where_parts = []
         where_values = []
-
-        # Multi-tenant filter
-        if self.multi_tenant:
-            if not tenant_id:
-                raise ValueError("tenant_id required for multi-tenant model")
-            tenant_field_quoted = self.query_builder.quote_identifier(self.tenant_field)
-            where_parts.append(f"{tenant_field_quoted} = ${len(where_values) + 1}")
-            where_values.append(tenant_id)
 
         valid_to_quoted = self.query_builder.quote_identifier("valid_to")
         valid_from_quoted = self.query_builder.quote_identifier("valid_from")
