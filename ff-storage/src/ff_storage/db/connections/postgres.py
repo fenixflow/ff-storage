@@ -25,6 +25,7 @@ from ...utils.retry import (
     retry,
     retry_async,
 )
+from ...utils.postgres import quote_identifier
 from ...utils.validation import validate_query
 from ..sql import SQL
 
@@ -278,10 +279,15 @@ class PostgresBase(SQL):
         :param schema: The schema name for the logs table.
         :return: SQL string for creating schema and logs table.
         """
-        return f"""
-        CREATE SCHEMA IF NOT EXISTS {schema};
+        quoted_schema = quote_identifier(schema)
+        schema_logs = quote_identifier(f"{schema}.logs")
+        idx_timestamp = quote_identifier(f"idx_{schema}_logs_timestamp")
+        idx_level = quote_identifier(f"idx_{schema}_logs_level")
 
-        CREATE TABLE IF NOT EXISTS {schema}.logs (
+        return f"""
+        CREATE SCHEMA IF NOT EXISTS {quoted_schema};
+
+        CREATE TABLE IF NOT EXISTS {schema_logs} (
             id SERIAL PRIMARY KEY,
             timestamp TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
             level VARCHAR(50),
@@ -290,11 +296,11 @@ class PostgresBase(SQL):
             created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
         );
 
-        CREATE INDEX IF NOT EXISTS idx_{schema}_logs_timestamp
-        ON {schema}.logs(timestamp DESC);
+        CREATE INDEX IF NOT EXISTS {idx_timestamp}
+        ON {schema_logs}(timestamp DESC);
 
-        CREATE INDEX IF NOT EXISTS idx_{schema}_logs_level
-        ON {schema}.logs(level);
+        CREATE INDEX IF NOT EXISTS {idx_level}
+        ON {schema_logs}(level);
         """
 
     def _create_database(self):
@@ -317,7 +323,9 @@ class PostgresBase(SQL):
                 # Check if database exists
                 cursor.execute("SELECT 1 FROM pg_database WHERE datname = %s", (self.dbname,))
                 if not cursor.fetchone():
-                    cursor.execute(f"CREATE DATABASE {self.dbname}")
+                    # Quote database name to handle hyphens and special characters
+                    quoted_dbname = quote_identifier(self.dbname)
+                    cursor.execute(f"CREATE DATABASE {quoted_dbname}")
                     self.logger.info(f"Created database: {self.dbname}")
         finally:
             temp_conn.close()

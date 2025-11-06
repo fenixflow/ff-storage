@@ -49,6 +49,32 @@ def test_quote_identifier_schema_qualified():
     assert quote_identifier("ix_ds_v2.test_table") == '"ix_ds_v2"."test_table"'
 
 
+def test_quote_identifier_with_hyphens():
+    """Test quote_identifier handles hyphens in identifiers (like database names)."""
+    # Database names with hyphens (the original bug)
+    assert quote_identifier("ix-ds") == '"ix-ds"'
+    assert quote_identifier("my-app-db") == '"my-app-db"'
+    assert quote_identifier("test-123-db") == '"test-123-db"'
+
+    # Schema names with hyphens
+    assert quote_identifier("my-schema") == '"my-schema"'
+
+    # Table names with hyphens
+    assert quote_identifier("my-table") == '"my-table"'
+
+    # Schema.table with hyphens
+    assert quote_identifier("my-schema.my-table") == '"my-schema"."my-table"'
+
+
+def test_quote_identifier_with_special_characters():
+    """Test quote_identifier handles various special characters."""
+    # Spaces
+    assert quote_identifier("my table") == '"my table"'
+
+    # Mixed special characters
+    assert quote_identifier("my-special_table") == '"my-special_table"'
+
+
 def test_build_column_list():
     """Test build_column_list quotes reserved keywords."""
     columns = ["id", "limit", "order", "user", "select", "name"]
@@ -257,6 +283,8 @@ if __name__ == "__main__":
 
     test_quote_identifier_simple()
     test_quote_identifier_schema_qualified()
+    test_quote_identifier_with_hyphens()
+    test_quote_identifier_with_special_characters()
     test_build_column_list()
     test_build_insert_query_quotes_identifiers()
     test_build_update_set_clause_quotes_identifiers()

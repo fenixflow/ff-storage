@@ -241,7 +241,9 @@ class MySQLBase(SQL):
 
         try:
             cursor = temp_conn.cursor()
-            cursor.execute(f"CREATE DATABASE IF NOT EXISTS {self.dbname}")
+            # Quote database name with backticks to handle hyphens and special characters
+            quoted_dbname = f"`{self.dbname}`"
+            cursor.execute(f"CREATE DATABASE IF NOT EXISTS {quoted_dbname}")
             self.logger.info(f"Created database: {self.dbname}")
             cursor.close()
         finally:

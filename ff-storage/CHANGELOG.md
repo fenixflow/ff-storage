@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.8.1] - 2025-11-05
+
+### Fixed
+
+- **[DATABASE]** Fixed SQL syntax error when creating databases with hyphens in names
+  - PostgreSQL `CREATE DATABASE` now properly quotes database names using `quote_identifier()`
+  - MySQL `CREATE DATABASE` now properly quotes database names using backticks
+  - Fixes error: `psycopg2.errors.SyntaxError: syntax error at or near "-"` for names like "ix-ds"
+  - Also fixed `get_create_logs_table_sql()` static method to quote schema and table identifiers
+  - Completes the identifier quoting work started in v3.0.1 and v3.0.2 by addressing database creation
+  - Added test coverage for hyphenated and special character identifiers
+
 ## [3.8.0] - 2025-11-04
 
 ### Added
