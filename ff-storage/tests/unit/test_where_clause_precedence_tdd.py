@@ -48,9 +48,9 @@ class TestPrecedencePreservation:
         )
 
         # The parens MUST be preserved
-        assert (
-            "(" in norm_with and ")" in norm_with
-        ), f"Parentheses were stripped from {where_with_parens!r}, got {norm_with!r}"
+        assert "(" in norm_with and ")" in norm_with, (
+            f"Parentheses were stripped from {where_with_parens!r}, got {norm_with!r}"
+        )
 
     def test_multi_tenant_security_filter(self):
         """
@@ -126,9 +126,9 @@ class TestPrecedencePreservation:
 
         # MUST have parentheses preserved
         # Should contain patterns like "(... OR ...) AND (... OR ...)"
-        assert (
-            result.count("(") >= 2 and result.count(")") >= 2
-        ), f"Lost required parentheses in {where!r}, got {result!r}"
+        assert result.count("(") >= 2 and result.count(")") >= 2, (
+            f"Lost required parentheses in {where!r}, got {result!r}"
+        )
 
         # Verify different from unparenthesized version
         where_wrong = "a OR b AND c OR d"
@@ -158,9 +158,9 @@ class TestSQLStringEscaping:
         result = normalizer.normalize_where_clause(where)
 
         # MUST preserve the escaped quote
-        assert (
-            "'O''Reilly'" in result
-        ), f"Doubled quote escaping broken: {where!r} normalized to {result!r}"
+        assert "'O''Reilly'" in result, (
+            f"Doubled quote escaping broken: {where!r} normalized to {result!r}"
+        )
 
         # Should NOT have broken-apart strings
         assert "'O' 'Reilly'" not in result
@@ -220,9 +220,9 @@ class TestSemanticCorrectness:
         first_pass = results[0]
         second_pass = normalizer.normalize_where_clause(first_pass)
 
-        assert (
-            first_pass == second_pass
-        ), f"Not idempotent: first={first_pass!r}, second={second_pass!r}"
+        assert first_pass == second_pass, (
+            f"Not idempotent: first={first_pass!r}, second={second_pass!r}"
+        )
 
     def test_semantically_different_normalize_different(self):
         """
@@ -245,9 +245,9 @@ class TestSemanticCorrectness:
 
         # Should have at least 3 unique results (clauses 2 & 4 might normalize the same)
         unique_results = set(results)
-        assert (
-            len(unique_results) >= 3
-        ), f"Failed to distinguish semantically different clauses: {results}"
+        assert len(unique_results) >= 3, (
+            f"Failed to distinguish semantically different clauses: {results}"
+        )
 
         # Critical: (a OR b) AND c should be different from a OR b AND c
         assert results[0] != "a OR b AND c"
@@ -269,9 +269,9 @@ class TestSemanticCorrectness:
         norm_db = normalizer.normalize_where_clause(from_db)
         norm_model = normalizer.normalize_where_clause(from_model)
 
-        assert (
-            norm_db == norm_model
-        ), f"PostgreSQL extra parens not handled: {norm_db!r} != {norm_model!r}"
+        assert norm_db == norm_model, (
+            f"PostgreSQL extra parens not handled: {norm_db!r} != {norm_model!r}"
+        )
 
     def test_compound_postgresql_case(self):
         """
