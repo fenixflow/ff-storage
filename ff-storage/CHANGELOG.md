@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.8.2] - 2025-11-13
+
+### Fixed
+
+- **[REPOSITORY]** Fixed count() method to properly handle List[UUID] for multi-tenant filtering
+  - The count() method in TemporalRepository now adds tenant_id to filters dict (like list() does)
+  - This allows the QueryBuilder to properly handle both single UUID and List[UUID] with IN clauses
+  - Fixes error: `asyncpg.exceptions.DataError: 'list' object has no attribute 'bytes'`
+  - Makes count() behavior consistent with list() method for cross-tenant queries
+  - Added comprehensive test coverage for count() with List[UUID] scenarios
+
 ## [3.8.1] - 2025-11-05
 
 ### Fixed

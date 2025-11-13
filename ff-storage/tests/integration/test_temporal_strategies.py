@@ -651,6 +651,91 @@ class TestCrossCuttingFeatures:
         all_count = await repo.count(include_deleted=True)
         assert all_count == 10
 
+    @pytest.mark.asyncio
+    async def test_count_with_list_uuid_multi_tenant(self, db_pool, setup_tables):
+        """Test count operations with List[UUID] for multi-tenant access."""
+        # Create multiple tenants
+        tenant1 = uuid4()
+        tenant2 = uuid4()
+        tenant3 = uuid4()
+        user_id = uuid4()
+
+        # Create products in different tenants
+        repo1 = PydanticRepository(ProductNone, db_pool, tenant_id=tenant1)
+        repo2 = PydanticRepository(ProductNone, db_pool, tenant_id=tenant2)
+        repo3 = PydanticRepository(ProductNone, db_pool, tenant_id=tenant3)
+
+        # Create 3 products in tenant1
+        for i in range(3):
+            await repo1.create(
+                ProductNone(
+                    name=f"T1 Product {i}",
+                    price=Decimal(f"{i * 10}.00"),
+                    status="active",
+                ),
+                user_id=user_id,
+            )
+
+        # Create 5 products in tenant2
+        for i in range(5):
+            await repo2.create(
+                ProductNone(
+                    name=f"T2 Product {i}",
+                    price=Decimal(f"{i * 10}.00"),
+                    status="active",
+                ),
+                user_id=user_id,
+            )
+
+        # Create 2 products in tenant3
+        for i in range(2):
+            await repo3.create(
+                ProductNone(
+                    name=f"T3 Product {i}",
+                    price=Decimal(f"{i * 10}.00"),
+                    status="active",
+                ),
+                user_id=user_id,
+            )
+
+        # Test 1: Count with single tenant (existing behavior)
+        count1 = await repo1.count()
+        assert count1 == 3
+
+        # Test 2: Count with multiple accessible tenants via List[UUID]
+        # Create repo with list of accessible tenant IDs
+        multi_repo = PydanticRepository(
+            ProductNone,
+            db_pool,
+            tenant_id=[tenant1, tenant2],  # List of UUIDs
+        )
+
+        # Count should include products from both tenant1 and tenant2
+        multi_count = await multi_repo.count()
+        assert multi_count == 8  # 3 from tenant1 + 5 from tenant2
+
+        # Test 3: Count with filters and List[UUID]
+        # Override tenant_id in filters with a list
+        count_with_filter = await multi_repo.count(
+            filters={"tenant_id": [tenant1, tenant2, tenant3]}  # All three tenants
+        )
+        assert count_with_filter == 10  # 3 + 5 + 2 = all products
+
+        # Test 4: Count specific status with multi-tenant
+        active_count = await multi_repo.count(
+            filters={
+                "status": "active",
+                "tenant_id": [tenant1, tenant3],  # Only tenant1 and tenant3
+            }
+        )
+        assert active_count == 5  # 3 from tenant1 + 2 from tenant3
+
+        # Test 5: Verify tenant isolation still works
+        # Repository with only tenant3 shouldn't see other tenants' data
+        single_repo = PydanticRepository(ProductNone, db_pool, tenant_id=tenant3)
+        isolated_count = await single_repo.count()
+        assert isolated_count == 2  # Only tenant3's products
+
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
