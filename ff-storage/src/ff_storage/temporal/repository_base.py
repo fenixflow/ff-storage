@@ -568,13 +568,15 @@ class TemporalRepository(Generic[T]):
         where_parts = []
         where_values = []
 
-        # Multi-tenant filter (with proper identifier quoting)
-        if self.strategy.multi_tenant:
-            quoted_tenant_field = self.strategy.query_builder.quote_identifier(
-                self.strategy.tenant_field
-            )
-            where_parts.append(f"{quoted_tenant_field} = ${len(where_values) + 1}")
-            where_values.append(self.tenant_id)
+        # Multi-tenant filter: Add to filters dict (like list() does)
+        # This allows uniform handling of both single UUID and List[UUID]
+        if self.strategy.multi_tenant and self.tenant_id is not None:
+            if filters is None:
+                filters = {}
+            # Only add tenant_id if not already specified in filters
+            # This allows callers to override with a list for cross-tenant counts
+            if self.strategy.tenant_field not in filters:
+                filters[self.strategy.tenant_field] = self.tenant_id
 
         # Current version filters (soft delete, SCD2, etc.)
         include_deleted = kwargs.get("include_deleted", False)
@@ -583,6 +585,7 @@ class TemporalRepository(Generic[T]):
             where_parts.extend(current_filters)
 
         # User filters (with validation to prevent SQL injection)
+        # This now includes tenant filtering and properly handles List[UUID]
         if filters:
             filter_clauses, filter_values = self.strategy._validate_and_build_filter_clauses(
                 filters, base_param_count=len(where_values)
