@@ -130,7 +130,7 @@ def ensure_test_db():
         user="postgres",
         password="postgres",
         host="localhost",
-        port=5438,
+        port=5436,
     )
     conn.autocommit = True
 
@@ -159,7 +159,7 @@ def db_connection(ensure_test_db):
         user="postgres",
         password="postgres",
         host="localhost",
-        port=5438,
+        port=5436,
     )
 
     db.connect()
@@ -469,9 +469,9 @@ class TestIndexColumnOrder:
         )
 
         indexdef = result[0][0]
-        assert "(col_b, col_c, col_a)" in indexdef, (
-            f"PostgreSQL stores index as (col_b, col_c, col_a), got: {indexdef}"
-        )
+        assert (
+            "(col_b, col_c, col_a)" in indexdef
+        ), f"PostgreSQL stores index as (col_b, col_c, col_a), got: {indexdef}"
 
         # Introspect the index
         introspector = PostgresSchemaIntrospector(db_connection)
@@ -479,13 +479,14 @@ class TestIndexColumnOrder:
         idx = [i for i in indexes if i.name == "idx_specific_order"][0]
 
         # MUST match CREATE INDEX order, NOT table order, NOT alphabetical
-        assert idx.columns == [
-            "col_b",
-            "col_c",
-            "col_a",
-        ], (
-            f"Introspector must return index definition order (col_b, col_c, col_a), got {idx.columns}"
-        )
+        assert (
+            idx.columns
+            == [
+                "col_b",
+                "col_c",
+                "col_a",
+            ]
+        ), f"Introspector must return index definition order (col_b, col_c, col_a), got {idx.columns}"
 
         # Cleanup
         db_connection.execute_query("DROP TABLE test_idx_order CASCADE")

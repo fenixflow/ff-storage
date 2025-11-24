@@ -446,32 +446,16 @@ asyncio.run(main())
 ### Schema Sync (Terraform-like Migrations)
 
 ```python
-from ff_storage.db import Postgres, SchemaManager
-from ff_storage.db.models import BaseModel
+from ff_storage import Postgres, SchemaManager, PydanticModel, Field
 
-# Define your model with schema in code
-class Document(BaseModel):
+# Define your model with PydanticModel
+class Document(PydanticModel):
     __table_name__ = "documents"
     __schema__ = "public"
 
-    @classmethod
-    def create_table_sql(cls):
-        return """
-        CREATE TABLE IF NOT EXISTS public.documents (
-            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-            title VARCHAR(255) NOT NULL,
-            content TEXT,
-            status VARCHAR(50) DEFAULT 'draft',
-            created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-            updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
-        );
-
-        CREATE INDEX IF NOT EXISTS idx_documents_status
-        ON public.documents(status);
-
-        CREATE INDEX IF NOT EXISTS idx_documents_created_at
-        ON public.documents(created_at DESC);
-        """
+    title: str = Field(max_length=255)
+    content: str | None = None
+    status: str = Field(default="draft", max_length=50)
 
 # Connect to database
 db = Postgres(dbname="mydb", user="user", password="pass", host="localhost", port=5432)
@@ -504,32 +488,6 @@ print(f"Applied {changes_applied} schema changes")
 - **Dry Run Mode**: Preview all changes before applying
 - **Transaction-Wrapped**: All changes in a single atomic transaction
 - **Provider-Agnostic**: Works with PostgreSQL (full support), MySQL/SQL Server (stubs for future implementation)
-
-### Base Models
-
-```python
-from ff_storage.db.models import BaseModel, BaseModelWithDates
-from dataclasses import dataclass
-from typing import Optional
-import uuid
-
-@dataclass
-class Document(BaseModelWithDates):
-    title: str
-    content: str
-    status: str = "draft"
-    author_id: Optional[uuid.UUID] = None
-
-# Automatic UUID and timestamp handling
-doc = Document(
-    title="Quarterly Report",
-    content="...",
-    status="published"
-)
-# doc.id = UUID automatically generated
-# doc.created_at = current timestamp
-# doc.updated_at = current timestamp
-```
 
 ## Advanced Features
 

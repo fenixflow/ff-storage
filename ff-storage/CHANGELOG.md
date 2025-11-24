@@ -7,6 +7,92 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.1.0] - 2025-11-24
+
+### Breaking Changes
+
+- **[MODELS]** Removed legacy dataclass-based models from `ff_storage.db.models`
+  - Removed: `BaseModel`, `SoftDeleteModel`, `VersionedModel`, `AuditModel`, `MetadataModel`, `FullFeaturedModel`
+  - These classes have been fully replaced by `PydanticModel` from `ff_storage.pydantic_support`
+  - Users should migrate to `PydanticModel` with temporal strategies for equivalent functionality
+  - Eliminates SQL validation warnings from legacy `create_table_sql()` methods
+
+## [4.0.1] - 2025-11-24
+
+### Added
+
+- **[TYPE MAPPING]** Comprehensive type mapping documentation
+  - New docs/TYPE_MAPPING.md with detailed guide on Pydantic to PostgreSQL type mappings
+  - Examples for all supported types including native array support
+  - Migration guide for v3.x to v4.0 transition
+
+### Changed
+
+- **[PYDANTIC SUPPORT]** Enhanced type mapping system
+  - Improved handling of List[UUID] and other native array types
+  - Better support for custom type overrides via Field metadata
+
+### Fixed
+
+- **[SCHEMA SYNC]** Improved schema comparison and normalization
+  - Enhanced schema drift detection for temporal tables
+  - Better handling of type normalization edge cases
+  - Fixed issues with index comparison in temporal strategies
+
+## [4.0.0] - 2025-11-22
+
+### Breaking Changes
+
+- **[TYPE MAPPING]** Changed List[UUID] and other simple list types to use native PostgreSQL arrays instead of JSONB
+  - `List[UUID]` now maps to `UUID[]` instead of `JSONB`
+  - `List[str]` now maps to `TEXT[]` instead of `JSONB`
+  - `List[int]` now maps to `INTEGER[]` instead of `JSONB`
+  - `List[float]` now maps to `DOUBLE PRECISION[]` instead of `JSONB`
+  - `List[bool]` now maps to `BOOLEAN[]` instead of `JSONB`
+  - Complex types (List[Dict], List[BaseModel]) still use JSONB
+  - See docs/TYPE_MAPPING.md for migration guide
+
+### Fixed
+
+- **[SCHEMA SYNC]** Fixed critical bug where schema sync tried to DROP INDEX on primary key constraints
+  - Modified `get_indexes()` in PostgresSchemaIntrospector to exclude constraint-backed indexes
+  - Primary key, unique, and exclude constraint indexes are now filtered out
+  - Prevents error: "cannot drop index ... because constraint ... requires it"
+  - Fixes issue with temporal tables (copy_on_change strategy) failing on second schema sync run
+
+### Added
+
+- **[TYPE MAPPING]** Native PostgreSQL array support for simple types
+  - Better type safety with PostgreSQL enforcing element types
+  - Improved performance compared to JSONB storage
+  - Support for PostgreSQL array operators (`@>`, `<@`, `&&`)
+  - Ability to create GIN indexes on array columns
+
+- **[DEBUGGING]** Enhanced schema drift debugging capabilities
+  - Added verbose mode to SchemaComparator for detailed comparison output
+  - Shows before/after normalization values for columns and indexes
+  - Lists specific differences found during comparison
+  - Helps diagnose and troubleshoot schema drift issues
+
+- **[TESTING]** Comprehensive type mapping test suite
+  - Added unit tests for all type mappings in test_type_mapping.py
+  - Tests for basic types, list types, complex types, and optional types
+  - Tests for custom type overrides via Field metadata
+  - Added integration tests for temporal table index bug
+
+- **[DOCUMENTATION]** Complete type mapping documentation
+  - New docs/TYPE_MAPPING.md with comprehensive guide
+  - Migration guide from v3.x to v4.0
+  - Best practices and troubleshooting tips
+  - Examples of all supported type mappings
+
+### Changed
+
+- **[SCHEMA SYNC]** Improved schema comparison logic
+  - Better handling of type normalization
+  - More accurate detection of actual schema differences
+  - Reduced false positives in schema drift detection
+
 ## [3.8.2] - 2025-11-13
 
 ### Fixed

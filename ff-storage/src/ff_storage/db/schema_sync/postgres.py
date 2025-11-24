@@ -123,7 +123,11 @@ class PostgresSchemaIntrospector(SchemaIntrospectorBase):
         return columns
 
     def get_indexes(self, table_name: str, schema: str) -> List[IndexDefinition]:
-        """Get index definitions for a table."""
+        """Get index definitions for a table.
+
+        Note: This excludes indexes that back constraints (PRIMARY KEY, UNIQUE, EXCLUDE)
+        as these are managed implicitly through their constraints.
+        """
         query = """
             SELECT
                 i.relname as index_name,
@@ -137,9 +141,12 @@ class PostgresSchemaIntrospector(SchemaIntrospectorBase):
             JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = ANY(ix.indkey)
             JOIN pg_am am ON i.relam = am.oid
             JOIN pg_namespace n ON n.oid = t.relnamespace
+            LEFT JOIN pg_constraint co ON co.conindid = ix.indexrelid
             WHERE n.nspname = %s
             AND t.relname = %s
             AND t.relkind = 'r'
+            AND NOT ix.indisprimary  -- Exclude primary key indexes
+            AND co.conindid IS NULL  -- Exclude indexes backing constraints
             GROUP BY i.relname, ix.indisunique, am.amname, ix.indpred, ix.indrelid
             ORDER BY i.relname
         """
@@ -193,6 +200,10 @@ class PostgresSchemaIntrospector(SchemaIntrospectorBase):
             "timestamp": ColumnType.TIMESTAMP,
             "timestamp with time zone": ColumnType.TIMESTAMPTZ,
             "timestamptz": ColumnType.TIMESTAMPTZ,
+            "time": ColumnType.TIME,
+            "time without time zone": ColumnType.TIME,
+            "interval": ColumnType.INTERVAL,
+            "bytea": ColumnType.BINARY,
             "jsonb": ColumnType.JSONB,
             "numeric": ColumnType.DECIMAL,
             "decimal": ColumnType.DECIMAL,
@@ -403,6 +414,12 @@ class PostgresSQLParser(SQLParserBase):
             return ColumnType.TIMESTAMPTZ
         elif "TIMESTAMP" in type_upper:
             return ColumnType.TIMESTAMP
+        elif "TIME" in type_upper and "TIMESTAMP" not in type_upper:
+            return ColumnType.TIME
+        elif type_upper == "INTERVAL":
+            return ColumnType.INTERVAL
+        elif type_upper == "BYTEA":
+            return ColumnType.BINARY
         elif type_upper == "JSONB":
             return ColumnType.JSONB
         elif type_upper.endswith("[]"):

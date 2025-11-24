@@ -269,18 +269,20 @@ class SchemaDifferBase:
     Uses SchemaNormalizer for consistent comparison across all schema elements.
     """
 
-    def __init__(self, normalizer=None, logger=None):
+    def __init__(self, normalizer=None, logger=None, verbose=False):
         """
         Initialize schema differ.
 
         Args:
             normalizer: SchemaNormalizer instance for consistent comparison
             logger: Optional logger instance
+            verbose: Enable verbose debugging output for schema comparisons
         """
         from .normalizer import SchemaNormalizer
 
         self.normalizer = normalizer or SchemaNormalizer()
         self.logger = logger
+        self.verbose = verbose
 
     def _columns_equal(self, col1: ColumnDefinition, col2: ColumnDefinition) -> bool:
         """
@@ -300,18 +302,51 @@ class SchemaDifferBase:
         norm1 = self.normalizer.normalize_column(col1)
         norm2 = self.normalizer.normalize_column(col2)
 
-        return (
-            norm1.column_type == norm2.column_type
-            and norm1.nullable == norm2.nullable
-            and norm1.default == norm2.default
-            and norm1.max_length == norm2.max_length
-            and norm1.precision == norm2.precision
-            and norm1.scale == norm2.scale
-            and norm1.is_primary_key == norm2.is_primary_key
-            and norm1.is_foreign_key == norm2.is_foreign_key
-            and norm1.references == norm2.references
-            and norm1.native_type == norm2.native_type  # Also compare native_type
-        )
+        if self.verbose and self.logger:
+            self.logger.debug(f"Comparing column '{col1.name}':")
+            self.logger.debug("  Before normalization:")
+            self.logger.debug(
+                f"    Desired: type={col1.native_type}, nullable={col1.nullable}, default={col1.default}"
+            )
+            self.logger.debug(
+                f"    Current: type={col2.native_type}, nullable={col2.nullable}, default={col2.default}"
+            )
+            self.logger.debug("  After normalization:")
+            self.logger.debug(
+                f"    Desired: type={norm1.native_type}, nullable={norm1.nullable}, default={norm1.default}"
+            )
+            self.logger.debug(
+                f"    Current: type={norm2.native_type}, nullable={norm2.nullable}, default={norm2.default}"
+            )
+
+        differences = []
+        if norm1.column_type != norm2.column_type:
+            differences.append(f"column_type: {norm1.column_type} != {norm2.column_type}")
+        if norm1.nullable != norm2.nullable:
+            differences.append(f"nullable: {norm1.nullable} != {norm2.nullable}")
+        if norm1.default != norm2.default:
+            differences.append(f"default: {norm1.default} != {norm2.default}")
+        if norm1.max_length != norm2.max_length:
+            differences.append(f"max_length: {norm1.max_length} != {norm2.max_length}")
+        if norm1.precision != norm2.precision:
+            differences.append(f"precision: {norm1.precision} != {norm2.precision}")
+        if norm1.scale != norm2.scale:
+            differences.append(f"scale: {norm1.scale} != {norm2.scale}")
+        if norm1.is_primary_key != norm2.is_primary_key:
+            differences.append(f"is_primary_key: {norm1.is_primary_key} != {norm2.is_primary_key}")
+        if norm1.is_foreign_key != norm2.is_foreign_key:
+            differences.append(f"is_foreign_key: {norm1.is_foreign_key} != {norm2.is_foreign_key}")
+        if norm1.references != norm2.references:
+            differences.append(f"references: {norm1.references} != {norm2.references}")
+        if norm1.native_type != norm2.native_type:
+            differences.append(f"native_type: {norm1.native_type} != {norm2.native_type}")
+
+        if differences and self.verbose and self.logger:
+            self.logger.debug(f"  Column '{col1.name}' differences found:")
+            for diff in differences:
+                self.logger.debug(f"    - {diff}")
+
+        return len(differences) == 0
 
     def _indexes_equal(self, idx1: IndexDefinition, idx2: IndexDefinition) -> bool:
         """
@@ -333,14 +368,41 @@ class SchemaDifferBase:
         norm1 = self.normalizer.normalize_index(idx1)
         norm2 = self.normalizer.normalize_index(idx2)
 
+        if self.verbose and self.logger:
+            self.logger.debug(f"Comparing index '{idx1.name}':")
+            self.logger.debug("  Before normalization:")
+            self.logger.debug(
+                f"    Desired: columns={idx1.columns}, unique={idx1.unique}, where={idx1.where_clause}"
+            )
+            self.logger.debug(
+                f"    Current: columns={idx2.columns}, unique={idx2.unique}, where={idx2.where_clause}"
+            )
+            self.logger.debug("  After normalization:")
+            self.logger.debug(
+                f"    Desired: columns={norm1.columns}, unique={norm1.unique}, where={norm1.where_clause}"
+            )
+            self.logger.debug(
+                f"    Current: columns={norm2.columns}, unique={norm2.unique}, where={norm2.where_clause}"
+            )
+
+        differences = []
+        if norm1.columns != norm2.columns:
+            differences.append(f"columns: {norm1.columns} != {norm2.columns}")
+        if norm1.unique != norm2.unique:
+            differences.append(f"unique: {norm1.unique} != {norm2.unique}")
+        if norm1.index_type != norm2.index_type:
+            differences.append(f"index_type: {norm1.index_type} != {norm2.index_type}")
+        if norm1.where_clause != norm2.where_clause:
+            differences.append(f"where_clause: {norm1.where_clause} != {norm2.where_clause}")
+
+        if differences and self.verbose and self.logger:
+            self.logger.debug(f"  Index '{idx1.name}' differences found:")
+            for diff in differences:
+                self.logger.debug(f"    - {diff}")
+
         # WHERE clause comparison: Both None (full index) or both normalized strings (partial index)
         # Empty strings are normalized to None to avoid false positives (None != "")
-        return (
-            norm1.columns == norm2.columns
-            and norm1.unique == norm2.unique
-            and norm1.index_type == norm2.index_type
-            and norm1.where_clause == norm2.where_clause  # None == None for full indexes
-        )
+        return len(differences) == 0
 
     def compute_changes(
         self, desired: TableDefinition, current: Optional[TableDefinition]
@@ -370,7 +432,13 @@ class SchemaDifferBase:
                     description=f"Create table {desired.schema}.{desired.name}",
                 )
             )
-            return changes
+            # Don't return early - continue to process indexes!
+            # Create empty current table definition to allow index comparison
+            from .models import TableDefinition
+
+            current = TableDefinition(
+                name=desired.name, schema=desired.schema, columns=[], indexes=[]
+            )
 
         # Compare columns
         current_cols = {col.name: col for col in current.columns}

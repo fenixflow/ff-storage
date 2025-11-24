@@ -64,7 +64,7 @@ class AuditedProduct(PydanticModel):
 def db(ensure_test_database):
     """Create synchronous database connection."""
     connection = Postgres(
-        dbname="test_temporal", user="postgres", password="postgres", host="localhost", port=5438
+        dbname="test_temporal", user="postgres", password="postgres", host="localhost", port=5436
     )
     connection.connect()
     yield connection
@@ -75,7 +75,7 @@ def db(ensure_test_database):
 async def db_pool(ensure_test_database):
     """Create async database pool."""
     pool = PostgresPool(
-        dbname="test_temporal", user="postgres", password="postgres", host="localhost", port=5438
+        dbname="test_temporal", user="postgres", password="postgres", host="localhost", port=5436
     )
     await pool.connect()
     yield pool

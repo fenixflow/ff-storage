@@ -442,9 +442,12 @@ class SchemaManager:
 
         # Dry run?
         if dry_run:
-            self.logger.info("DRY RUN - Changes that would be applied:")
-            for change in changes_to_apply:
-                self.logger.info(f"  {change.description}", extra={"sql": change.sql})
+            if not changes_to_apply:
+                self.logger.info("DRY RUN - No schema changes needed")
+            else:
+                self.logger.info("DRY RUN - Changes that would be applied:")
+                for change in changes_to_apply:
+                    self.logger.info(f"  {change.description}", extra={"sql": change.sql})
             return 0
 
         # Apply changes in transaction

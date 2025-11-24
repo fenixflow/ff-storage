@@ -63,7 +63,7 @@ async def db_pool(ensure_test_database):
 
     pool = await asyncpg.create_pool(
         host="localhost",
-        port=5438,
+        port=5436,
         database="test_temporal",
         user="postgres",
         password="postgres",

@@ -68,7 +68,7 @@ async def db_pool(ensure_test_database):
     # Connect to test database
     pool = await asyncpg.create_pool(
         host="localhost",
-        port=5438,
+        port=5436,
         database="test_temporal",
         user="postgres",
         password="postgres",
@@ -735,6 +735,156 @@ class TestCrossCuttingFeatures:
         single_repo = PydanticRepository(ProductNone, db_pool, tenant_id=tenant3)
         isolated_count = await single_repo.count()
         assert isolated_count == 2  # Only tenant3's products
+
+
+class TestTemporalTableIndexBug:
+    """Test that schema sync works correctly with temporal tables."""
+
+    @pytest.mark.asyncio
+    async def test_schema_sync_temporal_tables(self, ensure_test_database):
+        """Test that schema sync can run multiple times on temporal tables without errors.
+
+        This tests the fix for the primary key index bug where schema sync tried to
+        DROP INDEX on constraint-backed indexes instead of using DROP CONSTRAINT.
+        """
+        from ff_storage.db import Postgres, SchemaManager
+        from ff_storage.db.schema_sync.postgres import PostgresSchemaIntrospector
+        from ff_storage.pydantic_support.introspector import PydanticSchemaIntrospector
+
+        # Create database connection
+        db = Postgres(
+            host="localhost",
+            port=5436,
+            dbname="test_temporal",
+            user="postgres",
+            password="postgres",
+        )
+        db.connect()
+
+        try:
+            # Clean up any existing tables
+            db.execute("DROP TABLE IF EXISTS test_temporal_coc CASCADE")
+            db.execute("DROP TABLE IF EXISTS test_temporal_coc_audit CASCADE")
+
+            # Create a temporal model with copy_on_change strategy
+            class TemporalModel(PydanticModel):
+                __table_name__ = "test_temporal_coc"
+                __temporal_strategy__ = "copy_on_change"
+                __soft_delete__ = True
+                __multi_tenant__ = True
+
+                name: str = Field(max_length=255)
+                description: str = Field(default="")
+                amount: Decimal = Field(decimal_places=2)
+
+            # First run: Create tables from scratch
+            schema_manager = SchemaManager(db)
+
+            # Create main table and audit table
+            create_sql = TemporalModel.get_create_table_sql()
+            db.execute(create_sql)
+
+            # Create auxiliary tables (audit table)
+            for sql in TemporalModel.get_auxiliary_tables_sql():
+                db.execute(sql)
+
+            # Run schema sync first time - should detect no changes
+            pydantic_introspector = PydanticSchemaIntrospector()
+            postgres_introspector = PostgresSchemaIntrospector(db)
+
+            # Get desired schema from Pydantic model
+            desired_table = pydantic_introspector.extract_table_definition(TemporalModel)
+            desired_tables = {desired_table.name: desired_table}
+
+            # Get current schema from database (includes audit table)
+            current_tables = postgres_introspector.get_tables(schema="public")
+
+            # Second run: Schema sync should work without errors
+            # This would previously fail with "cannot drop index" error on audit table's pkey
+            changes = schema_manager.compare_schemas(
+                desired_schema={"public": desired_tables}, current_schema={"public": current_tables}
+            )
+
+            # Apply changes (should be none or only safe changes)
+            if changes:
+                for change in changes:
+                    # Verify no DROP_INDEX changes for constraint-backed indexes
+                    if change.change_type.name == "DROP_INDEX":
+                        # Check if this is trying to drop a primary key index
+                        if "_pkey" in str(change.details.get("index", {}).get("name", "")):
+                            pytest.fail(
+                                f"Schema sync trying to drop primary key index: {change.details}"
+                            )
+
+            # Third run: Run schema sync again to ensure idempotent
+            current_tables = postgres_introspector.get_tables(schema="public")
+            changes = schema_manager.compare_schemas(
+                desired_schema={"public": desired_tables}, current_schema={"public": current_tables}
+            )
+
+            # Should have no changes or only safe additive changes
+            destructive_changes = [
+                c
+                for c in changes
+                if c.change_type.name in ["DROP_INDEX", "DROP_COLUMN", "DROP_TABLE"]
+            ]
+            assert (
+                len(destructive_changes) == 0
+            ), f"Unexpected destructive changes: {destructive_changes}"
+
+        finally:
+            # Clean up
+            db.execute("DROP TABLE IF EXISTS test_temporal_coc CASCADE")
+            db.execute("DROP TABLE IF EXISTS test_temporal_coc_audit CASCADE")
+            db.close_connection()
+
+    @pytest.mark.asyncio
+    async def test_primary_key_constraint_not_dropped(self, ensure_test_database):
+        """Ensure that primary key constraints are never included in drop operations."""
+        from ff_storage.db import Postgres
+        from ff_storage.db.schema_sync.postgres import PostgresSchemaIntrospector
+
+        db = Postgres(
+            host="localhost",
+            port=5436,
+            dbname="test_temporal",
+            user="postgres",
+            password="postgres",
+        )
+        db.connect()
+
+        try:
+            # Create a test table with primary key
+            db.execute("DROP TABLE IF EXISTS test_pkey_table CASCADE")
+            db.execute("""
+                CREATE TABLE test_pkey_table (
+                    id UUID PRIMARY KEY,
+                    name TEXT,
+                    created_at TIMESTAMP WITH TIME ZONE
+                )
+            """)
+
+            # Add a regular index
+            db.execute("CREATE INDEX idx_test_pkey_name ON test_pkey_table(name)")
+
+            # Introspect indexes
+            introspector = PostgresSchemaIntrospector(db)
+            indexes = introspector.get_indexes("test_pkey_table", "public")
+
+            # Verify primary key index is NOT returned
+            index_names = [idx.name for idx in indexes]
+            assert (
+                "test_pkey_table_pkey" not in index_names
+            ), "Primary key index should not be included in introspection"
+
+            # Verify regular index IS returned
+            assert (
+                "idx_test_pkey_name" in index_names
+            ), "Regular index should be included in introspection"
+
+        finally:
+            db.execute("DROP TABLE IF EXISTS test_pkey_table CASCADE")
+            db.close_connection()
 
 
 if __name__ == "__main__":

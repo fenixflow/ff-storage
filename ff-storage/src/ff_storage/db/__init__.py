@@ -22,14 +22,6 @@ from .connections import (
     SQLServerBase,
     SQLServerPool,
 )
-from .models import (
-    AuditModel,
-    BaseModel,
-    FullFeaturedModel,
-    MetadataModel,
-    SoftDeleteModel,
-    VersionedModel,
-)
 from .schema_sync import SchemaManager
 from .sql import SQL
 
@@ -49,11 +41,4 @@ __all__ = [
     "SQLServerBase",
     # Schema Sync (replaces MigrationManager in v2.0.0)
     "SchemaManager",
-    # Base Models
-    "BaseModel",
-    "SoftDeleteModel",
-    "VersionedModel",
-    "AuditModel",
-    "MetadataModel",
-    "FullFeaturedModel",
 ]

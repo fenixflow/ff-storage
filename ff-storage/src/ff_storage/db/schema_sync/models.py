@@ -21,9 +21,12 @@ class ColumnType(Enum):
     BOOLEAN = "boolean"
     TIMESTAMP = "timestamp"
     TIMESTAMPTZ = "timestamptz"
+    TIME = "time"
+    INTERVAL = "interval"
     JSONB = "jsonb"
     ARRAY = "array"
     DECIMAL = "decimal"
+    BINARY = "binary"
 
 
 class ChangeType(Enum):

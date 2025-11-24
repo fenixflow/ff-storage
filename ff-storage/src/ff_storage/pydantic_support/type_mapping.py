@@ -8,7 +8,7 @@ Handles:
 - Custom type overrides via field metadata
 """
 
-from datetime import date, datetime
+from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 from typing import get_args, get_origin
 from uuid import UUID
@@ -119,6 +119,15 @@ def map_pydantic_type_to_column_type(
     elif python_type == date or python_type is date:
         return ColumnType.TIMESTAMP, "DATE"
 
+    elif python_type == time or python_type is time:
+        return ColumnType.TIME, "TIME"
+
+    elif python_type == timedelta or python_type is timedelta:
+        return ColumnType.INTERVAL, "INTERVAL"
+
+    elif python_type is bytes:
+        return ColumnType.BINARY, "BYTEA"
+
     elif python_type == Decimal or python_type is Decimal:
         # Prefer explicit db_* overrides, fallback to Pydantic's constraints
         precision = metadata.get("db_precision") or getattr(field_info, "max_digits", None) or 15
@@ -126,15 +135,56 @@ def map_pydantic_type_to_column_type(
         return ColumnType.DECIMAL, f"NUMERIC({precision},{scale})"
 
     # Complex types (list, dict, nested models)
-    elif origin is list:
-        # ALL lists → JSONB for consistency and portability
-        # - Consistent with dict → JSONB and list[Pydantic] → JSONB
-        # - Portable across PostgreSQL, MySQL, SQL Server
-        # - No need for custom serializers on list[str], list[int], etc.
-        # - Users wanting PostgreSQL native arrays can use json_schema_extra={"db_type": "TEXT[]"}
+    elif origin is list or python_type is list:
+        # Enhanced list handling with native PostgreSQL arrays for simple types
+        args = get_args(python_type)
+        if args:
+            element_type = args[0]
+
+            # Use native PostgreSQL arrays for simple types
+            if element_type == UUID or element_type is UUID:
+                return ColumnType.ARRAY, "UUID[]"
+            elif element_type is str:
+                return ColumnType.ARRAY, "TEXT[]"
+            elif element_type is int:
+                return ColumnType.ARRAY, "INTEGER[]"
+            elif element_type is float:
+                return ColumnType.ARRAY, "DOUBLE PRECISION[]"
+            elif element_type is bool:
+                return ColumnType.ARRAY, "BOOLEAN[]"
+
+            # Complex types (nested models, dicts, etc.) still use JSONB
+            # This provides better compatibility and easier serialization
+
+        # Fallback to JSONB for untyped lists or complex element types
         return ColumnType.JSONB, "JSONB"
 
-    elif origin is dict:
+    elif origin is set or python_type is set:
+        # Enhanced set handling with native PostgreSQL arrays for simple types
+        args = get_args(python_type)
+        if args:
+            element_type = args[0]
+
+            # Use native PostgreSQL arrays for simple types
+            if element_type == UUID or element_type is UUID:
+                return ColumnType.ARRAY, "UUID[]"
+            elif element_type is str:
+                return ColumnType.ARRAY, "TEXT[]"
+            elif element_type is int:
+                return ColumnType.ARRAY, "INTEGER[]"
+            elif element_type is float:
+                return ColumnType.ARRAY, "DOUBLE PRECISION[]"
+            elif element_type is bool:
+                return ColumnType.ARRAY, "BOOLEAN[]"
+
+        # Fallback to JSONB for untyped sets or complex element types
+        return ColumnType.JSONB, "JSONB"
+
+    elif origin is tuple or python_type is tuple:
+        # Tuple → JSONB (ordered collections with potentially mixed types)
+        return ColumnType.JSONB, "JSONB"
+
+    elif origin is dict or python_type is dict:
         # Dict → JSONB
         return ColumnType.JSONB, "JSONB"
 
@@ -158,7 +208,10 @@ def _parse_custom_type(custom_type_str: str) -> ColumnType:
     """
     type_upper = custom_type_str.upper()
 
-    if "UUID" in type_upper:
+    # Check for array types first (before checking base types)
+    if "[]" in type_upper or "ARRAY" in type_upper:
+        return ColumnType.ARRAY
+    elif "UUID" in type_upper:
         return ColumnType.UUID
     elif "VARCHAR" in type_upper or "CHARACTER" in type_upper:
         return ColumnType.STRING
@@ -170,13 +223,17 @@ def _parse_custom_type(custom_type_str: str) -> ColumnType:
         return ColumnType.BOOLEAN
     elif "TIMESTAMP" in type_upper:
         return ColumnType.TIMESTAMPTZ if "TIME ZONE" in type_upper else ColumnType.TIMESTAMP
+    elif "TIME" in type_upper and "TIMESTAMP" not in type_upper:
+        return ColumnType.TIME
+    elif "INTERVAL" in type_upper:
+        return ColumnType.INTERVAL
+    elif "BYTEA" in type_upper or "BINARY" in type_upper:
+        return ColumnType.BINARY
     elif "JSONB" in type_upper:
         return ColumnType.JSONB
     elif "JSON" in type_upper:
         return ColumnType.JSONB
     elif "DECIMAL" in type_upper or "NUMERIC" in type_upper:
         return ColumnType.DECIMAL
-    elif "[]" in type_upper or "ARRAY" in type_upper:
-        return ColumnType.ARRAY
     else:
         return ColumnType.STRING  # Fallback

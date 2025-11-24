@@ -70,6 +70,7 @@ class SchemaNormalizer:
         Normalize default values for consistent comparison.
 
         Normalization rules:
+            - PostgreSQL type casts: 'value'::type → 'value'
             - Boolean values: 'true'/'t'/'1' → 'TRUE', 'false'/'f'/'0' → 'FALSE'
             - NULL values: 'NULL'/'null'/'' → None
             - Whitespace: Strip leading/trailing, preserve internal
@@ -87,6 +88,13 @@ class SchemaNormalizer:
 
         # Strip whitespace
         default = default.strip()
+
+        # Strip PostgreSQL type casts: 'value'::type → 'value'
+        # PostgreSQL returns defaults with type casts like 'active'::character varying
+        # We need to strip these before comparison to avoid false drift warnings
+        if "::" in default:
+            # Split on :: and take the first part
+            default = default.split("::")[0].strip()
 
         # Empty string → None
         if not default:

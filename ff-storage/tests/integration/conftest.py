@@ -36,7 +36,7 @@ def ensure_test_database():
         user="postgres",
         password="postgres",
         host="localhost",
-        port=5438,
+        port=5436,
     )
     conn.autocommit = True
 
@@ -83,7 +83,7 @@ def setup_integration_schema(ensure_test_database):
         user="postgres",
         password="postgres",
         host="localhost",
-        port=5438,
+        port=5436,
     )
 
     try:
