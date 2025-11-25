@@ -27,7 +27,12 @@ class PostgresSchemaIntrospector(SchemaIntrospectorBase):
             AND table_type = 'BASE TABLE'
             ORDER BY table_name
         """
-        results = self.db.read_query(query, (schema,), as_dict=False)
+        results = self.db.read_query(
+            query,
+            (schema,),
+            as_dict=False,
+            context={"trusted_source": True, "source": "PostgresSchemaIntrospector.get_tables"},
+        )
         return [row[0] for row in results] if results else []
 
     def get_columns(self, table_name: str, schema: str) -> List[ColumnDefinition]:
@@ -47,7 +52,12 @@ class PostgresSchemaIntrospector(SchemaIntrospectorBase):
             AND table_name = %s
             ORDER BY ordinal_position
         """
-        results = self.db.read_query(query, (schema, table_name), as_dict=False)
+        results = self.db.read_query(
+            query,
+            (schema, table_name),
+            as_dict=False,
+            context={"trusted_source": True, "source": "PostgresSchemaIntrospector.get_columns"},
+        )
 
         columns = []
         for row in results:
@@ -150,7 +160,12 @@ class PostgresSchemaIntrospector(SchemaIntrospectorBase):
             GROUP BY i.relname, ix.indisunique, am.amname, ix.indpred, ix.indrelid
             ORDER BY i.relname
         """
-        results = self.db.read_query(query, (schema, table_name), as_dict=False)
+        results = self.db.read_query(
+            query,
+            (schema, table_name),
+            as_dict=False,
+            context={"trusted_source": True, "source": "PostgresSchemaIntrospector.get_indexes"},
+        )
 
         indexes = []
         for row in results:
@@ -177,7 +192,12 @@ class PostgresSchemaIntrospector(SchemaIntrospectorBase):
                 AND table_name = %s
             )
         """
-        result = self.db.read_query(query, (schema, table_name), as_dict=False)
+        result = self.db.read_query(
+            query,
+            (schema, table_name),
+            as_dict=False,
+            context={"trusted_source": True, "source": "PostgresSchemaIntrospector.table_exists"},
+        )
         return result[0][0] if result else False
 
     def _map_postgres_type(self, data_type: str, udt_name: str) -> ColumnType:

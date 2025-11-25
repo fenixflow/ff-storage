@@ -65,7 +65,11 @@ class PostgresBase(SQL):
         )
 
     def read_query(
-        self, query: str, params: Optional[Dict[str, Any]] = None, as_dict: bool = True
+        self,
+        query: str,
+        params: Optional[Dict[str, Any]] = None,
+        as_dict: bool = True,
+        context: Optional[Dict[str, Any]] = None,
     ) -> List[Any]:
         """
         Execute a read-only SQL query and fetch all rows with enhanced monitoring.
@@ -73,6 +77,7 @@ class PostgresBase(SQL):
         :param query: The SELECT SQL query.
         :param params: Optional dictionary of query parameters.
         :param as_dict: If True, return list of dicts. If False, return list of tuples.
+        :param context: Optional context for validation (e.g., trusted_source=True).
         :return: A list of dicts (default) or tuples representing the query results.
         :raises ConnectionFailure: If connection fails.
         :raises QueryTimeout: If query exceeds timeout.
@@ -80,7 +85,7 @@ class PostgresBase(SQL):
         # Validate query if enabled
         if self.validate_queries:
             try:
-                validate_query(query, params)
+                validate_query(query, params, context)
             except Exception as e:
                 self.logger.warning(f"Query validation failed: {e}")
 
@@ -232,7 +237,11 @@ class PostgresBase(SQL):
                 AND table_name = %(table)s
             )
         """
-        result = self.read_query(query, {"schema": schema, "table": table_name})
+        result = self.read_query(
+            query,
+            {"schema": schema, "table": table_name},
+            context={"trusted_source": True, "source": "PostgresBase.table_exists"},
+        )
         return result[0][0] if result else False
 
     def get_table_columns(
@@ -258,7 +267,11 @@ class PostgresBase(SQL):
             AND table_name = %(table)s
             ORDER BY ordinal_position
         """
-        results = self.read_query(query, {"schema": schema, "table": table_name})
+        results = self.read_query(
+            query,
+            {"schema": schema, "table": table_name},
+            context={"trusted_source": True, "source": "PostgresBase.get_table_columns"},
+        )
 
         return [
             {
@@ -578,13 +591,20 @@ class PostgresPool:
             self.logger.info("Closed asyncpg connection pool")
 
     @retry_async(max_attempts=2, delay=exponential_backoff(base_delay=0.5), exceptions=(Exception,))
-    async def fetch_one(self, query: str, *args, as_dict: bool = True):
+    async def fetch_one(
+        self,
+        query: str,
+        *args,
+        as_dict: bool = True,
+        context: Optional[Dict[str, Any]] = None,
+    ):
         """
         Fetch single row with monitoring and retry logic.
 
         :param query: SQL query (use $1, $2 for parameters).
         :param args: Query parameters.
         :param as_dict: If True, return dict. If False, return tuple.
+        :param context: Optional context for validation (e.g., trusted_source=True).
         :return: Single row as dict (default) or tuple, or None if no results.
         :raises ConnectionPoolExhausted: If pool has no available connections.
         :raises QueryTimeout: If query exceeds timeout.
@@ -595,7 +615,7 @@ class PostgresPool:
         # Validate query if enabled
         if self.validate_queries:
             try:
-                validate_query(query, args)
+                validate_query(query, args, context)
             except Exception as e:
                 self.logger.warning(f"Query validation failed: {e}")
 
@@ -643,13 +663,20 @@ class PostgresPool:
                 )
 
     @retry_async(max_attempts=2, delay=exponential_backoff(base_delay=0.5), exceptions=(Exception,))
-    async def fetch_all(self, query: str, *args, as_dict: bool = True):
+    async def fetch_all(
+        self,
+        query: str,
+        *args,
+        as_dict: bool = True,
+        context: Optional[Dict[str, Any]] = None,
+    ):
         """
         Fetch all rows with monitoring and retry logic.
 
         :param query: SQL query (use $1, $2 for parameters).
         :param args: Query parameters.
         :param as_dict: If True, return list of dicts. If False, return list of tuples.
+        :param context: Optional context for validation (e.g., trusted_source=True).
         :return: List of dicts (default) or tuples.
         :raises ConnectionPoolExhausted: If pool has no available connections.
         :raises QueryTimeout: If query exceeds timeout.
@@ -660,7 +687,7 @@ class PostgresPool:
         # Validate query if enabled
         if self.validate_queries:
             try:
-                validate_query(query, args)
+                validate_query(query, args, context)
             except Exception as e:
                 self.logger.warning(f"Query validation failed: {e}")
 

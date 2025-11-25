@@ -220,7 +220,11 @@ class SchemaManager:
                 if self.provider == "postgres":
                     # Use PostgreSQL's format() function for safe identifier quoting
                     sql = f"SELECT format('CREATE SCHEMA IF NOT EXISTS %I', '{schema}')"
-                    result = self.db.read_query(sql, as_dict=False)
+                    result = self.db.read_query(
+                        sql,
+                        as_dict=False,
+                        context={"trusted_source": True, "source": "SchemaManager.ensure_schemas"},
+                    )
                     safe_sql = result[0][0] if result else None
                     if safe_sql:
                         self.db.execute(
