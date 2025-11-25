@@ -142,6 +142,7 @@ class SCD2Strategy(TemporalStrategy[T]):
         adapter,
         tenant_id: Optional[UUID] = None,
         user_id: Optional[UUID] = None,
+        connection=None,
     ) -> T:
         """
         Create first version.
@@ -154,6 +155,11 @@ class SCD2Strategy(TemporalStrategy[T]):
         - version = 1
         - valid_from = NOW(), valid_to = NULL
         - deleted_at, deleted_by = NULL
+
+        Args:
+            connection: Optional database connection for transaction support.
+                       If provided, uses this connection instead of acquiring
+                       from pool. Enables external transaction management.
         """
         # Ensure ID
         if "id" not in data:
@@ -187,9 +193,12 @@ class SCD2Strategy(TemporalStrategy[T]):
         serialized_data = self._serialize_jsonb_fields(data)
         query, values = self.query_builder.build_insert(table_name, serialized_data)
 
-        # Execute
-        async with db_pool.acquire() as conn:
-            row = await conn.fetchrow(query, *values)
+        # Execute - use provided connection or acquire from pool
+        if connection is not None:
+            row = await connection.fetchrow(query, *values)
+        else:
+            async with db_pool.acquire() as conn:
+                row = await conn.fetchrow(query, *values)
 
         return self._row_to_model(row)
 
@@ -201,6 +210,7 @@ class SCD2Strategy(TemporalStrategy[T]):
         adapter,
         tenant_id: Optional[UUID] = None,
         user_id: Optional[UUID] = None,
+        connection=None,
     ) -> T:
         """
         Create new version (immutable update).
@@ -211,6 +221,13 @@ class SCD2Strategy(TemporalStrategy[T]):
         3. INSERT: Create new version (version + 1, valid_from = NOW())
 
         Transaction ensures atomicity.
+
+        Args:
+            connection: Optional database connection for transaction support.
+                       If provided, uses this connection instead of acquiring
+                       from pool. Enables external transaction management.
+                       NOTE: When connection is provided, caller is responsible
+                       for transaction management.
         """
         table_name = self._get_table_name()
         quoted_table = self.query_builder.quote_identifier(table_name)
@@ -231,75 +248,84 @@ class SCD2Strategy(TemporalStrategy[T]):
             where_parts.append(f"{tenant_field_quoted} = ${len(where_values) + 1}")
             where_values.append(tenant_id)
 
-        async with db_pool.acquire() as conn:
-            async with conn.transaction():
-                # 1. Get current version
-                select_query = f"""
-                    SELECT * FROM {quoted_table}
-                    WHERE {" AND ".join(where_parts)}
-                """
-                current_row = await conn.fetchrow(select_query, *where_values)
+        async def _do_update(conn) -> T:
+            """Execute update operations on the given connection."""
+            # 1. Get current version
+            select_query = f"""
+                SELECT * FROM {quoted_table}
+                WHERE {" AND ".join(where_parts)}
+            """
+            current_row = await conn.fetchrow(select_query, *where_values)
 
-                if not current_row:
-                    raise ValueError(f"Record not found or already updated: {id}")
+            if not current_row:
+                raise ValueError(f"Record not found or already updated: {id}")
 
-                current_data = dict(current_row)
-                current_version = current_data["version"]
+            current_data = dict(current_row)
+            current_version = current_data["version"]
 
-                # 2. Check if data actually changed (prevent no-op updates)
-                # Get base metadata fields and add SCD2-specific temporal fields
-                metadata_fields = self._get_metadata_fields()
-                metadata_fields.update({"version", "valid_from", "valid_to"})
+            # 2. Check if data actually changed (prevent no-op updates)
+            # Get base metadata fields and add SCD2-specific temporal fields
+            metadata_fields = self._get_metadata_fields()
+            metadata_fields.update({"version", "valid_from", "valid_to"})
 
-                # Compare only user-defined fields
-                has_changes = False
-                for key, new_value in data.items():
-                    if key not in metadata_fields:
-                        old_value = current_data.get(key)
-                        if old_value != new_value:
-                            has_changes = True
-                            break
+            # Compare only user-defined fields
+            has_changes = False
+            for key, new_value in data.items():
+                if key not in metadata_fields:
+                    old_value = current_data.get(key)
+                    if old_value != new_value:
+                        has_changes = True
+                        break
 
-                # If no changes, return current version without creating a new one
-                if not has_changes:
-                    return self._row_to_model(current_row)
+            # If no changes, return current version without creating a new one
+            if not has_changes:
+                return self._row_to_model(current_row)
 
-                # 3. Close current version
-                valid_to_quoted = self.query_builder.quote_identifier("valid_to")
-                close_query = f"""
-                    UPDATE {quoted_table}
-                    SET {valid_to_quoted} = ${len(where_values) + 1}
-                    WHERE {" AND ".join(where_parts)}
-                """
-                await conn.execute(close_query, *where_values, now)
+            # 3. Close current version
+            valid_to_quoted = self.query_builder.quote_identifier("valid_to")
+            close_query = f"""
+                UPDATE {quoted_table}
+                SET {valid_to_quoted} = ${len(where_values) + 1}
+                WHERE {" AND ".join(where_parts)}
+            """
+            await conn.execute(close_query, *where_values, now)
 
-                # 4. Build new version
-                new_data = current_data.copy()
+            # 4. Build new version
+            new_data = current_data.copy()
 
-                # Only update with user-defined fields, preserving metadata/temporal fields
-                # This prevents tenant_id, created_at, etc. from being overwritten with None
-                for key, value in data.items():
-                    if key not in metadata_fields:
-                        new_data[key] = value
+            # Only update with user-defined fields, preserving metadata/temporal fields
+            # This prevents tenant_id, created_at, etc. from being overwritten with None
+            for key, value in data.items():
+                if key not in metadata_fields:
+                    new_data[key] = value
 
-                # Update version fields
-                new_data["version"] = current_version + 1
-                new_data["valid_from"] = now
-                new_data["valid_to"] = None
-                new_data["updated_at"] = now
+            # Update version fields
+            new_data["version"] = current_version + 1
+            new_data["valid_from"] = now
+            new_data["valid_to"] = None
+            new_data["updated_at"] = now
 
-                # Track who made the update (audit trail)
-                if user_id:
-                    new_data["updated_by"] = user_id
+            # Track who made the update (audit trail)
+            if user_id:
+                new_data["updated_by"] = user_id
 
-                # Insert new version using QueryBuilder
-                serialized_data = self._serialize_jsonb_fields(new_data)
-                insert_query, insert_values = self.query_builder.build_insert(
-                    table_name, serialized_data
-                )
-                row = await conn.fetchrow(insert_query, *insert_values)
+            # Insert new version using QueryBuilder
+            serialized_data = self._serialize_jsonb_fields(new_data)
+            insert_query, insert_values = self.query_builder.build_insert(
+                table_name, serialized_data
+            )
+            row = await conn.fetchrow(insert_query, *insert_values)
+            return self._row_to_model(row)
 
-        return self._row_to_model(row)
+        # Execute - use provided connection or acquire from pool with transaction
+        if connection is not None:
+            # External connection - caller manages transaction
+            return await _do_update(connection)
+        else:
+            # Acquire connection and manage our own transaction
+            async with db_pool.acquire() as conn:
+                async with conn.transaction():
+                    return await _do_update(conn)
 
     async def delete(
         self,
@@ -308,6 +334,7 @@ class SCD2Strategy(TemporalStrategy[T]):
         adapter,
         tenant_id: Optional[UUID] = None,
         user_id: Optional[UUID] = None,
+        connection=None,
     ) -> bool:
         """
         Soft delete by creating new version with deleted_at set.
@@ -319,6 +346,13 @@ class SCD2Strategy(TemporalStrategy[T]):
         1. SELECT current version (valid_to IS NULL, deleted_at IS NULL)
         2. UPDATE: Close current version (set valid_to = NOW())
         3. INSERT: New version with deleted_at = NOW(), version++
+
+        Args:
+            connection: Optional database connection for transaction support.
+                       If provided, uses this connection instead of acquiring
+                       from pool. Enables external transaction management.
+                       NOTE: When connection is provided, caller is responsible
+                       for transaction management.
 
         Returns:
             True if deleted, False if not found or already deleted
@@ -342,49 +376,58 @@ class SCD2Strategy(TemporalStrategy[T]):
             where_parts.append(f"{tenant_field_quoted} = ${len(where_values) + 1}")
             where_values.append(tenant_id)
 
-        async with db_pool.acquire() as conn:
-            async with conn.transaction():
-                # 1. Get current version
-                select_query = f"""
-                    SELECT * FROM {quoted_table}
-                    WHERE {" AND ".join(where_parts)}
-                """
-                current_row = await conn.fetchrow(select_query, *where_values)
+        async def _do_delete(conn) -> bool:
+            """Execute delete operations on the given connection."""
+            # 1. Get current version
+            select_query = f"""
+                SELECT * FROM {quoted_table}
+                WHERE {" AND ".join(where_parts)}
+            """
+            current_row = await conn.fetchrow(select_query, *where_values)
 
-                if not current_row:
-                    return False  # Not found or already deleted
+            if not current_row:
+                return False  # Not found or already deleted
 
-                current_data = dict(current_row)
-                current_version = current_data["version"]
+            current_data = dict(current_row)
+            current_version = current_data["version"]
 
-                # 2. Close current version
-                valid_to_quoted = self.query_builder.quote_identifier("valid_to")
-                close_query = f"""
-                    UPDATE {quoted_table}
-                    SET {valid_to_quoted} = ${len(where_values) + 1}
-                    WHERE {" AND ".join(where_parts)}
-                """
-                await conn.execute(close_query, *where_values, now)
+            # 2. Close current version
+            valid_to_quoted = self.query_builder.quote_identifier("valid_to")
+            close_query = f"""
+                UPDATE {quoted_table}
+                SET {valid_to_quoted} = ${len(where_values) + 1}
+                WHERE {" AND ".join(where_parts)}
+            """
+            await conn.execute(close_query, *where_values, now)
 
-                # 3. Create new deleted version
-                new_data = current_data.copy()
-                new_data["version"] = current_version + 1
-                new_data["valid_from"] = now
-                new_data["valid_to"] = None
-                new_data["deleted_at"] = now  # MARK AS DELETED
-                new_data["deleted_by"] = user_id
-                new_data["updated_at"] = now
+            # 3. Create new deleted version
+            new_data = current_data.copy()
+            new_data["version"] = current_version + 1
+            new_data["valid_from"] = now
+            new_data["valid_to"] = None
+            new_data["deleted_at"] = now  # MARK AS DELETED
+            new_data["deleted_by"] = user_id
+            new_data["updated_at"] = now
 
-                # INSERT new version using QueryBuilder (without RETURNING)
-                serialized_data = self._serialize_jsonb_fields(new_data)
-                insert_query, insert_values = self.query_builder.build_insert(
-                    table_name, serialized_data
-                )
-                # Remove RETURNING * since we don't need the row back
-                insert_query = insert_query.replace(" RETURNING *", "")
-                await conn.execute(insert_query, *insert_values)
+            # INSERT new version using QueryBuilder (without RETURNING)
+            serialized_data = self._serialize_jsonb_fields(new_data)
+            insert_query, insert_values = self.query_builder.build_insert(
+                table_name, serialized_data
+            )
+            # Remove RETURNING * since we don't need the row back
+            insert_query = insert_query.replace(" RETURNING *", "")
+            await conn.execute(insert_query, *insert_values)
+            return True
 
-        return True
+        # Execute - use provided connection or acquire from pool with transaction
+        if connection is not None:
+            # External connection - caller manages transaction
+            return await _do_delete(connection)
+        else:
+            # Acquire connection and manage our own transaction
+            async with db_pool.acquire() as conn:
+                async with conn.transaction():
+                    return await _do_delete(conn)
 
     async def transfer_ownership(
         self,

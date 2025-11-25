@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.2.0] - 2025-11-25
+
+### Added
+
+- **[CONNECTION INJECTION]** Added `connection` parameter to CRUD methods for external transaction management
+  - All temporal strategies (`SCD2Strategy`, `CopyOnChangeStrategy`, `NoneStrategy`) now accept optional `connection` parameter
+  - `TemporalRepository.create()`, `.update()`, `.delete()` now pass through `connection` parameter
+  - When `connection` is provided, operations use that connection instead of acquiring from pool
+  - Enables atomic multi-repository operations within a single transaction
+  - Backward compatible: `connection=None` (default) maintains existing pool acquisition behavior
+
+### Changed
+
+- **[STRATEGIES]** Refactored update/delete methods to use helper function pattern
+  - Extracted core logic into `_do_update()` and `_do_delete()` helper functions
+  - Helper functions accept a connection parameter for reuse
+  - Improves code organization and enables connection injection
+
+## [4.1.1] - 2025-11-25
+
+### Fixed
+
+- **[REPOSITORY]** Fixed `_model_to_dict()` to correctly handle CREATE vs UPDATE semantics
+  - CREATE operations now include all fields (including `default_factory` values)
+  - UPDATE operations only include explicitly set fields (prevents overwriting managed fields)
+  - Fixes NOT NULL constraint violations when creating records with `default_factory` fields
+  - Added `exclude_unset` parameter to `_model_to_dict()` (default `False` for backward compatibility)
+
 ## [4.1.0] - 2025-11-24
 
 ### Breaking Changes

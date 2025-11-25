@@ -180,6 +180,7 @@ class CopyOnChangeStrategy(TemporalStrategy[T]):
         adapter,
         tenant_id: Optional[UUID] = None,
         user_id: Optional[UUID] = None,
+        connection=None,
     ) -> T:
         """
         Create record with INSERT audit entries.
@@ -245,16 +246,26 @@ class CopyOnChangeStrategy(TemporalStrategy[T]):
                 entry["tenant_id"] = tenant_id
             audit_entries.append(entry)
 
-        # Execute in transaction
-        async with db_pool.acquire() as conn:
-            async with conn.transaction():
-                # Insert main record
-                row = await conn.fetchrow(main_insert, *insert_values)
+        # Define create operations
+        async def _do_create(conn) -> T:
+            """Execute create operations on the given connection."""
+            # Insert main record
+            row = await conn.fetchrow(main_insert, *insert_values)
 
-                # Insert audit entries
-                await self._insert_audit_entries(conn, audit_table_name, audit_entries)
+            # Insert audit entries
+            await self._insert_audit_entries(conn, audit_table_name, audit_entries)
 
-        return self._row_to_model(row)
+            return self._row_to_model(row)
+
+        # Execute - use provided connection or acquire from pool with transaction
+        if connection is not None:
+            # External connection - caller manages transaction
+            return await _do_create(connection)
+        else:
+            # Acquire connection and manage our own transaction
+            async with db_pool.acquire() as conn:
+                async with conn.transaction():
+                    return await _do_create(conn)
 
     async def update(
         self,
@@ -264,6 +275,7 @@ class CopyOnChangeStrategy(TemporalStrategy[T]):
         adapter,
         tenant_id: Optional[UUID] = None,
         user_id: Optional[UUID] = None,
+        connection=None,
     ) -> T:
         """
         Update record with field-level audit entries and row-level locking.
@@ -312,83 +324,93 @@ class CopyOnChangeStrategy(TemporalStrategy[T]):
             deleted_at_quoted = self.query_builder.quote_identifier("deleted_at")
             where_parts.append(f"{deleted_at_quoted} IS NULL")
 
-        # Execute in transaction
-        async with db_pool.acquire() as conn:
-            async with conn.transaction():
-                # 1. Get current record with row-level lock
-                select_query = f"""
-                    SELECT * FROM {quoted_table}
-                    WHERE {" AND ".join(where_parts)}
-                    FOR UPDATE
-                """
-                current_row = await conn.fetchrow(select_query, *where_values)
+        # Define update operations
+        async def _do_update(conn) -> T:
+            """Execute update operations on the given connection."""
+            # 1. Get current record with row-level lock
+            select_query = f"""
+                SELECT * FROM {quoted_table}
+                WHERE {" AND ".join(where_parts)}
+                FOR UPDATE
+            """
+            current_row = await conn.fetchrow(select_query, *where_values)
 
-                if not current_row:
-                    raise ValueError(f"Record not found: {id}")
+            if not current_row:
+                raise ValueError(f"Record not found: {id}")
 
-                # 2. Compute field diff
-                current_data = dict(current_row)
-                audit_entries = []
+            # 2. Compute field diff
+            current_data = dict(current_row)
+            audit_entries = []
 
-                for field_name, new_value in data.items():
-                    old_value = current_data.get(field_name)
+            for field_name, new_value in data.items():
+                old_value = current_data.get(field_name)
 
-                    # Skip if no change
-                    if old_value == new_value:
-                        continue
+                # Skip if no change
+                if old_value == new_value:
+                    continue
 
-                    # Create audit entry for this field
-                    entry = {
-                        "audit_id": uuid4(),
-                        "record_id": id,
-                        "field_name": field_name,
-                        "old_value": self._serialize_value(old_value),
-                        "new_value": self._serialize_value(new_value),
-                        "operation": "UPDATE",
-                        "changed_at": now,
-                        "changed_by": user_id,
-                        "transaction_id": transaction_id,
-                    }
-                    # Only add tenant_id if multi-tenant is enabled
-                    if self.multi_tenant:
-                        entry["tenant_id"] = tenant_id
-                    audit_entries.append(entry)
+                # Create audit entry for this field
+                entry = {
+                    "audit_id": uuid4(),
+                    "record_id": id,
+                    "field_name": field_name,
+                    "old_value": self._serialize_value(old_value),
+                    "new_value": self._serialize_value(new_value),
+                    "operation": "UPDATE",
+                    "changed_at": now,
+                    "changed_by": user_id,
+                    "transaction_id": transaction_id,
+                }
+                # Only add tenant_id if multi-tenant is enabled
+                if self.multi_tenant:
+                    entry["tenant_id"] = tenant_id
+                audit_entries.append(entry)
 
-                # 3. UPDATE main table using QueryBuilder
-                # Build SET clause parts
-                # Filter out metadata fields to prevent overwriting with None values
-                metadata_fields = self._get_metadata_fields()
+            # 3. UPDATE main table using QueryBuilder
+            # Build SET clause parts
+            # Filter out metadata fields to prevent overwriting with None values
+            metadata_fields = self._get_metadata_fields()
 
-                set_parts = []
-                set_values = []
-                base_param = len(where_values)
+            set_parts = []
+            set_values = []
+            base_param = len(where_values)
 
-                for key, value in data.items():
-                    # Skip metadata fields that should be preserved from current record
-                    if key in metadata_fields:
-                        continue
+            for key, value in data.items():
+                # Skip metadata fields that should be preserved from current record
+                if key in metadata_fields:
+                    continue
 
-                    set_values.append(value)
-                    quoted_key = self.query_builder.quote_identifier(key)
-                    param_num = base_param + len(set_values)
-                    set_parts.append(f"{quoted_key} = ${param_num}")
+                set_values.append(value)
+                quoted_key = self.query_builder.quote_identifier(key)
+                param_num = base_param + len(set_values)
+                set_parts.append(f"{quoted_key} = ${param_num}")
 
-                set_clause = ", ".join(set_parts)
+            set_clause = ", ".join(set_parts)
 
-                update_query = f"""
-                    UPDATE {quoted_table}
-                    SET {set_clause}
-                    WHERE {" AND ".join(where_parts)}
-                    RETURNING *
-                """
+            update_query = f"""
+                UPDATE {quoted_table}
+                SET {set_clause}
+                WHERE {" AND ".join(where_parts)}
+                RETURNING *
+            """
 
-                row = await conn.fetchrow(update_query, *where_values, *set_values)
+            row = await conn.fetchrow(update_query, *where_values, *set_values)
 
-                # 4. INSERT audit entries
-                if audit_entries:
-                    await self._insert_audit_entries(conn, audit_table_name, audit_entries)
+            # 4. INSERT audit entries
+            if audit_entries:
+                await self._insert_audit_entries(conn, audit_table_name, audit_entries)
 
-        return self._row_to_model(row)
+            return self._row_to_model(row)
+
+        # Execute - use provided connection or acquire from pool with transaction
+        if connection is not None:
+            # External connection - caller manages transaction
+            return await _do_update(connection)
+        else:
+            # Acquire connection and manage our own transaction
+            async with db_pool.acquire() as conn:
+                async with conn.transaction():
+                    return await _do_update(conn)
 
     async def delete(
         self,
@@ -397,6 +419,7 @@ class CopyOnChangeStrategy(TemporalStrategy[T]):
         adapter,
         tenant_id: Optional[UUID] = None,
         user_id: Optional[UUID] = None,
+        connection=None,
     ) -> bool:
         """
         Delete record with DELETE audit entry.
@@ -425,39 +448,69 @@ class CopyOnChangeStrategy(TemporalStrategy[T]):
         deleted_by_quoted = self.query_builder.quote_identifier("deleted_by")
         id_quoted = self.query_builder.quote_identifier("id")
 
-        async with db_pool.acquire() as conn:
-            async with conn.transaction():
-                # Get current record for audit
-                select_query = f"""
-                    SELECT * FROM {quoted_table}
-                    WHERE {" AND ".join(where_parts)}
+        # Define delete operations
+        async def _do_delete(conn) -> bool:
+            """Execute delete operations on the given connection."""
+            # Get current record for audit
+            select_query = f"""
+                SELECT * FROM {quoted_table}
+                WHERE {" AND ".join(where_parts)}
+            """
+            if self.soft_delete:
+                select_query += f" AND {deleted_at_quoted} IS NULL"
+
+            current_row = await conn.fetchrow(select_query, *where_values)
+
+            if not current_row:
+                return False
+
+            if self.soft_delete:
+                # Soft delete
+                delete_query = f"""
+                    UPDATE {quoted_table}
+                    SET {deleted_at_quoted} = ${len(where_values) + 1},
+                        {deleted_by_quoted} = ${len(where_values) + 2}
+                    WHERE {" AND ".join(where_parts)} AND {deleted_at_quoted} IS NULL
+                    RETURNING {id_quoted}
                 """
-                if self.soft_delete:
-                    select_query += f" AND {deleted_at_quoted} IS NULL"
+                await conn.fetchrow(delete_query, *where_values, now, user_id)
 
-                current_row = await conn.fetchrow(select_query, *where_values)
+                # Audit entry for deleted_at field
+                entry = {
+                    "audit_id": uuid4(),
+                    "record_id": id,
+                    "field_name": "deleted_at",
+                    "old_value": None,
+                    "new_value": self._serialize_value(now),
+                    "operation": "DELETE",
+                    "changed_at": now,
+                    "changed_by": user_id,
+                    "transaction_id": transaction_id,
+                }
+                # Only add tenant_id if multi-tenant is enabled
+                if self.multi_tenant:
+                    entry["tenant_id"] = tenant_id
+                audit_entries = [entry]
+            else:
+                # Hard delete
+                delete_query = f"""
+                    DELETE FROM {quoted_table}
+                    WHERE {" AND ".join(where_parts)}
+                    RETURNING {id_quoted}
+                """
+                await conn.fetchrow(delete_query, *where_values)
 
-                if not current_row:
-                    return False
+                # Audit entry for DELETE
+                user_fields = self._get_user_fields(dict(current_row))
+                audit_entries = []
 
-                if self.soft_delete:
-                    # Soft delete
-                    delete_query = f"""
-                        UPDATE {quoted_table}
-                        SET {deleted_at_quoted} = ${len(where_values) + 1},
-                            {deleted_by_quoted} = ${len(where_values) + 2}
-                        WHERE {" AND ".join(where_parts)} AND {deleted_at_quoted} IS NULL
-                        RETURNING {id_quoted}
-                    """
-                    await conn.fetchrow(delete_query, *where_values, now, user_id)
-
-                    # Audit entry for deleted_at field
+                for field_name, old_value in user_fields.items():
                     entry = {
                         "audit_id": uuid4(),
                         "record_id": id,
-                        "field_name": "deleted_at",
-                        "old_value": None,
-                        "new_value": self._serialize_value(now),
+                        "field_name": field_name,
+                        "old_value": self._serialize_value(old_value),
+                        "new_value": None,
                         "operation": "DELETE",
                         "changed_at": now,
                         "changed_by": user_id,
@@ -466,41 +519,22 @@ class CopyOnChangeStrategy(TemporalStrategy[T]):
                     # Only add tenant_id if multi-tenant is enabled
                     if self.multi_tenant:
                         entry["tenant_id"] = tenant_id
-                    audit_entries = [entry]
-                else:
-                    # Hard delete
-                    delete_query = f"""
-                        DELETE FROM {quoted_table}
-                        WHERE {" AND ".join(where_parts)}
-                        RETURNING {id_quoted}
-                    """
-                    await conn.fetchrow(delete_query, *where_values)
+                    audit_entries.append(entry)
 
-                    # Audit entry for DELETE
-                    user_fields = self._get_user_fields(dict(current_row))
-                    audit_entries = []
+            # Insert audit entries
+            await self._insert_audit_entries(conn, audit_table_name, audit_entries)
 
-                    for field_name, old_value in user_fields.items():
-                        entry = {
-                            "audit_id": uuid4(),
-                            "record_id": id,
-                            "field_name": field_name,
-                            "old_value": self._serialize_value(old_value),
-                            "new_value": None,
-                            "operation": "DELETE",
-                            "changed_at": now,
-                            "changed_by": user_id,
-                            "transaction_id": transaction_id,
-                        }
-                        # Only add tenant_id if multi-tenant is enabled
-                        if self.multi_tenant:
-                            entry["tenant_id"] = tenant_id
-                        audit_entries.append(entry)
+            return True
 
-                # Insert audit entries
-                await self._insert_audit_entries(conn, audit_table_name, audit_entries)
-
-        return True
+        # Execute - use provided connection or acquire from pool with transaction
+        if connection is not None:
+            # External connection - caller manages transaction
+            return await _do_delete(connection)
+        else:
+            # Acquire connection and manage our own transaction
+            async with db_pool.acquire() as conn:
+                async with conn.transaction():
+                    return await _do_delete(conn)
 
     async def transfer_ownership(
         self,

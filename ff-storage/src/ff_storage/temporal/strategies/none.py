@@ -45,6 +45,7 @@ class NoneStrategy(TemporalStrategy[T]):
         adapter,
         tenant_id: Optional[UUID] = None,
         user_id: Optional[UUID] = None,
+        connection=None,
     ) -> T:
         """
         Create record with standard INSERT.
@@ -85,8 +86,11 @@ class NoneStrategy(TemporalStrategy[T]):
         serialized_data = self._serialize_jsonb_fields(data)
         query, values = self.query_builder.build_insert(table_name, serialized_data)
 
-        # Execute using adapter
-        row = await adapter.execute_with_returning(db_pool, query, values, table_name)
+        # Execute - use provided connection or adapter (which acquires from pool)
+        if connection is not None:
+            row = await connection.fetchrow(query, *values)
+        else:
+            row = await adapter.execute_with_returning(db_pool, query, values, table_name)
 
         return self._row_to_model(row)
 
@@ -98,6 +102,7 @@ class NoneStrategy(TemporalStrategy[T]):
         adapter,
         tenant_id: Optional[UUID] = None,
         user_id: Optional[UUID] = None,
+        connection=None,
     ) -> T:
         """
         Update record with direct UPDATE.
@@ -152,9 +157,12 @@ class NoneStrategy(TemporalStrategy[T]):
             RETURNING *
         """
 
-        # Execute using adapter
+        # Execute - use provided connection or adapter (which acquires from pool)
         all_values = where_values + set_values
-        row = await adapter.execute_with_returning(db_pool, query, all_values, table_name)
+        if connection is not None:
+            row = await connection.fetchrow(query, *all_values)
+        else:
+            row = await adapter.execute_with_returning(db_pool, query, all_values, table_name)
 
         if not row:
             raise ValueError(f"Record not found: {id}")
@@ -168,6 +176,7 @@ class NoneStrategy(TemporalStrategy[T]):
         adapter,
         tenant_id: Optional[UUID] = None,
         user_id: Optional[UUID] = None,
+        connection=None,
     ) -> bool:
         """
         Delete record.
@@ -210,8 +219,11 @@ class NoneStrategy(TemporalStrategy[T]):
             """
             values = where_values
 
-        # Execute using adapter
-        row = await adapter.execute_with_returning(db_pool, query, values, table_name)
+        # Execute - use provided connection or adapter (which acquires from pool)
+        if connection is not None:
+            row = await connection.fetchrow(query, *values)
+        else:
+            row = await adapter.execute_with_returning(db_pool, query, values, table_name)
 
         return row is not None
 

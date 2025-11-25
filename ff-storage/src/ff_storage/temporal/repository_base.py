@@ -241,6 +241,7 @@ class TemporalRepository(Generic[T]):
         self,
         model: T,
         user_id: Optional[UUID] = None,
+        connection=None,
     ) -> T:
         """
         Create new record with retry logic and monitoring.
@@ -248,6 +249,9 @@ class TemporalRepository(Generic[T]):
         Args:
             model: Model instance with data
             user_id: User performing the action (for audit trail)
+            connection: Optional database connection for external transaction management.
+                       When provided, the operation uses this connection instead of
+                       acquiring a new one from the pool.
 
         Returns:
             Created model instance
@@ -265,6 +269,7 @@ class TemporalRepository(Generic[T]):
                     adapter=self.adapter,
                     tenant_id=self.tenant_id,
                     user_id=user_id,
+                    connection=connection,
                 )
 
                 # Invalidate list cache since new record added
@@ -293,6 +298,7 @@ class TemporalRepository(Generic[T]):
         id: UUID,
         model: T,
         user_id: Optional[UUID] = None,
+        connection=None,
     ) -> T:
         """
         Update record.
@@ -305,11 +311,16 @@ class TemporalRepository(Generic[T]):
             id: Record ID
             model: Model instance with updated data
             user_id: User performing the action
+            connection: Optional database connection for external transaction management.
+                       When provided, the operation uses this connection instead of
+                       acquiring a new one from the pool.
 
         Returns:
             Updated model instance
         """
-        data = self._model_to_dict(model)
+        # Use exclude_unset=True to only update explicitly provided fields
+        # This prevents overwriting managed fields (id, tenant_id, created_at)
+        data = self._model_to_dict(model, exclude_unset=True)
 
         try:
             result = await self.strategy.update(
@@ -319,6 +330,7 @@ class TemporalRepository(Generic[T]):
                 adapter=self.adapter,
                 tenant_id=self.tenant_id,
                 user_id=user_id,
+                connection=connection,
             )
 
             # Invalidate ALL cached variants for this record ID
@@ -341,6 +353,7 @@ class TemporalRepository(Generic[T]):
         self,
         id: UUID,
         user_id: Optional[UUID] = None,
+        connection=None,
     ) -> bool:
         """
         Delete record.
@@ -352,6 +365,9 @@ class TemporalRepository(Generic[T]):
         Args:
             id: Record ID
             user_id: User performing the action
+            connection: Optional database connection for external transaction management.
+                       When provided, the operation uses this connection instead of
+                       acquiring a new one from the pool.
 
         Returns:
             True if deleted, False if not found
@@ -363,6 +379,7 @@ class TemporalRepository(Generic[T]):
                 adapter=self.adapter,
                 tenant_id=self.tenant_id,
                 user_id=user_id,
+                connection=connection,
             )
 
             # Invalidate ALL cached variants for this record ID
@@ -955,22 +972,29 @@ class TemporalRepository(Generic[T]):
 
         return f"{schema}.{table}"
 
-    def _model_to_dict(self, model: T) -> Dict[str, Any]:
+    def _model_to_dict(self, model: T, exclude_unset: bool = False) -> Dict[str, Any]:
         """
         Convert model instance to dict.
 
-        For updates, only includes fields that were explicitly set by the user.
-        This prevents accidentally overwriting managed fields (id, tenant_id,
-        created_at, etc.) with None values.
+        Args:
+            model: The model instance to convert
+            exclude_unset: If True, only includes fields explicitly set by the user.
+                          Use True for UPDATE operations to avoid overwriting managed
+                          fields (id, tenant_id, created_at) with None values.
+                          Use False (default) for CREATE operations to include all
+                          fields including those with default_factory values.
+
+        Returns:
+            Dictionary representation of the model
         """
         if hasattr(model, "model_dump"):
-            # Pydantic v2: Only include explicitly set fields for partial updates
-            return model.model_dump(exclude_unset=True)
+            # Pydantic v2
+            return model.model_dump(exclude_unset=exclude_unset)
         elif hasattr(model, "dict"):
-            # Pydantic v1: Only include explicitly set fields
-            return model.dict(exclude_unset=True)
+            # Pydantic v1
+            return model.dict(exclude_unset=exclude_unset)
         elif hasattr(model, "__dataclass_fields__"):
-            # Dataclass
+            # Dataclass - exclude_unset not applicable
             from dataclasses import asdict
 
             return asdict(model)

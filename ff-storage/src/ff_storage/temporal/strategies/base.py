@@ -119,6 +119,7 @@ class TemporalStrategy(ABC, Generic[T]):
         db_pool,
         tenant_id: Optional[UUID] = None,
         user_id: Optional[UUID] = None,
+        connection=None,
     ) -> T:
         """
         Create operation with temporal logic.
@@ -128,6 +129,9 @@ class TemporalStrategy(ABC, Generic[T]):
             db_pool: Database connection pool
             tenant_id: Tenant context (for multi-tenant)
             user_id: User performing the action (for audit trail)
+            connection: Optional database connection for transaction support.
+                       If provided, uses this connection instead of acquiring
+                       from pool. Enables external transaction management.
 
         Returns:
             Created record (model instance)
@@ -142,6 +146,7 @@ class TemporalStrategy(ABC, Generic[T]):
         db_pool,
         tenant_id: Optional[UUID] = None,
         user_id: Optional[UUID] = None,
+        connection=None,
     ) -> T:
         """
         Update operation with temporal logic.
@@ -152,6 +157,9 @@ class TemporalStrategy(ABC, Generic[T]):
             db_pool: Database connection pool
             tenant_id: Tenant context
             user_id: User performing the action
+            connection: Optional database connection for transaction support.
+                       If provided, uses this connection instead of acquiring
+                       from pool. Enables external transaction management.
 
         Returns:
             Updated record (model instance)
@@ -165,6 +173,7 @@ class TemporalStrategy(ABC, Generic[T]):
         db_pool,
         tenant_id: Optional[UUID] = None,
         user_id: Optional[UUID] = None,
+        connection=None,
     ) -> bool:
         """
         Delete operation with temporal logic.
@@ -174,6 +183,9 @@ class TemporalStrategy(ABC, Generic[T]):
             db_pool: Database connection pool
             tenant_id: Tenant context
             user_id: User performing the action
+            connection: Optional database connection for transaction support.
+                       If provided, uses this connection instead of acquiring
+                       from pool. Enables external transaction management.
 
         Returns:
             True if deleted, False if not found
