@@ -229,6 +229,72 @@ class TestNoneStrategy:
         remaining = await repo.list()
         assert len(remaining) == 4
 
+    @pytest.mark.asyncio
+    async def test_create_includes_default_factory_fields(self, db_pool, setup_tables):
+        """Test that CREATE operations include default_factory field values.
+
+        This verifies the fix for _model_to_dict() where exclude_unset=False
+        ensures fields with default_factory (like id, created_at) are included
+        in CREATE operations.
+        """
+        tenant_id = uuid4()
+        user_id = uuid4()
+
+        repo = PydanticRepository(ProductNone, db_pool, tenant_id=tenant_id)
+
+        # Create product - Pydantic sets id via default_factory
+        product = await repo.create(
+            ProductNone(name="Widget", price=Decimal("99.99")),
+            user_id=user_id,
+        )
+
+        # Verify id was generated and persisted
+        assert product.id is not None
+        fetched = await repo.get(product.id)
+        assert fetched is not None
+        assert fetched.id == product.id
+        assert fetched.name == "Widget"
+        # Verify other default_factory fields were persisted
+        assert fetched.created_at is not None
+        assert fetched.updated_at is not None
+
+    @pytest.mark.asyncio
+    async def test_update_preserves_managed_fields(self, db_pool, setup_tables):
+        """Test that UPDATE operations preserve managed fields.
+
+        This verifies the fix for _model_to_dict() where exclude_unset=True
+        for UPDATE operations prevents overwriting managed fields like
+        id, tenant_id, created_at with new default_factory values.
+        """
+        tenant_id = uuid4()
+        user_id = uuid4()
+
+        repo = PydanticRepository(ProductNone, db_pool, tenant_id=tenant_id)
+
+        # Create product
+        product = await repo.create(
+            ProductNone(name="Original", price=Decimal("100.00")),
+            user_id=user_id,
+        )
+        original_created_at = product.created_at
+        original_id = product.id
+
+        # Update with new model (which has NEW default id and created_at from factory)
+        updated = await repo.update(
+            product.id,
+            ProductNone(name="Updated", price=Decimal("150.00")),
+            user_id=user_id,
+        )
+
+        # Verify managed fields were NOT overwritten
+        assert updated.id == original_id
+        assert updated.created_at == original_created_at
+        assert updated.tenant_id == tenant_id
+
+        # Verify user fields WERE updated
+        assert updated.name == "Updated"
+        assert updated.price == Decimal("150.00")
+
 
 class TestCopyOnChangeStrategy:
     """Test 'copy_on_change' temporal strategy."""

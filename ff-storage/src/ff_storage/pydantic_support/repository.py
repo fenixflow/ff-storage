@@ -23,8 +23,19 @@ class PydanticRepository(TemporalRepository[T]):
     Features:
     - Auto-detects temporal strategy from model
     - Type-safe: returns Pydantic model instances
-    - Manages tenant context
+    - Manages tenant context (single or multi-tenant)
     - Delegates to strategy-specific operations
+
+    Tenant Scoping:
+        - tenant_id (single UUID): Strict tenant scope for writes.
+          Reads filter to this tenant. Writes FORCE this tenant_id on the model.
+          Use for broker/underwriter operations.
+
+        - tenant_ids (list of UUIDs): Permissive multi-tenant scope.
+          Reads filter to IN (tenant_ids). Writes VALIDATE model.tenant_id is in list.
+          Use for admin cross-tenant operations and B2B read access.
+
+        - Neither: No tenant filtering (admin-only, use with caution).
 
     Usage:
         ```python
@@ -38,21 +49,24 @@ class PydanticRepository(TemporalRepository[T]):
             name: str
             price: Decimal
 
-        # Create repository with single tenant
+        # Single tenant (broker/underwriter writes) - strict scope
         repo = PydanticRepository(
             Product,
             db_pool,
-            tenant_id=current_org.id,
+            tenant_id=current_org.id,  # Single UUID
             logger=logger
         )
+        # create() forces model.tenant_id = current_org.id
 
-        # Or with multiple tenants for cross-tenant access
+        # Multi-tenant (admin/B2B reads) - permissive scope
         repo_admin = PydanticRepository(
             Product,
             db_pool,
-            tenant_id=[tenant1_id, tenant2_id],
+            tenant_ids=[tenant1_id, tenant2_id],  # List of UUIDs
             logger=logger
         )
+        # list() filters: WHERE tenant_id IN (tenant1_id, tenant2_id)
+        # create() validates: model.tenant_id must be in list
 
         # CRUD operations
         product = await repo.create(Product(name="Widget", price=99.99), user_id=user.id)
@@ -70,7 +84,8 @@ class PydanticRepository(TemporalRepository[T]):
         self,
         model_class: type[T],
         db_pool,
-        tenant_id: Optional[UUID | List[UUID]] = None,
+        tenant_id: Optional[UUID] = None,
+        tenant_ids: Optional[List[UUID]] = None,
         logger=None,
         **kwargs,
     ):
@@ -80,15 +95,43 @@ class PydanticRepository(TemporalRepository[T]):
         Args:
             model_class: Pydantic model class (must inherit from PydanticModel)
             db_pool: Database connection pool (asyncpg, aiomysql, etc.)
-            tenant_id: Tenant context (required if model is multi-tenant).
-                      Can be single UUID or list of UUIDs for cross-tenant access.
+            tenant_id: Single tenant context for strict scope (broker/UW writes).
+                      Reads filter to this tenant. Writes force this tenant_id.
+            tenant_ids: Multi-tenant context for permissive scope (admin/B2B).
+                       Reads filter to IN clause. Writes validate model.tenant_id in list.
             logger: Optional logger instance
             **kwargs: Additional arguments for TemporalRepository
                      (cache_enabled, cache_ttl, collect_metrics, max_retries, etc.)
 
         Raises:
-            ValueError: If model requires tenant_id but none provided
+            ValueError: If model requires tenant context but none provided
+            ValueError: If both tenant_id AND tenant_ids are specified
+            ValueError: If tenant_ids is empty list
+            TypeError: If tenant_id is passed a list (use tenant_ids instead)
         """
+        # Validate mutual exclusion
+        if tenant_id is not None and tenant_ids is not None:
+            raise ValueError(
+                "Specify tenant_id OR tenant_ids, not both. "
+                "Use tenant_id for single-tenant (strict) scope, "
+                "tenant_ids for multi-tenant (permissive) scope."
+            )
+
+        # Validate tenant_id is not a list (catch old usage pattern)
+        if tenant_id is not None and isinstance(tenant_id, (list, tuple)):
+            raise TypeError(
+                "tenant_id must be a single UUID. "
+                "For multi-tenant access, use the tenant_ids parameter instead."
+            )
+
+        # Validate tenant_ids is not empty
+        if tenant_ids is not None and len(tenant_ids) == 0:
+            raise ValueError("tenant_ids cannot be empty. " "Provide at least one tenant UUID.")
+
+        # Normalize tenant_ids to remove duplicates
+        if tenant_ids is not None:
+            tenant_ids = list(set(tenant_ids))
+
         # Validate model is PydanticModel
         if not hasattr(model_class, "get_temporal_strategy"):
             raise ValueError(f"{model_class.__name__} must inherit from PydanticModel")
@@ -122,6 +165,7 @@ class PydanticRepository(TemporalRepository[T]):
             adapter=adapter,
             strategy=strategy,
             tenant_id=tenant_id,
+            tenant_ids=tenant_ids,
             logger=logger or logging.getLogger(__name__),
             **kwargs,  # Forward cache_enabled, cache_ttl, collect_metrics, etc.
         )
