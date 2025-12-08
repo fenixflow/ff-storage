@@ -7,6 +7,74 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.5.0] - 2025-12-08
+
+### Added
+
+- **[PYDANTIC MODEL]** New field introspection methods for programmatic model analysis
+  - `get_base_fields()`: Returns the 5 standard audit/identity fields (id, created_at, updated_at, created_by, updated_by)
+  - `get_system_fields()`: Returns all system-managed fields (base + temporal + feature fields)
+  - `get_user_fields()`: Returns only user-defined fields, excluding all system fields
+  - Enables cleaner separation between system and user fields for serialization, diffing, and UI generation
+
+- **[TESTING]** Comprehensive test suite for dynamic temporal field injection
+  - Tests all 12 combinations of temporal strategies × multi-tenant × soft-delete
+  - Validates field injection, Pydantic validation, model_dump(), and JSON serialization
+  - Added tests for field introspection methods
+
+### Fixed
+
+- **[PYDANTIC MODEL]** Computed fields (`@computed_field`) now properly excluded from database operations
+  - `model_dump_for_db()` now excludes computed fields (derived values not stored in DB)
+  - `_model_to_dict()` in TemporalRepository and SCD2Strategy now excludes computed fields
+  - Prevents "column does not exist" errors when models have computed properties
+
+## [4.4.0] - 2025-12-08
+
+### Added
+
+- **[MULTI-TENANT]** Added `tenant_ids` parameter for permissive multi-tenant scope
+  - New parameter alongside existing `tenant_id` for different use cases
+  - `tenant_id` (single UUID): Strict scope - reads filter to this tenant, writes FORCE tenant_id on model
+  - `tenant_ids` (List[UUID]): Permissive scope - reads filter to IN clause, writes VALIDATE model.tenant_id in list
+  - Use `tenant_id` for broker/underwriter writes (strict)
+  - Use `tenant_ids` for admin cross-tenant operations and B2B read access (permissive)
+  - Clear validation errors if both parameters provided or if tenant_ids is empty
+
+### Changed
+
+- **[TENANT BEHAVIOR]** Different semantics for single vs multi-tenant scope
+  - Single tenant (`tenant_id`): Forces tenant_id on writes, strict isolation
+  - Multi tenant (`tenant_ids`): Validates tenant_id on writes, permissive read access
+  - Better separation between write operations (single tenant) and read operations (multi-tenant)
+
+### Usage Examples
+
+```python
+# Single tenant (broker/underwriter writes) - strict scope
+repo = PydanticRepository(
+    Product, db_pool,
+    tenant_id=org_id,  # Single UUID - FORCES tenant_id on all writes
+)
+
+# Multi-tenant (admin/B2B reads) - permissive scope
+repo_admin = PydanticRepository(
+    Product, db_pool,
+    tenant_ids=[tenant1_id, tenant2_id],  # List of UUIDs
+)
+# list() filters: WHERE tenant_id IN (tenant1_id, tenant2_id)
+# create() validates: model.tenant_id must be in list
+```
+
+## [4.3.0] - 2025-12-05
+
+### Added
+
+- **[REPOSITORY]** Added `context` parameter to query methods for trusted source bypass
+  - Enables scenarios where data comes from trusted sources (e.g., migrations, imports)
+  - Allows bypassing tenant filtering when operating as a trusted source
+  - Backward compatible: `context=None` (default) maintains existing behavior
+
 ## [4.2.0] - 2025-11-25
 
 ### Added
@@ -1420,7 +1488,31 @@ db.close_connection()
 
 Maintained by **Ben Moag** ([Fenixflow](https://fenixflow.com))
 
-[Unreleased]: https://gitlab.com/fenixflow/fenix-packages/-/compare/ff-storage-v3.0.0...HEAD
+[Unreleased]: https://gitlab.com/fenixflow/fenix-packages/-/compare/ff-storage-v4.5.0...HEAD
+[4.5.0]: https://gitlab.com/fenixflow/fenix-packages/-/compare/ff-storage-v4.4.0...ff-storage-v4.5.0
+[4.4.0]: https://gitlab.com/fenixflow/fenix-packages/-/compare/ff-storage-v4.3.0...ff-storage-v4.4.0
+[4.3.0]: https://gitlab.com/fenixflow/fenix-packages/-/compare/ff-storage-v4.2.0...ff-storage-v4.3.0
+[4.2.0]: https://gitlab.com/fenixflow/fenix-packages/-/compare/ff-storage-v4.1.1...ff-storage-v4.2.0
+[4.1.1]: https://gitlab.com/fenixflow/fenix-packages/-/compare/ff-storage-v4.1.0...ff-storage-v4.1.1
+[4.1.0]: https://gitlab.com/fenixflow/fenix-packages/-/compare/ff-storage-v4.0.1...ff-storage-v4.1.0
+[4.0.1]: https://gitlab.com/fenixflow/fenix-packages/-/compare/ff-storage-v4.0.0...ff-storage-v4.0.1
+[4.0.0]: https://gitlab.com/fenixflow/fenix-packages/-/compare/ff-storage-v3.8.2...ff-storage-v4.0.0
+[3.8.2]: https://gitlab.com/fenixflow/fenix-packages/-/compare/ff-storage-v3.8.1...ff-storage-v3.8.2
+[3.8.1]: https://gitlab.com/fenixflow/fenix-packages/-/compare/ff-storage-v3.8.0...ff-storage-v3.8.1
+[3.8.0]: https://gitlab.com/fenixflow/fenix-packages/-/compare/ff-storage-v3.7.0...ff-storage-v3.8.0
+[3.7.0]: https://gitlab.com/fenixflow/fenix-packages/-/compare/ff-storage-v3.6.0...ff-storage-v3.7.0
+[3.6.0]: https://gitlab.com/fenixflow/fenix-packages/-/compare/ff-storage-v3.5.0...ff-storage-v3.6.0
+[3.5.0]: https://gitlab.com/fenixflow/fenix-packages/-/compare/ff-storage-v3.4.1...ff-storage-v3.5.0
+[3.4.1]: https://gitlab.com/fenixflow/fenix-packages/-/compare/ff-storage-v3.4.0...ff-storage-v3.4.1
+[3.4.0]: https://gitlab.com/fenixflow/fenix-packages/-/compare/ff-storage-v3.3.1...ff-storage-v3.4.0
+[3.3.1]: https://gitlab.com/fenixflow/fenix-packages/-/compare/ff-storage-v3.3.0...ff-storage-v3.3.1
+[3.3.0]: https://gitlab.com/fenixflow/fenix-packages/-/compare/ff-storage-v3.2.1...ff-storage-v3.3.0
+[3.2.1]: https://gitlab.com/fenixflow/fenix-packages/-/compare/ff-storage-v3.2.0...ff-storage-v3.2.1
+[3.2.0]: https://gitlab.com/fenixflow/fenix-packages/-/compare/ff-storage-v3.1.1...ff-storage-v3.2.0
+[3.1.1]: https://gitlab.com/fenixflow/fenix-packages/-/compare/ff-storage-v3.1.0...ff-storage-v3.1.1
+[3.1.0]: https://gitlab.com/fenixflow/fenix-packages/-/compare/ff-storage-v3.0.2...ff-storage-v3.1.0
+[3.0.2]: https://gitlab.com/fenixflow/fenix-packages/-/compare/ff-storage-v3.0.1...ff-storage-v3.0.2
+[3.0.1]: https://gitlab.com/fenixflow/fenix-packages/-/compare/ff-storage-v3.0.0...ff-storage-v3.0.1
 [3.0.0]: https://gitlab.com/fenixflow/fenix-packages/-/compare/ff-storage-v2.0.1...ff-storage-v3.0.0
 [2.0.1]: https://gitlab.com/fenixflow/fenix-packages/-/compare/ff-storage-v2.0.0...ff-storage-v2.0.1
 [2.0.0]: https://gitlab.com/fenixflow/fenix-packages/-/compare/ff-storage-v1.0.0...ff-storage-v2.0.0

@@ -295,6 +295,67 @@ class PydanticModel(BaseModel):
 
         return strategy.get_temporal_fields()
 
+    # ==================== Field Introspection ====================
+
+    @classmethod
+    def get_base_fields(cls) -> set[str]:
+        """
+        Get field names that are always present on PydanticModel.
+
+        These are the standard audit/identity fields defined directly
+        on the base class: id, created_at, updated_at, created_by, updated_by.
+
+        Returns:
+            Set of base field names
+        """
+        return {"id", "created_at", "updated_at", "created_by", "updated_by"}
+
+    @classmethod
+    def get_system_fields(cls) -> set[str]:
+        """
+        Get all system-managed field names (base + temporal + feature fields).
+
+        Combines:
+        - Base fields (always present): id, created_at, updated_at, etc.
+        - Temporal fields from get_temporal_fields(): strategy-dependent
+          (tenant_id, deleted_at, deleted_by, valid_from, valid_to, version, etc.)
+
+        Returns:
+            Set of all system-managed field names
+        """
+        system_fields = cls.get_base_fields()
+
+        # Add temporal/feature fields
+        try:
+            temporal_fields = cls.get_temporal_fields()
+            system_fields = system_fields | set(temporal_fields.keys())
+        except Exception:
+            # If strategy not available, return just base fields
+            pass
+
+        return system_fields
+
+    @classmethod
+    def get_user_fields(cls) -> dict[str, FieldInfo]:
+        """
+        Get only user-defined fields (excluding system-managed fields).
+
+        Returns fields that were explicitly defined by the user on their
+        model subclass, excluding base fields and injected temporal fields.
+
+        Returns:
+            Dict mapping field_name -> FieldInfo for user-defined fields only
+        """
+        system_fields = cls.get_system_fields()
+
+        return {
+            name: field_info
+            for name, field_info in cls.model_fields.items()
+            if name not in system_fields
+        }
+
+    # ==================== Temporal Configuration (continued) ====================
+
     @classmethod
     def get_temporal_indexes(cls) -> list[dict[str, Any]]:
         """
@@ -491,10 +552,15 @@ class PydanticModel(BaseModel):
         """
         Dump model to dict for database operations.
 
+        Excludes computed fields (properties decorated with @computed_field)
+        since they are derived values, not stored in the database.
+
         Args:
             exclude_none: Exclude None values
 
         Returns:
             Dict suitable for database INSERT/UPDATE
         """
-        return self.model_dump(exclude_none=exclude_none, mode="python")
+        # Exclude computed fields - they are derived, not stored in DB
+        computed_fields = set(self.model_computed_fields.keys())
+        return self.model_dump(exclude_none=exclude_none, mode="python", exclude=computed_fields)

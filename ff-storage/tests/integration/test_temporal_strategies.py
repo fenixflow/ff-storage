@@ -229,6 +229,72 @@ class TestNoneStrategy:
         remaining = await repo.list()
         assert len(remaining) == 4
 
+    @pytest.mark.asyncio
+    async def test_create_includes_default_factory_fields(self, db_pool, setup_tables):
+        """Test that CREATE operations include default_factory field values.
+
+        This verifies the fix for _model_to_dict() where exclude_unset=False
+        ensures fields with default_factory (like id, created_at) are included
+        in CREATE operations.
+        """
+        tenant_id = uuid4()
+        user_id = uuid4()
+
+        repo = PydanticRepository(ProductNone, db_pool, tenant_id=tenant_id)
+
+        # Create product - Pydantic sets id via default_factory
+        product = await repo.create(
+            ProductNone(name="Widget", price=Decimal("99.99")),
+            user_id=user_id,
+        )
+
+        # Verify id was generated and persisted
+        assert product.id is not None
+        fetched = await repo.get(product.id)
+        assert fetched is not None
+        assert fetched.id == product.id
+        assert fetched.name == "Widget"
+        # Verify other default_factory fields were persisted
+        assert fetched.created_at is not None
+        assert fetched.updated_at is not None
+
+    @pytest.mark.asyncio
+    async def test_update_preserves_managed_fields(self, db_pool, setup_tables):
+        """Test that UPDATE operations preserve managed fields.
+
+        This verifies the fix for _model_to_dict() where exclude_unset=True
+        for UPDATE operations prevents overwriting managed fields like
+        id, tenant_id, created_at with new default_factory values.
+        """
+        tenant_id = uuid4()
+        user_id = uuid4()
+
+        repo = PydanticRepository(ProductNone, db_pool, tenant_id=tenant_id)
+
+        # Create product
+        product = await repo.create(
+            ProductNone(name="Original", price=Decimal("100.00")),
+            user_id=user_id,
+        )
+        original_created_at = product.created_at
+        original_id = product.id
+
+        # Update with new model (which has NEW default id and created_at from factory)
+        updated = await repo.update(
+            product.id,
+            ProductNone(name="Updated", price=Decimal("150.00")),
+            user_id=user_id,
+        )
+
+        # Verify managed fields were NOT overwritten
+        assert updated.id == original_id
+        assert updated.created_at == original_created_at
+        assert updated.tenant_id == tenant_id
+
+        # Verify user fields WERE updated
+        assert updated.name == "Updated"
+        assert updated.price == Decimal("150.00")
+
 
 class TestCopyOnChangeStrategy:
     """Test 'copy_on_change' temporal strategy."""
@@ -653,14 +719,17 @@ class TestCrossCuttingFeatures:
 
     @pytest.mark.asyncio
     async def test_count_with_list_uuid_multi_tenant(self, db_pool, setup_tables):
-        """Test count operations with List[UUID] for multi-tenant access."""
+        """Test count operations with tenant_ids (List[UUID]) for multi-tenant access.
+
+        v4.4.0: Now uses tenant_ids parameter for permissive multi-tenant scope.
+        """
         # Create multiple tenants
         tenant1 = uuid4()
         tenant2 = uuid4()
         tenant3 = uuid4()
         user_id = uuid4()
 
-        # Create products in different tenants
+        # Create products in different tenants (using strict single-tenant repos)
         repo1 = PydanticRepository(ProductNone, db_pool, tenant_id=tenant1)
         repo2 = PydanticRepository(ProductNone, db_pool, tenant_id=tenant2)
         repo3 = PydanticRepository(ProductNone, db_pool, tenant_id=tenant3)
@@ -698,16 +767,16 @@ class TestCrossCuttingFeatures:
                 user_id=user_id,
             )
 
-        # Test 1: Count with single tenant (existing behavior)
+        # Test 1: Count with single tenant (strict scope - existing behavior)
         count1 = await repo1.count()
         assert count1 == 3
 
-        # Test 2: Count with multiple accessible tenants via List[UUID]
-        # Create repo with list of accessible tenant IDs
+        # Test 2: Count with multiple accessible tenants via tenant_ids (permissive scope)
+        # Create repo with list of accessible tenant IDs using tenant_ids parameter
         multi_repo = PydanticRepository(
             ProductNone,
             db_pool,
-            tenant_id=[tenant1, tenant2],  # List of UUIDs
+            tenant_ids=[tenant1, tenant2],  # List of UUIDs - permissive scope
         )
 
         # Count should include products from both tenant1 and tenant2
@@ -715,7 +784,7 @@ class TestCrossCuttingFeatures:
         assert multi_count == 8  # 3 from tenant1 + 5 from tenant2
 
         # Test 3: Count with filters and List[UUID]
-        # Override tenant_id in filters with a list
+        # Override tenant filtering in filters with a list
         count_with_filter = await multi_repo.count(
             filters={"tenant_id": [tenant1, tenant2, tenant3]}  # All three tenants
         )
@@ -730,8 +799,8 @@ class TestCrossCuttingFeatures:
         )
         assert active_count == 5  # 3 from tenant1 + 2 from tenant3
 
-        # Test 5: Verify tenant isolation still works
-        # Repository with only tenant3 shouldn't see other tenants' data
+        # Test 5: Verify tenant isolation still works with strict scope
+        # Repository with only tenant3 (strict scope) shouldn't see other tenants' data
         single_repo = PydanticRepository(ProductNone, db_pool, tenant_id=tenant3)
         isolated_count = await single_repo.count()
         assert isolated_count == 2  # Only tenant3's products

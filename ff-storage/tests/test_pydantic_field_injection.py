@@ -554,5 +554,213 @@ class TestModelRebuild:
         # (they have default values or factories)
 
 
+class TestFieldIntrospection:
+    """Test get_base_fields(), get_system_fields(), and get_user_fields() methods."""
+
+    # ==================== get_base_fields() Tests ====================
+
+    def test_get_base_fields_returns_correct_set(self):
+        """Test that get_base_fields returns the 5 standard fields."""
+        base_fields = PydanticModel.get_base_fields()
+        expected = {"id", "created_at", "updated_at", "created_by", "updated_by"}
+        assert base_fields == expected
+
+    def test_get_base_fields_same_for_all_strategies(self):
+        """Test that get_base_fields is consistent across all strategies."""
+        assert ModelNoneBasic.get_base_fields() == PydanticModel.get_base_fields()
+        assert ModelCopyBasic.get_base_fields() == PydanticModel.get_base_fields()
+        assert ModelSCD2Basic.get_base_fields() == PydanticModel.get_base_fields()
+        assert ModelSCD2Full.get_base_fields() == PydanticModel.get_base_fields()
+
+    # ==================== get_system_fields() Tests ====================
+
+    def test_get_system_fields_none_basic(self):
+        """Test system fields for none strategy with no features."""
+        system_fields = ModelNoneBasic.get_system_fields()
+        expected = {"id", "created_at", "updated_at", "created_by", "updated_by"}
+        assert system_fields == expected
+
+    def test_get_system_fields_none_tenant(self):
+        """Test system fields for none strategy with multi-tenant."""
+        system_fields = ModelNoneTenant.get_system_fields()
+        expected = {"id", "created_at", "updated_at", "created_by", "updated_by", "tenant_id"}
+        assert system_fields == expected
+
+    def test_get_system_fields_none_soft_delete(self):
+        """Test system fields for none strategy with soft delete."""
+        system_fields = ModelNoneSoftDelete.get_system_fields()
+        expected = {
+            "id",
+            "created_at",
+            "updated_at",
+            "created_by",
+            "updated_by",
+            "deleted_at",
+            "deleted_by",
+        }
+        assert system_fields == expected
+
+    def test_get_system_fields_none_full(self):
+        """Test system fields for none strategy with all features."""
+        system_fields = ModelNoneFull.get_system_fields()
+        expected = {
+            "id",
+            "created_at",
+            "updated_at",
+            "created_by",
+            "updated_by",
+            "tenant_id",
+            "deleted_at",
+            "deleted_by",
+        }
+        assert system_fields == expected
+
+    def test_get_system_fields_copy_on_change_basic(self):
+        """Test system fields for copy_on_change strategy with no features."""
+        system_fields = ModelCopyBasic.get_system_fields()
+        expected = {"id", "created_at", "updated_at", "created_by", "updated_by"}
+        assert system_fields == expected
+
+    def test_get_system_fields_copy_on_change_full(self):
+        """Test system fields for copy_on_change strategy with all features."""
+        system_fields = ModelCopyFull.get_system_fields()
+        expected = {
+            "id",
+            "created_at",
+            "updated_at",
+            "created_by",
+            "updated_by",
+            "tenant_id",
+            "deleted_at",
+            "deleted_by",
+        }
+        assert system_fields == expected
+
+    def test_get_system_fields_scd2_basic(self):
+        """Test system fields for scd2 strategy (note: forces soft_delete=True)."""
+        system_fields = ModelSCD2Basic.get_system_fields()
+        # SCD2 forces soft_delete=True, so deleted_at/deleted_by are always included
+        expected = {
+            "id",
+            "created_at",
+            "updated_at",
+            "created_by",
+            "updated_by",
+            "valid_from",
+            "valid_to",
+            "version",
+            "deleted_at",
+            "deleted_by",
+        }
+        assert system_fields == expected
+
+    def test_get_system_fields_scd2_full(self):
+        """Test system fields for scd2 strategy with all features."""
+        system_fields = ModelSCD2Full.get_system_fields()
+        expected = {
+            "id",
+            "created_at",
+            "updated_at",
+            "created_by",
+            "updated_by",
+            "tenant_id",
+            "valid_from",
+            "valid_to",
+            "version",
+            "deleted_at",
+            "deleted_by",
+        }
+        assert system_fields == expected
+
+    # ==================== get_user_fields() Tests ====================
+
+    def test_get_user_fields_returns_only_user_defined(self):
+        """Test that get_user_fields excludes all system fields."""
+        user_fields = ModelNoneBasic.get_user_fields()
+
+        # Should only have name and value
+        assert set(user_fields.keys()) == {"name", "value"}
+
+    def test_get_user_fields_none_full(self):
+        """Test user fields for none strategy with all features."""
+        user_fields = ModelNoneFull.get_user_fields()
+        assert set(user_fields.keys()) == {"name", "value"}
+
+    def test_get_user_fields_scd2_full(self):
+        """Test user fields for scd2 strategy with all features."""
+        user_fields = ModelSCD2Full.get_user_fields()
+        assert set(user_fields.keys()) == {"name", "value"}
+
+    def test_get_user_fields_returns_field_info(self):
+        """Test that get_user_fields returns FieldInfo objects."""
+        from pydantic.fields import FieldInfo
+
+        user_fields = ModelNoneBasic.get_user_fields()
+
+        for field_name, field_info in user_fields.items():
+            assert isinstance(field_info, FieldInfo), f"{field_name} is not FieldInfo"
+
+    def test_get_user_fields_preserves_field_types(self):
+        """Test that get_user_fields preserves correct field types."""
+        user_fields = ModelNoneBasic.get_user_fields()
+
+        assert user_fields["name"].annotation is str
+        assert user_fields["value"].annotation is int
+
+    def test_get_user_fields_with_jsonb_model(self):
+        """Test user fields for model with JSONB fields."""
+        user_fields = ModelWithJSONB.get_user_fields()
+
+        # Should have name, metadata, tags, settings
+        assert set(user_fields.keys()) == {"name", "metadata", "tags", "settings"}
+
+    def test_get_user_fields_excludes_base_fields(self):
+        """Test that base fields are excluded from user fields."""
+        user_fields = ModelSCD2Full.get_user_fields()
+
+        base_fields = {"id", "created_at", "updated_at", "created_by", "updated_by"}
+        for field in base_fields:
+            assert field not in user_fields
+
+    def test_get_user_fields_excludes_temporal_fields(self):
+        """Test that temporal fields are excluded from user fields."""
+        user_fields = ModelSCD2Full.get_user_fields()
+
+        temporal_fields = {
+            "tenant_id",
+            "valid_from",
+            "valid_to",
+            "version",
+            "deleted_at",
+            "deleted_by",
+        }
+        for field in temporal_fields:
+            assert field not in user_fields
+
+    # ==================== Integration Tests ====================
+
+    def test_system_fields_plus_user_fields_equals_all_fields(self):
+        """Test that system_fields + user_fields = model_fields."""
+        system_fields = ModelSCD2Full.get_system_fields()
+        user_fields = set(ModelSCD2Full.get_user_fields().keys())
+        all_fields = set(ModelSCD2Full.model_fields.keys())
+
+        assert system_fields | user_fields == all_fields
+
+    def test_system_fields_and_user_fields_are_disjoint(self):
+        """Test that system_fields and user_fields don't overlap."""
+        system_fields = ModelSCD2Full.get_system_fields()
+        user_fields = set(ModelSCD2Full.get_user_fields().keys())
+
+        assert system_fields & user_fields == set()
+
+    def test_base_fields_are_subset_of_system_fields(self):
+        """Test that base_fields is always a subset of system_fields."""
+        base_fields = ModelSCD2Full.get_base_fields()
+        system_fields = ModelSCD2Full.get_system_fields()
+
+        assert base_fields <= system_fields
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

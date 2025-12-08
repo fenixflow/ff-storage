@@ -146,9 +146,9 @@ class TenantIsolationError(TenantError):
 class TenantNotConfigured(TenantError):
     """Raised when tenant is required but not configured."""
 
-    def __init__(self, model_class: str):
-        message = f"Model {model_class} requires tenant_id but none was provided"
-        super().__init__(message, {"model_class": model_class})
+    def __init__(self, model_class: str, message: str | None = None):
+        default_message = f"Model {model_class} requires tenant_id but none was provided"
+        super().__init__(message or default_message, {"model_class": model_class})
 
 
 class ObjectStorageError(FFStorageError):
