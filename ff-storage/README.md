@@ -8,17 +8,22 @@ A comprehensive storage package for Fenixflow applications, providing **async co
 
 Created by **Ben Moag** at **[Fenixflow](https://fenixflow.com)**
 
-## 🔥 Version 3.3.0 - Production-Critical Schema Sync Fix
+## 🔥 Version 4.4.0 - Multi-Tenant Permissive Scope
 
-**CRITICAL UPDATE in v3.3.0**: Fixes production bug causing false positives in schema drift detection!
+**NEW in v4.4.0**: Flexible multi-tenant access with separate `tenant_id` and `tenant_ids` parameters!
 
-- **🐛 Production Bug Fix** - Eliminates false positives that caused index recreation on every schema sync
-- **🏗️ Normalization Framework** - Centralized schema normalization (DRY principle)
-- **🔍 SQL AST Parser** - WHERE clause parsing with proper logical precedence
-- **✅ Comprehensive Testing** - 327 tests including 93 new normalization tests
-- **💪 Zero Downtime** - Backward compatible, internal architecture improvement
+- **🔒 Strict Scope** (`tenant_id`): Single UUID - forces tenant_id on writes, strict isolation for broker/UW operations
+- **🌐 Permissive Scope** (`tenant_ids`): List of UUIDs - validates writes, enables admin cross-tenant queries
+- **✅ Clear Semantics** - Different behavior for single vs multi-tenant use cases
+- **🛡️ Validation** - Prevents accidental misuse (can't specify both, can't pass empty list)
 
-**If you're using schema sync (v2.0+), upgrade immediately** - v3.2.x had a critical bug causing unnecessary schema changes.
+```python
+# Strict scope (broker writes) - forces tenant_id on all records
+repo = PydanticRepository(Product, db_pool, tenant_id=org_id)
+
+# Permissive scope (admin reads) - IN clause filtering
+repo_admin = PydanticRepository(Product, db_pool, tenant_ids=[tenant1, tenant2])
+```
 
 ---
 

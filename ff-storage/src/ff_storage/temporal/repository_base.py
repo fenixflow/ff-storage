@@ -1197,7 +1197,10 @@ class TemporalRepository(Generic[T]):
 
     def _model_to_dict(self, model: T, exclude_unset: bool = False) -> Dict[str, Any]:
         """
-        Convert model instance to dict.
+        Convert model instance to dict, excluding computed fields.
+
+        Computed fields (properties decorated with @computed_field) are
+        derived values that should not be stored in the database.
 
         Args:
             model: The model instance to convert
@@ -1211,10 +1214,11 @@ class TemporalRepository(Generic[T]):
             Dictionary representation of the model
         """
         if hasattr(model, "model_dump"):
-            # Pydantic v2
-            return model.model_dump(exclude_unset=exclude_unset)
+            # Pydantic v2 - exclude computed fields
+            computed = set(getattr(model.__class__, "model_computed_fields", {}).keys())
+            return model.model_dump(exclude_unset=exclude_unset, exclude=computed)
         elif hasattr(model, "dict"):
-            # Pydantic v1
+            # Pydantic v1 - no computed fields support
             return model.dict(exclude_unset=exclude_unset)
         elif hasattr(model, "__dataclass_fields__"):
             # Dataclass - exclude_unset not applicable

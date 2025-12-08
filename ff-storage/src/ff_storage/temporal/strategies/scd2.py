@@ -935,12 +935,17 @@ class SCD2Strategy(TemporalStrategy[T]):
             return self.model_class(**row_dict)
 
     def _model_to_dict(self, model: T) -> Dict[str, Any]:
-        """Convert model instance to dict."""
+        """Convert model instance to dict, excluding computed fields.
+
+        Computed fields (properties decorated with @computed_field) are
+        derived values that should not be stored in the database.
+        """
         if hasattr(model, "model_dump"):
-            # Pydantic v2
-            return model.model_dump()
+            # Pydantic v2 - exclude computed fields
+            computed = set(getattr(model.__class__, "model_computed_fields", {}).keys())
+            return model.model_dump(exclude=computed)
         elif hasattr(model, "dict"):
-            # Pydantic v1
+            # Pydantic v1 - no computed fields support
             return model.dict()
         else:
             # Dataclass or other
