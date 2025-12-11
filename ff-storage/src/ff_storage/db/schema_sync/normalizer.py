@@ -116,7 +116,22 @@ class SchemaNormalizer:
             if default_lower in ("false", "f", "0", "no", "n"):
                 return "FALSE"
 
-        # For non-boolean types, return trimmed value
+        # Normalize common SQL function defaults for case-insensitive comparison
+        # PostgreSQL returns these in lowercase, but they should match uppercase definitions
+        sql_function_defaults = {
+            "now()": "NOW()",
+            "current_timestamp": "CURRENT_TIMESTAMP",
+            "current_date": "CURRENT_DATE",
+            "current_time": "CURRENT_TIME",
+            "gen_random_uuid()": "gen_random_uuid()",
+            "uuid_generate_v4()": "uuid_generate_v4()",
+        }
+
+        default_lower = default.lower()
+        if default_lower in sql_function_defaults:
+            return sql_function_defaults[default_lower]
+
+        # For other types, return trimmed value
         return default
 
     def normalize_native_type(self, native_type: Optional[str]) -> Optional[str]:

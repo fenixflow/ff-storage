@@ -102,6 +102,60 @@ class TestDefaultValueNormalization:
         result = normalizer.normalize_default_value("  42  ", ColumnType.INTEGER)
         assert result == "42"
 
+    def test_normalize_now_function_lowercase(self):
+        """Test that lowercase 'now()' is normalized to 'NOW()'."""
+        normalizer = SchemaNormalizer()
+        result = normalizer.normalize_default_value("now()", ColumnType.TIMESTAMP)
+        assert result == "NOW()"
+
+    def test_normalize_now_function_uppercase(self):
+        """Test that uppercase 'NOW()' remains 'NOW()'."""
+        normalizer = SchemaNormalizer()
+        result = normalizer.normalize_default_value("NOW()", ColumnType.TIMESTAMP)
+        assert result == "NOW()"
+
+    def test_normalize_now_function_mixed_case(self):
+        """Test that mixed-case 'Now()' is normalized to 'NOW()'."""
+        normalizer = SchemaNormalizer()
+        result = normalizer.normalize_default_value("Now()", ColumnType.TIMESTAMP)
+        assert result == "NOW()"
+
+    def test_normalize_current_timestamp_lowercase(self):
+        """Test that lowercase 'current_timestamp' is normalized."""
+        normalizer = SchemaNormalizer()
+        result = normalizer.normalize_default_value("current_timestamp", ColumnType.TIMESTAMP)
+        assert result == "CURRENT_TIMESTAMP"
+
+    def test_normalize_current_timestamp_uppercase(self):
+        """Test that uppercase 'CURRENT_TIMESTAMP' remains unchanged."""
+        normalizer = SchemaNormalizer()
+        result = normalizer.normalize_default_value("CURRENT_TIMESTAMP", ColumnType.TIMESTAMP)
+        assert result == "CURRENT_TIMESTAMP"
+
+    def test_normalize_gen_random_uuid_lowercase(self):
+        """Test that lowercase 'gen_random_uuid()' remains lowercase (PG convention)."""
+        normalizer = SchemaNormalizer()
+        result = normalizer.normalize_default_value("gen_random_uuid()", ColumnType.UUID)
+        assert result == "gen_random_uuid()"
+
+    def test_normalize_gen_random_uuid_uppercase(self):
+        """Test that uppercase 'GEN_RANDOM_UUID()' is normalized to lowercase."""
+        normalizer = SchemaNormalizer()
+        result = normalizer.normalize_default_value("GEN_RANDOM_UUID()", ColumnType.UUID)
+        assert result == "gen_random_uuid()"
+
+    def test_normalize_current_date_lowercase(self):
+        """Test that lowercase 'current_date' is normalized."""
+        normalizer = SchemaNormalizer()
+        result = normalizer.normalize_default_value("current_date", ColumnType.TIMESTAMP)
+        assert result == "CURRENT_DATE"
+
+    def test_normalize_current_time_lowercase(self):
+        """Test that lowercase 'current_time' is normalized."""
+        normalizer = SchemaNormalizer()
+        result = normalizer.normalize_default_value("current_time", ColumnType.TIME)
+        assert result == "CURRENT_TIME"
+
 
 class TestNativeTypeNormalization:
     """Test normalization of native (provider-specific) type names."""

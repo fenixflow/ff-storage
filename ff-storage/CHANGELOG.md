@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.6.0] - 2025-12-11
+
+### Fixed
+
+- **[SCHEMA SYNC]** Fixed false positive schema drift for SQL function defaults with different case
+  - PostgreSQL returns function defaults in lowercase (`now()`) while Pydantic models define them uppercase (`NOW()`)
+  - Added case-insensitive normalization for common SQL function defaults in `SchemaNormalizer`
+  - Normalized functions: `NOW()`, `CURRENT_TIMESTAMP`, `CURRENT_DATE`, `CURRENT_TIME`, `gen_random_uuid()`, `uuid_generate_v4()`
+  - Eliminates false "Alter column" warnings like: `default: now() → NOW()`
+
 ## [4.5.0] - 2025-12-08
 
 ### Added
@@ -1488,7 +1498,8 @@ db.close_connection()
 
 Maintained by **Ben Moag** ([Fenixflow](https://fenixflow.com))
 
-[Unreleased]: https://gitlab.com/fenixflow/fenix-packages/-/compare/ff-storage-v4.5.0...HEAD
+[Unreleased]: https://gitlab.com/fenixflow/fenix-packages/-/compare/ff-storage-v4.6.0...HEAD
+[4.6.0]: https://gitlab.com/fenixflow/fenix-packages/-/compare/ff-storage-v4.5.0...ff-storage-v4.6.0
 [4.5.0]: https://gitlab.com/fenixflow/fenix-packages/-/compare/ff-storage-v4.4.0...ff-storage-v4.5.0
 [4.4.0]: https://gitlab.com/fenixflow/fenix-packages/-/compare/ff-storage-v4.3.0...ff-storage-v4.4.0
 [4.3.0]: https://gitlab.com/fenixflow/fenix-packages/-/compare/ff-storage-v4.2.0...ff-storage-v4.3.0
