@@ -142,7 +142,10 @@ class NoneStrategy(TemporalStrategy[T]):
         set_values = []
         base_param = len(where_values)
 
-        for key, value in data.items():
+        # Serialize JSONB fields before building SET clause
+        serialized_data = self._serialize_jsonb_fields(data)
+
+        for key, value in serialized_data.items():
             set_values.append(value)
             quoted_key = self.query_builder.quote_identifier(key)
             param_num = base_param + len(set_values)

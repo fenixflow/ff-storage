@@ -371,11 +371,14 @@ class CopyOnChangeStrategy(TemporalStrategy[T]):
             # Filter out metadata fields to prevent overwriting with None values
             metadata_fields = self._get_metadata_fields()
 
+            # Serialize JSONB fields before building SET clause
+            serialized_data = self._serialize_jsonb_fields(data)
+
             set_parts = []
             set_values = []
             base_param = len(where_values)
 
-            for key, value in data.items():
+            for key, value in serialized_data.items():
                 # Skip metadata fields that should be preserved from current record
                 if key in metadata_fields:
                     continue
