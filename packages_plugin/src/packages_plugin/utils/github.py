@@ -18,8 +18,8 @@ def get_github_url(package_name: str) -> str:
     Returns:
         GitHub repository URL (HTTPS with token or SSH)
     """
-    # Check for GITHUB_TOKEN environment variable
-    token = os.getenv("GITHUB_TOKEN")
+    # Check for GITHUB_TOKEN_FF first (Fenixflow-specific), then GITHUB_TOKEN
+    token = os.getenv("GITHUB_TOKEN_FF") or os.getenv("GITHUB_TOKEN")
 
     if token:
         # Use HTTPS with token authentication

@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.6.2] - 2025-12-11
+
+### Changed
+
+- **[DOCUMENTATION]** Updated README to highlight v4.6.x release notes on PyPI
+
+## [4.6.1] - 2025-12-11
+
+### Fixed
+
+- **[TEMPORAL STRATEGIES]** Fixed JSONB field serialization in `update()` methods
+  - `NoneStrategy.update()` and `CopyOnChangeStrategy.update()` were not serializing JSONB fields before passing to asyncpg
+  - Caused `expected str, got dict` errors when updating records with JSONB columns (e.g., `dict`, `list`, nested Pydantic models)
+  - Added `_serialize_jsonb_fields()` call before building SET clause, matching the behavior already present in `create()` methods
+  - Affected fields: Any field with `JSONB` type mapping (dict, list, nested BaseModel, etc.)
+
 ## [4.6.0] - 2025-12-11
 
 ### Fixed
@@ -1498,7 +1514,9 @@ db.close_connection()
 
 Maintained by **Ben Moag** ([Fenixflow](https://fenixflow.com))
 
-[Unreleased]: https://gitlab.com/fenixflow/fenix-packages/-/compare/ff-storage-v4.6.0...HEAD
+[Unreleased]: https://gitlab.com/fenixflow/fenix-packages/-/compare/ff-storage-v4.6.2...HEAD
+[4.6.2]: https://gitlab.com/fenixflow/fenix-packages/-/compare/ff-storage-v4.6.1...ff-storage-v4.6.2
+[4.6.1]: https://gitlab.com/fenixflow/fenix-packages/-/compare/ff-storage-v4.6.0...ff-storage-v4.6.1
 [4.6.0]: https://gitlab.com/fenixflow/fenix-packages/-/compare/ff-storage-v4.5.0...ff-storage-v4.6.0
 [4.5.0]: https://gitlab.com/fenixflow/fenix-packages/-/compare/ff-storage-v4.4.0...ff-storage-v4.5.0
 [4.4.0]: https://gitlab.com/fenixflow/fenix-packages/-/compare/ff-storage-v4.3.0...ff-storage-v4.4.0

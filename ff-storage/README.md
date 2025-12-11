@@ -8,14 +8,24 @@ A comprehensive storage package for Fenixflow applications, providing **async co
 
 Created by **Ben Moag** at **[Fenixflow](https://fenixflow.com)**
 
-## 🔥 Version 4.4.0 - Multi-Tenant Permissive Scope
+## 🔥 Version 4.6.2 - Latest Release
 
-**NEW in v4.4.0**: Flexible multi-tenant access with separate `tenant_id` and `tenant_ids` parameters!
+**What's New in v4.6.x**:
+
+- **v4.6.2** - Documentation updates
+- **v4.6.1** - Fixed JSONB field serialization in `update()` methods (NoneStrategy & CopyOnChangeStrategy)
+- **v4.6.0** - Fixed false positive schema drift for SQL function defaults (case sensitivity: `now()` vs `NOW()`)
+- **v4.5.0** - Field introspection methods (`get_base_fields()`, `get_system_fields()`, `get_user_fields()`) and computed field exclusion from DB operations
+
+---
+
+## 🎯 Version 4.4.0 - Multi-Tenant Permissive Scope
+
+Flexible multi-tenant access with separate `tenant_id` and `tenant_ids` parameters:
 
 - **🔒 Strict Scope** (`tenant_id`): Single UUID - forces tenant_id on writes, strict isolation for broker/UW operations
 - **🌐 Permissive Scope** (`tenant_ids`): List of UUIDs - validates writes, enables admin cross-tenant queries
 - **✅ Clear Semantics** - Different behavior for single vs multi-tenant use cases
-- **🛡️ Validation** - Prevents accidental misuse (can't specify both, can't pass empty list)
 
 ```python
 # Strict scope (broker writes) - forces tenant_id on all records

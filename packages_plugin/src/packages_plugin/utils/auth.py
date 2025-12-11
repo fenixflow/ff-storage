@@ -11,8 +11,9 @@ def check_github_auth() -> tuple[bool, str]:
     Returns:
         Tuple of (is_authenticated, message)
     """
-    # First check for GITHUB_TOKEN (preferred for CI/CD and consistency with PyPI)
-    token = os.getenv("GITHUB_TOKEN")
+    # First check for GITHUB_TOKEN_FF (Fenixflow-specific token)
+    # Then fall back to GITHUB_TOKEN (for CI/CD and general use)
+    token = os.getenv("GITHUB_TOKEN_FF") or os.getenv("GITHUB_TOKEN")
     if token:
         # GitHub tokens can start with: ghp_ (personal), gho_ (OAuth), ghs_ (server), github_pat_ (fine-grained)
         if token.startswith(("ghp_", "gho_", "ghs_", "github_pat_")):
