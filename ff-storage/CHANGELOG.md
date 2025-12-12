@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.6.3] - 2025-12-12
+
+### Fixed
+
+- **[SCHEMA SYNC]** Fixed false positive schema drift for float types (DOUBLE PRECISION, REAL)
+  - PostgreSQL reports inherent precision values (53 for float8, 24 for float4) but models expect `None`
+  - Schema introspection now explicitly sets `precision=None` for float types to prevent false drift
+  - Consolidated type normalization and precision handling in a single pass for clarity
+
+### Added
+
+- **[SCHEMA SYNC]** Added primary key and foreign key introspection to schema sync
+  - New `get_column_constraints()` method queries `pg_index` and `information_schema` for constraint info
+  - Columns now include `is_primary_key`, `is_foreign_key`, and `references` attributes
+  - Enables accurate schema comparison including constraint metadata
+  - Note: Composite FK column mapping has known limitation (documented in code)
+
 ## [4.6.2] - 2025-12-11
 
 ### Changed

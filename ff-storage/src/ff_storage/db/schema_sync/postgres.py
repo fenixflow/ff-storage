@@ -75,31 +75,25 @@ class PostgresSchemaIntrospector(SchemaIntrospectorBase):
                 elif default_lower in ("true", "t", "1", "yes"):
                     default = "TRUE"
 
-            # Only DECIMAL types have user-specified precision/scale
-            # (Other numeric types like INTEGER have DB-generated precision we ignore)
-            if column_type == ColumnType.DECIMAL:
-                final_precision = precision
-                final_scale = scale
-            else:
-                final_precision = None
-                final_scale = None
-
-            # Determine native_type representation
+            # Determine native_type representation and precision handling
             native_type_raw = udt_name or data_type
             native_lower = native_type_raw.lower()
 
-            # Normalize float types to PostgreSQL-valid forms
+            # Normalize types and determine precision handling in a single pass
+            # Float types have inherent 53-bit precision that should be ignored
+            # to avoid false schema drift (DB reports 53, model expects None)
             if native_lower in ("float8", "double precision", "double"):
                 native_type_normalized = "DOUBLE PRECISION"
+                final_precision = None
+                final_scale = None
             elif native_lower in ("float4", "real"):
                 native_type_normalized = "REAL"
-            # Handle array types: PostgreSQL stores as "_text" in udt_name, display as "TEXT[]"
+                final_precision = None
+                final_scale = None
             elif native_lower.startswith("_") or data_type.upper() == "ARRAY":
                 # Array type: udt_name is like "_text", "_int4", etc.
-                # Convert to display form: "TEXT[]", "INTEGER[]", etc.
                 if native_lower.startswith("_"):
-                    element_type = native_lower[1:]  # Strip leading underscore
-                    # Map element type to display name
+                    element_type = native_lower[1:]
                     element_display = {
                         "text": "TEXT",
                         "int4": "INTEGER",
@@ -109,13 +103,22 @@ class PostgresSchemaIntrospector(SchemaIntrospectorBase):
                     }.get(element_type, element_type.upper())
                     native_type_normalized = f"{element_display}[]"
                 else:
-                    # Fallback for generic ARRAY
                     native_type_normalized = "TEXT[]"
-            # Handle timestamp types: normalize TIMESTAMPTZ to full form
+                final_precision = None
+                final_scale = None
             elif native_lower == "timestamptz":
-                native_type_normalized = "TIMESTAMPTZ"  # Keep short form, normalizer will handle
+                native_type_normalized = "TIMESTAMPTZ"
+                final_precision = None
+                final_scale = None
             else:
                 native_type_normalized = native_type_raw.upper()
+                # Only NUMERIC/DECIMAL have user-specified precision/scale
+                if column_type == ColumnType.DECIMAL:
+                    final_precision = precision
+                    final_scale = scale
+                else:
+                    final_precision = None
+                    final_scale = None
 
             columns.append(
                 ColumnDefinition(
@@ -130,7 +133,95 @@ class PostgresSchemaIntrospector(SchemaIntrospectorBase):
                 )
             )
 
+        # Enrich columns with constraint information (primary keys, foreign keys)
+        constraints = self.get_column_constraints(table_name, schema)
+        for col in columns:
+            if col.name in constraints:
+                col_constraints = constraints[col.name]
+                col.is_primary_key = col_constraints.get("is_primary_key", False)
+                col.is_foreign_key = col_constraints.get("is_foreign_key", False)
+                col.references = col_constraints.get("references")
+
         return columns
+
+    def get_column_constraints(self, table_name: str, schema: str) -> dict:
+        """Get primary key and foreign key constraints for table columns.
+
+        Returns a dict mapping column names to their constraint info:
+        {
+            "column_name": {
+                "is_primary_key": bool,
+                "is_foreign_key": bool,
+                "references": "schema.table(column)" or None
+            }
+        }
+        """
+        # Query for primary key columns
+        pk_query = """
+            SELECT a.attname
+            FROM pg_index i
+            JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey)
+            JOIN pg_class c ON c.oid = i.indrelid
+            JOIN pg_namespace n ON n.oid = c.relnamespace
+            WHERE i.indisprimary
+              AND n.nspname = %s
+              AND c.relname = %s
+        """
+        pk_results = self.db.read_query(
+            pk_query,
+            (schema, table_name),
+            as_dict=False,
+            context={
+                "trusted_source": True,
+                "source": "PostgresSchemaIntrospector.get_column_constraints.pk",
+            },
+        )
+        pk_columns = {row[0] for row in pk_results} if pk_results else set()
+
+        # Query for foreign key columns with their references
+        # NOTE: For composite FKs, this query joins on constraint_name only, which can
+        # produce incorrect column mappings (cross-product). E.g., FK(a,b) -> REF(x,y)
+        # may report a->x, a->y, b->x, b->y instead of a->x, b->y. This is acceptable
+        # for detecting "is FK" and "references which table", but not for exact column
+        # mapping. To fix, would need pg_constraint with array position matching.
+        fk_query = """
+            SELECT
+                kcu.column_name,
+                ccu.table_schema || '.' || ccu.table_name || '(' || ccu.column_name || ')' as references
+            FROM information_schema.table_constraints tc
+            JOIN information_schema.key_column_usage kcu
+                ON tc.constraint_name = kcu.constraint_name
+                AND tc.table_schema = kcu.table_schema
+            JOIN information_schema.constraint_column_usage ccu
+                ON tc.constraint_name = ccu.constraint_name
+                AND tc.table_schema = ccu.table_schema
+            WHERE tc.constraint_type = 'FOREIGN KEY'
+              AND tc.table_schema = %s
+              AND tc.table_name = %s
+        """
+        fk_results = self.db.read_query(
+            fk_query,
+            (schema, table_name),
+            as_dict=False,
+            context={
+                "trusted_source": True,
+                "source": "PostgresSchemaIntrospector.get_column_constraints.fk",
+            },
+        )
+        fk_map = {row[0]: row[1] for row in fk_results} if fk_results else {}
+
+        # Build combined constraints dict
+        constraints = {}
+        all_columns = pk_columns | set(fk_map.keys())
+
+        for col_name in all_columns:
+            constraints[col_name] = {
+                "is_primary_key": col_name in pk_columns,
+                "is_foreign_key": col_name in fk_map,
+                "references": fk_map.get(col_name),
+            }
+
+        return constraints
 
     def get_indexes(self, table_name: str, schema: str) -> List[IndexDefinition]:
         """Get index definitions for a table.

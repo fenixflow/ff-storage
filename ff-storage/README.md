@@ -8,10 +8,11 @@ A comprehensive storage package for Fenixflow applications, providing **async co
 
 Created by **Ben Moag** at **[Fenixflow](https://fenixflow.com)**
 
-## 🔥 Version 4.6.2 - Latest Release
+## 🔥 Version 4.6.3 - Latest Release
 
 **What's New in v4.6.x**:
 
+- **v4.6.3** - Fixed false positive schema drift for float types + added PK/FK introspection to schema sync
 - **v4.6.2** - Documentation updates
 - **v4.6.1** - Fixed JSONB field serialization in `update()` methods (NoneStrategy & CopyOnChangeStrategy)
 - **v4.6.0** - Fixed false positive schema drift for SQL function defaults (case sensitivity: `now()` vs `NOW()`)
