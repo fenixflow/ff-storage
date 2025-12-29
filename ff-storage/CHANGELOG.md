@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.6.4] - 2025-12-29
+
+### Fixed
+
+- **[TEMPORAL STRATEGIES]** Fixed `updated_at` field not persisting in main table for `copy_on_change` strategy
+  - The `updated_at` timestamp was correctly computed but filtered out when building the UPDATE query
+  - Now `updated_at` and `updated_by` are explicitly included in UPDATE queries as strategy-managed fields
+  - Main table now reflects accurate update timestamps after each modification
+
+### Changed
+
+- **[TEMPORAL STRATEGIES]** Metadata fields are now excluded from audit trail in `copy_on_change` strategy
+  - System fields (`id`, `created_at`, `updated_at`, `created_by`, `deleted_at`, `deleted_by`, `tenant_id`) no longer create audit entries
+  - Audit trail now only tracks user data changes, reducing noise and storage
+  - Uses `_get_metadata_fields()` for forward compatibility with future metadata fields
+
 ## [4.6.3] - 2025-12-12
 
 ### Fixed

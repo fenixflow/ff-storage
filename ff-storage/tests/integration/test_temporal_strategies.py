@@ -422,6 +422,95 @@ class TestCopyOnChangeStrategy:
         # All updates should be recorded (no lost updates)
         assert len(price_changes) == 3
 
+    @pytest.mark.asyncio
+    async def test_updated_at_persists_on_update(self, db_pool, setup_tables):
+        """Test that updated_at field is updated in main table after update.
+
+        Regression test for bug where updated_at was filtered out of UPDATE query.
+        """
+        tenant_id = uuid4()
+        user_id = uuid4()
+
+        repo = PydanticRepository(ProductCopyOnChange, db_pool, tenant_id=tenant_id)
+
+        # Create product
+        product = await repo.create(
+            ProductCopyOnChange(name="Original", price=Decimal("100.00")),
+            user_id=user_id,
+        )
+        original_updated_at = product.updated_at
+
+        # Wait a moment to ensure timestamp difference
+        await asyncio.sleep(0.1)
+
+        # Update product
+        updated = await repo.update(
+            product.id,
+            ProductCopyOnChange(name="Updated", price=Decimal("100.00")),
+            user_id=user_id,
+        )
+
+        # CRITICAL: updated_at should be NEWER than original
+        assert (
+            updated.updated_at > original_updated_at
+        ), f"updated_at should have changed: {updated.updated_at} should be > {original_updated_at}"
+
+        # Also verify by fetching fresh from DB
+        fetched = await repo.get(product.id)
+        assert fetched.updated_at > original_updated_at, "updated_at not persisted to database"
+
+    @pytest.mark.asyncio
+    async def test_metadata_fields_not_in_audit_trail(self, db_pool, setup_tables):
+        """Test that ALL metadata fields don't create audit entries.
+
+        Metadata fields (id, created_at, updated_at, created_by, deleted_at,
+        deleted_by, tenant_id) are system-managed and should not pollute the
+        audit trail which tracks user data changes.
+        """
+        tenant_id = uuid4()
+        user_id = uuid4()
+
+        repo = PydanticRepository(ProductCopyOnChange, db_pool, tenant_id=tenant_id)
+
+        # All metadata fields that should be excluded from audit
+        metadata_fields = {
+            "id",
+            "created_at",
+            "updated_at",
+            "created_by",
+            "deleted_at",
+            "deleted_by",
+            "tenant_id",
+        }
+
+        # Create product
+        product = await repo.create(
+            ProductCopyOnChange(name="Original", price=Decimal("100.00")),
+            user_id=user_id,
+        )
+
+        # Update product
+        await repo.update(
+            product.id,
+            ProductCopyOnChange(name="Updated", price=Decimal("100.00")),
+            user_id=user_id,
+        )
+
+        # Get audit history
+        history = await repo.get_audit_history(product.id)
+        update_entries = [h for h in history if h.operation == "UPDATE"]
+
+        # Should NOT have audit entries for ANY metadata fields
+        metadata_entries = [h for h in update_entries if h.field_name in metadata_fields]
+        assert len(metadata_entries) == 0, (
+            f"Metadata fields should not be audited, but found: "
+            f"{[h.field_name for h in metadata_entries]}"
+        )
+
+        # Should still have audit entry for user field (name)
+        name_entries = [h for h in update_entries if h.field_name == "name"]
+        assert len(name_entries) == 1, "User field 'name' should be audited"
+
 
 class TestSCD2Strategy:
     """Test 'scd2' temporal strategy."""

@@ -342,7 +342,16 @@ class CopyOnChangeStrategy(TemporalStrategy[T]):
             current_data = dict(current_row)
             audit_entries = []
 
+            # Get ALL metadata fields to exclude from audit trail
+            # This includes: id, created_at, updated_at, created_by, deleted_at, deleted_by, tenant_id
+            # These are system-managed fields that should not create audit entries
+            audit_excluded_fields = self._get_metadata_fields()
+
             for field_name, new_value in data.items():
+                # Skip system metadata - we only audit user data changes
+                if field_name in audit_excluded_fields:
+                    continue
+
                 old_value = current_data.get(field_name)
 
                 # Skip if no change
@@ -370,6 +379,8 @@ class CopyOnChangeStrategy(TemporalStrategy[T]):
             # Build SET clause parts
             # Filter out metadata fields to prevent overwriting with None values
             metadata_fields = self._get_metadata_fields()
+            # Fields set by strategy that SHOULD be included in UPDATE
+            strategy_managed_fields = {"updated_at", "updated_by"}
 
             # Serialize JSONB fields before building SET clause
             serialized_data = self._serialize_jsonb_fields(data)
@@ -379,8 +390,8 @@ class CopyOnChangeStrategy(TemporalStrategy[T]):
             base_param = len(where_values)
 
             for key, value in serialized_data.items():
-                # Skip metadata fields that should be preserved from current record
-                if key in metadata_fields:
+                # Skip metadata fields EXCEPT those managed by the strategy
+                if key in metadata_fields and key not in strategy_managed_fields:
                     continue
 
                 set_values.append(value)
