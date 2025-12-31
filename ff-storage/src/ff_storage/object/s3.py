@@ -343,17 +343,151 @@ class S3ObjectStorage(ObjectStorage):
         self, key: str, stream: AsyncIterator[bytes], metadata: Optional[Dict[str, str]] = None
     ) -> bool:
         """
-        Write data from a stream to S3.
+        Write data from a stream to S3 using multipart upload.
 
-        For now, collects all chunks and writes at once.
-        TODO: Implement true streaming with multipart upload.
+        This method uses streaming multipart upload for memory efficiency.
+        Data is buffered until it reaches the minimum part size (5MB), then
+        uploaded. This prevents OOM errors when uploading large files.
+
+        For small streams (< 5MB total), falls back to simple put_object.
+
+        Args:
+            key: Storage key/path for the object
+            stream: Async iterator yielding bytes chunks
+            metadata: Optional metadata dict
+
+        Returns:
+            True on success
+
+        Raises:
+            IOError: If upload fails
         """
-        chunks = []
-        async for chunk in stream:
-            chunks.append(chunk)
+        try:
+            full_key = self._get_full_key(key)
 
-        data = b"".join(chunks)
-        return await self.write(key, data, metadata)
+            # Prepare metadata
+            extra_args: Dict[str, Any] = {}
+            if metadata:
+                extra_args["Metadata"] = metadata
+                if "content-type" in metadata:
+                    extra_args["ContentType"] = metadata["content-type"]
+
+            async with await self._get_client() as client:
+                # Buffer initial data to check if multipart is needed
+                buffer = bytearray()
+                stream_exhausted = False
+
+                async for chunk in stream:
+                    buffer.extend(chunk)
+                    if len(buffer) >= self.MULTIPART_THRESHOLD:
+                        break
+                else:
+                    stream_exhausted = True
+
+                # If stream is small enough, use simple put
+                if stream_exhausted and len(buffer) < self.MULTIPART_THRESHOLD:
+                    await client.put_object(
+                        Bucket=self.bucket, Key=full_key, Body=bytes(buffer), **extra_args
+                    )
+                    return True
+
+                # Use multipart upload for larger streams
+                return await self._streaming_multipart_upload(
+                    client, full_key, buffer, stream, stream_exhausted, extra_args
+                )
+
+        except Exception as e:
+            raise IOError(f"Failed to write stream {key}: {e}")
+
+    async def _streaming_multipart_upload(
+        self,
+        client: Any,
+        key: str,
+        initial_buffer: bytearray,
+        stream: AsyncIterator[bytes],
+        stream_exhausted: bool,
+        extra_args: Dict,
+    ) -> bool:
+        """
+        Perform streaming multipart upload.
+
+        Args:
+            client: S3 client
+            key: Full S3 key
+            initial_buffer: Data already read from stream
+            stream: Remaining async iterator (may be exhausted)
+            stream_exhausted: Whether stream is already exhausted
+            extra_args: Extra arguments for S3 (metadata, content-type)
+
+        Returns:
+            True on success
+        """
+        # Start multipart upload
+        response = await client.create_multipart_upload(Bucket=self.bucket, Key=key, **extra_args)
+        upload_id = response["UploadId"]
+
+        try:
+            parts: List[Dict[str, Any]] = []
+            part_number = 1
+            buffer = initial_buffer
+
+            # Upload initial buffer if it's at chunk size
+            while len(buffer) >= self.MULTIPART_CHUNK_SIZE:
+                chunk_data = bytes(buffer[: self.MULTIPART_CHUNK_SIZE])
+                del buffer[: self.MULTIPART_CHUNK_SIZE]
+
+                response = await client.upload_part(
+                    Bucket=self.bucket,
+                    Key=key,
+                    PartNumber=part_number,
+                    UploadId=upload_id,
+                    Body=chunk_data,
+                )
+                parts.append({"ETag": response["ETag"], "PartNumber": part_number})
+                part_number += 1
+
+            # Continue reading from stream if not exhausted
+            if not stream_exhausted:
+                async for chunk in stream:
+                    buffer.extend(chunk)
+
+                    # Upload when buffer reaches chunk size
+                    while len(buffer) >= self.MULTIPART_CHUNK_SIZE:
+                        chunk_data = bytes(buffer[: self.MULTIPART_CHUNK_SIZE])
+                        del buffer[: self.MULTIPART_CHUNK_SIZE]
+
+                        response = await client.upload_part(
+                            Bucket=self.bucket,
+                            Key=key,
+                            PartNumber=part_number,
+                            UploadId=upload_id,
+                            Body=chunk_data,
+                        )
+                        parts.append({"ETag": response["ETag"], "PartNumber": part_number})
+                        part_number += 1
+
+            # Upload remaining data in buffer
+            if buffer:
+                response = await client.upload_part(
+                    Bucket=self.bucket,
+                    Key=key,
+                    PartNumber=part_number,
+                    UploadId=upload_id,
+                    Body=bytes(buffer),
+                )
+                parts.append({"ETag": response["ETag"], "PartNumber": part_number})
+
+            # Complete multipart upload
+            await client.complete_multipart_upload(
+                Bucket=self.bucket, Key=key, UploadId=upload_id, MultipartUpload={"Parts": parts}
+            )
+
+            return True
+
+        except Exception:
+            # Abort the multipart upload on error
+            await client.abort_multipart_upload(Bucket=self.bucket, Key=key, UploadId=upload_id)
+            raise
 
     async def copy(self, source_key: str, dest_key: str) -> bool:
         """

@@ -910,12 +910,14 @@ class TestTemporalTableIndexBug:
         from ff_storage.pydantic_support.introspector import PydanticSchemaIntrospector
 
         # Create database connection
+        # NOTE: strict_validation=False needed for DDL operations (DROP TABLE, CREATE TABLE)
         db = Postgres(
             host="localhost",
             port=5436,
             dbname="test_temporal",
             user="postgres",
             password="postgres",
+            strict_validation=False,  # Allow DDL queries in tests
         )
         db.connect()
 
@@ -955,7 +957,13 @@ class TestTemporalTableIndexBug:
             desired_tables = {desired_table.name: desired_table}
 
             # Get current schema from database (includes audit table)
-            current_tables = postgres_introspector.get_tables(schema="public")
+            # get_tables returns table names, we need to build TableDefinitions
+            table_names = postgres_introspector.get_tables(schema="public")
+            current_tables = {}
+            for table_name in table_names:
+                table_def = postgres_introspector.get_table_schema(table_name, schema="public")
+                if table_def:
+                    current_tables[table_name] = table_def
 
             # Second run: Schema sync should work without errors
             # This would previously fail with "cannot drop index" error on audit table's pkey
@@ -975,7 +983,12 @@ class TestTemporalTableIndexBug:
                             )
 
             # Third run: Run schema sync again to ensure idempotent
-            current_tables = postgres_introspector.get_tables(schema="public")
+            table_names = postgres_introspector.get_tables(schema="public")
+            current_tables = {}
+            for table_name in table_names:
+                table_def = postgres_introspector.get_table_schema(table_name, schema="public")
+                if table_def:
+                    current_tables[table_name] = table_def
             changes = schema_manager.compare_schemas(
                 desired_schema={"public": desired_tables}, current_schema={"public": current_tables}
             )
@@ -1002,12 +1015,14 @@ class TestTemporalTableIndexBug:
         from ff_storage.db import Postgres
         from ff_storage.db.schema_sync.postgres import PostgresSchemaIntrospector
 
+        # NOTE: strict_validation=False needed for DDL operations (DROP TABLE, CREATE TABLE)
         db = Postgres(
             host="localhost",
             port=5436,
             dbname="test_temporal",
             user="postgres",
             password="postgres",
+            strict_validation=False,  # Allow DDL queries in tests
         )
         db.connect()
 

@@ -64,6 +64,28 @@ from .pydantic_support.base import PydanticModel
 from .pydantic_support.field_metadata import Field
 from .pydantic_support.repository import PydanticRepository
 
+# Query Builder (NEW in v4.7)
+from .query import (
+    AggregateExpression,
+    F,
+    FieldProxy,
+    FilterExpression,
+    GroupByClause,
+    OrderByClause,
+    Query,
+    func,
+)
+
+# Relationships (NEW in v4.7)
+from .relationships import (
+    Relationship,
+    RelationshipConfig,
+    RelationshipLoader,
+    RelationshipProxy,
+    RelationshipRegistry,
+    RelationType,
+)
+
 # Temporal strategies (NEW in v3.0)
 from .temporal.enums import TemporalStrategyType
 from .temporal.registry import get_strategy
@@ -96,6 +118,22 @@ __all__ = [
     "PydanticModel",
     "PydanticRepository",
     "Field",
+    # Query Builder
+    "Query",
+    "FilterExpression",
+    "FieldProxy",
+    "F",
+    "OrderByClause",
+    "AggregateExpression",
+    "GroupByClause",
+    "func",
+    # Relationships
+    "Relationship",
+    "RelationshipConfig",
+    "RelationshipLoader",
+    "RelationshipProxy",
+    "RelationshipRegistry",
+    "RelationType",
     # Temporal
     "TemporalStrategyType",
     "TemporalRepository",

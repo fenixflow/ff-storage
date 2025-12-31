@@ -6,8 +6,11 @@ Pydantic with ff-storage's temporal and schema synchronization systems.
 """
 
 from datetime import datetime, timezone
-from typing import Any, ClassVar, Optional
+from typing import TYPE_CHECKING, Any, ClassVar, Optional
 from uuid import UUID, uuid4
+
+if TYPE_CHECKING:
+    from ..query.expressions import FieldProxy
 
 from pydantic import BaseModel, ConfigDict, Field
 from pydantic.fields import FieldInfo
@@ -209,6 +212,15 @@ class PydanticModel(BaseModel):
                 # The fields are still injected and will work
                 pass
 
+        # Register model with RelationshipRegistry for relationship resolution
+        try:
+            from ..relationships.registry import RelationshipRegistry
+
+            RelationshipRegistry.register_model(cls.__name__, cls)
+        except ImportError:
+            # Relationships module not yet available
+            pass
+
     # ==================== Table Name Management ====================
 
     @classmethod
@@ -240,6 +252,46 @@ class PydanticModel(BaseModel):
             'public.users'
         """
         return f"{cls.__schema__}.{cls.table_name()}"
+
+    # ==================== Query Builder Support ====================
+
+    @classmethod
+    def field(cls, name: str) -> "FieldProxy":
+        """
+        Get a FieldProxy for building query expressions.
+
+        This method enables type-safe query building with fluent syntax:
+
+        Example:
+            >>> from ff_storage.query import Query
+            >>> results = await (
+            ...     Query(Product)
+            ...     .filter(Product.field("price") > 100)
+            ...     .filter(Product.field("name").contains("Widget"))
+            ...     .order_by(Product.field("created_at").desc())
+            ...     .execute(db_pool, tenant_id=tenant)
+            ... )
+
+        Args:
+            name: The field name to create a proxy for
+
+        Returns:
+            FieldProxy instance for building expressions
+
+        Raises:
+            ValueError: If the field doesn't exist on the model
+        """
+        from ..query.expressions import FieldProxy
+
+        # Validate field exists
+        all_fields = set(cls.model_fields.keys())
+        if name not in all_fields:
+            raise ValueError(
+                f"Field '{name}' does not exist on {cls.__name__}. "
+                f"Available fields: {sorted(all_fields)}"
+            )
+
+        return FieldProxy(name, cls)
 
     # ==================== Temporal Configuration ====================
 

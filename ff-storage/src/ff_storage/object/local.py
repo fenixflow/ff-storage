@@ -62,7 +62,9 @@ class LocalObjectStorage(ObjectStorage):
         full_path = (self.base_path / clean_key).resolve()
 
         # Ensure the path is within our base directory (prevent traversal)
-        if not str(full_path).startswith(str(self.base_path)):
+        # Use is_relative_to() for safe containment check (Python 3.9+)
+        # This prevents prefix collision attacks (e.g., /data/storage vs /data/storage2)
+        if not full_path.is_relative_to(self.base_path):
             raise ValueError(f"Invalid key: {key} (path traversal detected)")
 
         return full_path
