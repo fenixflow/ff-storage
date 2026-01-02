@@ -23,7 +23,7 @@ except Exception:
     __version__ = "3.0.0"
 
 # Database exports
-from .db import MySQL, MySQLPool, Postgres, PostgresPool, SchemaManager
+from .db import AsyncSchemaManager, MySQL, MySQLPool, Postgres, PostgresPool, SchemaManager
 
 # Exceptions (ENHANCED in v3.0)
 from .exceptions import (
@@ -92,6 +92,22 @@ from .temporal.registry import get_strategy
 from .temporal.repository_base import TemporalRepository
 from .temporal.validation import TemporalValidator, ValidationError
 
+# Transactions (NEW in v4.8)
+from .transactions import (
+    IsolationLevel,
+    Savepoint,
+    SavepointAlreadyReleased,
+    SavepointError,
+    SavepointNotFound,
+    Transaction,
+    TransactionAlreadyStarted,
+    TransactionBoundRepository,
+    TransactionClosed,
+    TransactionError,
+    TransactionNotStarted,
+    UnitOfWork,
+)
+
 # Utilities (NEW in v3.0)
 from .utils import (  # Retry utilities; Metrics utilities; Validation utilities
     DATABASE_RETRY,
@@ -134,6 +150,19 @@ __all__ = [
     "RelationshipProxy",
     "RelationshipRegistry",
     "RelationType",
+    # Transactions
+    "Transaction",
+    "Savepoint",
+    "IsolationLevel",
+    "UnitOfWork",
+    "TransactionBoundRepository",
+    "TransactionError",
+    "TransactionNotStarted",
+    "TransactionAlreadyStarted",
+    "TransactionClosed",
+    "SavepointError",
+    "SavepointNotFound",
+    "SavepointAlreadyReleased",
     # Temporal
     "TemporalStrategyType",
     "TemporalRepository",
@@ -148,6 +177,7 @@ __all__ = [
     "MySQLPool",
     # Schema Management
     "SchemaManager",
+    "AsyncSchemaManager",
     # Object Storage
     "ObjectStorage",
     "LocalObjectStorage",

@@ -18,8 +18,11 @@ Tenant Scoping:
 
 import asyncio
 import logging
-from typing import Any, Dict, Generic, List, Optional, TypeVar
+from typing import TYPE_CHECKING, Any, Dict, Generic, List, Optional, TypeVar
 from uuid import UUID
+
+if TYPE_CHECKING:
+    from ..transactions import IsolationLevel, Transaction
 
 from ..db.adapters import DatabaseAdapter, detect_adapter
 from ..exceptions import (
@@ -146,7 +149,7 @@ class TemporalRepository(Generic[T]):
 
             # Validate tenant_ids is not empty
             if tenant_ids is not None and len(tenant_ids) == 0:
-                raise ValueError("tenant_ids cannot be empty. " "Provide at least one tenant UUID.")
+                raise ValueError("tenant_ids cannot be empty. Provide at least one tenant UUID.")
 
             # Set tenant scope based on which parameter was provided
             if tenant_id is not None:
@@ -308,6 +311,41 @@ class TemporalRepository(Generic[T]):
         """
         # Delegate to CacheManager helper
         await self._cache_manager.invalidate(pattern)
+
+    # ==================== Transaction Support ====================
+
+    def transaction(
+        self,
+        isolation: "Optional[IsolationLevel]" = None,
+        readonly: bool = False,
+    ) -> "Transaction":
+        """
+        Create a transaction context manager for this repository's pool.
+
+        Convenience method that returns a Transaction bound to this
+        repository's database pool, allowing atomic operations across
+        multiple repository calls.
+
+        Args:
+            isolation: Transaction isolation level (defaults to READ COMMITTED)
+            readonly: If True, the transaction only allows read operations
+
+        Returns:
+            Transaction context manager
+
+        Example:
+            async with repo.transaction() as txn:
+                author = await author_repo.create(Author(name="John"), connection=txn.connection)
+                await post_repo.create(Post(author_id=author.id), connection=txn.connection)
+                # Auto-commit on success, auto-rollback on exception
+        """
+        from ..transactions import IsolationLevel, Transaction
+
+        return Transaction(
+            self.db_pool,
+            isolation=isolation or IsolationLevel.READ_COMMITTED,
+            readonly=readonly,
+        )
 
     # ==================== CRUD Operations ====================
 
@@ -899,6 +937,8 @@ class TemporalRepository(Generic[T]):
         models: List[T],
         user_id: Optional[UUID] = None,
         batch_size: int = 100,
+        atomic: bool = False,
+        connection=None,
     ) -> List[T]:
         """
         Create multiple records efficiently in batches.
@@ -907,13 +947,61 @@ class TemporalRepository(Generic[T]):
             models: List of model instances
             user_id: User performing the action
             batch_size: Number of records per batch
+            atomic: If True, all creates happen in a single transaction.
+                   If any create fails, all are rolled back. Default False.
+            connection: Optional database connection for external transaction
+                       management. When provided, the operation uses this
+                       connection instead of acquiring a new one from the pool.
 
         Returns:
             List of created model instances
+
+        Example:
+            # Non-atomic (default) - partial success possible
+            results = await repo.create_many(models)
+
+            # Atomic - all-or-nothing
+            results = await repo.create_many(models, atomic=True)
+
+            # With external transaction
+            async with repo.transaction() as txn:
+                results = await repo.create_many(models, connection=txn.connection)
         """
         if not models:
             return []
 
+        if atomic and connection is None:
+            # Wrap in a transaction for all-or-nothing semantics
+            return await self._create_many_atomic(models, user_id, batch_size)
+
+        return await self._create_many_batched(models, user_id, batch_size, connection)
+
+    async def _create_many_atomic(
+        self,
+        models: List[T],
+        user_id: Optional[UUID] = None,
+        batch_size: int = 100,
+    ) -> List[T]:
+        """
+        Create all records atomically within a single transaction.
+
+        If any create fails, all changes are rolled back.
+        """
+        async with self.transaction() as txn:
+            return await self._create_many_batched(
+                models, user_id, batch_size, connection=txn.connection
+            )
+
+    async def _create_many_batched(
+        self,
+        models: List[T],
+        user_id: Optional[UUID] = None,
+        batch_size: int = 100,
+        connection=None,
+    ) -> List[T]:
+        """
+        Create records in batches, optionally using an external connection.
+        """
         results = []
         total = len(models)
 
@@ -932,6 +1020,7 @@ class TemporalRepository(Generic[T]):
                             adapter=self.adapter,
                             tenant_id=self.tenant_id,
                             user_id=user_id,
+                            connection=connection,
                         )
                     else:
                         # Fall back to individual creates
@@ -943,6 +1032,7 @@ class TemporalRepository(Generic[T]):
                                 adapter=self.adapter,
                                 tenant_id=self.tenant_id,
                                 user_id=user_id,
+                                connection=connection,
                             )
                             batch_results.append(result)
 

@@ -7,7 +7,10 @@ import asyncio
 import logging
 import time
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
+
+if TYPE_CHECKING:
+    from ...transactions import IsolationLevel, Transaction
 
 import psycopg2
 from psycopg2 import DatabaseError, OperationalError
@@ -19,13 +22,13 @@ from ...exceptions import (
 )
 from ...health import HealthCheckResult, HealthStatus
 from ...utils.metrics import async_timer, get_global_collector, timer
+from ...utils.postgres import quote_identifier
 from ...utils.retry import (
     CircuitBreaker,
     exponential_backoff,
     retry,
     retry_async,
 )
-from ...utils.postgres import quote_identifier
 from ...utils.validation import validate_query
 from ..sql import SQL
 
@@ -850,6 +853,44 @@ class PostgresPool:
 
         timeout = timeout or self.connection_timeout
         return self.pool.acquire(timeout=timeout)
+
+    def transaction(
+        self,
+        isolation: Optional["IsolationLevel"] = None,
+        readonly: bool = False,
+    ) -> "Transaction":
+        """
+        Create a transaction context manager.
+
+        Provides a convenient way to wrap multiple operations in a single
+        database transaction with automatic commit/rollback.
+
+        :param isolation: Transaction isolation level (defaults to READ COMMITTED).
+                         Options: READ_UNCOMMITTED, READ_COMMITTED, REPEATABLE_READ, SERIALIZABLE
+        :param readonly: If True, the transaction only allows read operations.
+        :return: Transaction context manager.
+
+        Usage:
+            async with db_pool.transaction() as txn:
+                await repo.create(model, connection=txn.connection)
+                await repo.update(id, data, connection=txn.connection)
+                # Auto-commit on success, auto-rollback on exception
+
+            # With isolation level
+            from ff_storage.transactions import IsolationLevel
+
+            async with db_pool.transaction(isolation=IsolationLevel.SERIALIZABLE) as txn:
+                # High-consistency operations
+                ...
+        """
+        from ..transactions import IsolationLevel as IsoLevel
+        from ..transactions import Transaction
+
+        return Transaction(
+            self,
+            isolation=isolation or IsoLevel.READ_COMMITTED,
+            readonly=readonly,
+        )
 
     async def check_health(self) -> HealthCheckResult:
         """

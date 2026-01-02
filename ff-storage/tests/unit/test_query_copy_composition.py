@@ -1,8 +1,7 @@
 """Unit tests for Query.copy() and AND/OR composition."""
 
 import pytest
-
-from ff_storage.query import Query, F
+from ff_storage.query import F, Query
 from ff_storage.query.expressions import AND, OR, CompositeExpression, FilterExpression
 
 
@@ -139,7 +138,7 @@ class TestCompositeExpression:
         sql, params, next_idx = expr.to_sql(1)
 
         assert sql == (
-            '((t0."status" = $1 AND t0."price" > $2) OR ' '(t0."status" = $3 AND t0."price" > $4))'
+            '((t0."status" = $1 AND t0."price" > $2) OR (t0."status" = $3 AND t0."price" > $4))'
         )
         assert params == ["active", 100, "featured", 50]
         assert next_idx == 5

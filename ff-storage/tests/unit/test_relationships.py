@@ -7,8 +7,9 @@ Tests cover:
 - Relationship descriptor functionality
 """
 
-import pytest
 from typing import List
+
+import pytest
 
 
 class TestRelationshipConfig:

@@ -82,6 +82,7 @@ class QueryExecutor:
         limit: int | None,
         offset: int | None,
         tenant_id: UUID | None,
+        connection=None,
     ) -> List[T]:
         """
         Execute the query and return model instances.
@@ -96,6 +97,9 @@ class QueryExecutor:
             limit: Maximum results
             offset: Results to skip
             tenant_id: Tenant ID for multi-tenant filtering
+            connection: Optional database connection for external transaction
+                       management. When provided, the operation uses this
+                       connection instead of acquiring a new one from the pool.
 
         Returns:
             List of model instances
@@ -112,8 +116,11 @@ class QueryExecutor:
             tenant_id=tenant_id,
         )
 
-        async with self.db_pool.acquire() as conn:
-            rows = await conn.fetch(sql, *params)
+        if connection is not None:
+            rows = await connection.fetch(sql, *params)
+        else:
+            async with self.db_pool.acquire() as conn:
+                rows = await conn.fetch(sql, *params)
 
         # Convert rows to model instances
         return [self._row_to_model(dict(row)) for row in rows]
@@ -123,6 +130,7 @@ class QueryExecutor:
         filters: List[FilterExpression | CompositeExpression],
         joins: List["JoinConfig"],
         tenant_id: UUID | None,
+        connection=None,
     ) -> int:
         """
         Execute a COUNT query.
@@ -131,14 +139,20 @@ class QueryExecutor:
             filters: List of filter expressions
             joins: List of join configurations
             tenant_id: Tenant ID for multi-tenant filtering
+            connection: Optional database connection for external transaction
+                       management. When provided, the operation uses this
+                       connection instead of acquiring a new one from the pool.
 
         Returns:
             Count of matching records
         """
         sql, params = self._build_count_query(filters, joins, tenant_id)
 
-        async with self.db_pool.acquire() as conn:
-            row = await conn.fetchrow(sql, *params)
+        if connection is not None:
+            row = await connection.fetchrow(sql, *params)
+        else:
+            async with self.db_pool.acquire() as conn:
+                row = await conn.fetchrow(sql, *params)
 
         return row["count"] if row else 0
 
@@ -150,6 +164,7 @@ class QueryExecutor:
         having: List[FilterExpression | CompositeExpression],
         select_fields: List["FieldProxy | AggregateExpression"],
         tenant_id: UUID | None,
+        connection=None,
     ) -> Any:
         """
         Execute query and return a single scalar value.
@@ -161,6 +176,9 @@ class QueryExecutor:
             having: List of having expressions
             select_fields: Fields to select
             tenant_id: Tenant ID for multi-tenant filtering
+            connection: Optional database connection for external transaction
+                       management. When provided, the operation uses this
+                       connection instead of acquiring a new one from the pool.
 
         Returns:
             The first column of the first row
@@ -177,8 +195,11 @@ class QueryExecutor:
             tenant_id=tenant_id,
         )
 
-        async with self.db_pool.acquire() as conn:
-            row = await conn.fetchrow(sql, *params)
+        if connection is not None:
+            row = await connection.fetchrow(sql, *params)
+        else:
+            async with self.db_pool.acquire() as conn:
+                row = await conn.fetchrow(sql, *params)
 
         if not row:
             return None
@@ -316,11 +337,11 @@ class QueryExecutor:
 
         # SCD2 temporal filtering: only current versions
         if self.temporal_strategy == "scd2":
-            where_parts.append(f'{ColumnRef.format("valid_to", "t0")} IS NULL')
+            where_parts.append(f"{ColumnRef.format('valid_to', 't0')} IS NULL")
 
         # Soft delete filtering
         if self.soft_delete:
-            where_parts.append(f'{ColumnRef.format("deleted_at", "t0")} IS NULL')
+            where_parts.append(f"{ColumnRef.format('deleted_at', 't0')} IS NULL")
 
         # Multi-tenant filtering
         if self.multi_tenant:
@@ -336,7 +357,7 @@ class QueryExecutor:
                         "or set __multi_tenant__ = False on the model."
                     ),
                 )
-            where_parts.append(f'{ColumnRef.format(self.tenant_field, "t0")} = ${param_index}')
+            where_parts.append(f"{ColumnRef.format(self.tenant_field, 't0')} = ${param_index}")
             params.append(tenant_id)
             param_index += 1
 
@@ -422,13 +443,13 @@ class QueryExecutor:
                         # One-to-many: target.fk = t0.id
                         fk_col = config.get_foreign_key_column()
                         on_parts.append(
-                            f'{ColumnRef.format(fk_col, alias)} = {ColumnRef.format("id", "t0")}'
+                            f"{ColumnRef.format(fk_col, alias)} = {ColumnRef.format('id', 't0')}"
                         )
                     else:
                         # Many-to-one: t0.fk = target.id
                         fk_col = config.get_foreign_key_column()
                         on_parts.append(
-                            f'{ColumnRef.format(fk_col, "t0")} = {ColumnRef.format("id", alias)}'
+                            f"{ColumnRef.format(fk_col, 't0')} = {ColumnRef.format('id', alias)}"
                         )
             except ImportError:
                 # Relationships module not available
@@ -436,16 +457,16 @@ class QueryExecutor:
 
         # CRITICAL: Temporal safety for joined table
         if target_temporal == "scd2":
-            on_parts.append(f'{ColumnRef.format("valid_to", alias)} IS NULL')
+            on_parts.append(f"{ColumnRef.format('valid_to', alias)} IS NULL")
 
         # CRITICAL: Soft delete safety for joined table
         if target_soft_delete:
-            on_parts.append(f'{ColumnRef.format("deleted_at", alias)} IS NULL')
+            on_parts.append(f"{ColumnRef.format('deleted_at', alias)} IS NULL")
 
         # CRITICAL: Multi-tenant safety - joined table must be in same tenant
         if target_multi_tenant and self.multi_tenant and tenant_id:
             on_parts.append(
-                f'{ColumnRef.format(target_tenant_field, alias)} = {ColumnRef.format(self.tenant_field, "t0")}'
+                f"{ColumnRef.format(target_tenant_field, alias)} = {ColumnRef.format(self.tenant_field, 't0')}"
             )
 
         on_clause = " AND ".join(on_parts) if on_parts else "TRUE"

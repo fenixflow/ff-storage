@@ -96,8 +96,7 @@ class FilterExpression:
         # Validate operator against whitelist to prevent SQL injection
         if self.operator not in VALID_OPERATORS:
             raise ValueError(
-                f"Invalid operator: {self.operator!r}. "
-                f"Must be one of: {sorted(VALID_OPERATORS)}"
+                f"Invalid operator: {self.operator!r}. Must be one of: {sorted(VALID_OPERATORS)}"
             )
 
         column = ColumnRef.format(self.field, self.table_alias)
@@ -186,7 +185,7 @@ class CompositeExpression:
         """Validate the operator."""
         if self.operator not in ("AND", "OR"):
             raise ValueError(
-                f"Invalid composite operator: {self.operator!r}. " "Must be 'AND' or 'OR'."
+                f"Invalid composite operator: {self.operator!r}. Must be 'AND' or 'OR'."
             )
         if len(self.expressions) < 2:
             raise ValueError("CompositeExpression requires at least 2 expressions.")

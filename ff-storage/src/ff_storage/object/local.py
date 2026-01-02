@@ -214,7 +214,18 @@ class LocalObjectStorage(ObjectStorage):
         """List files with optional prefix filter."""
         try:
             keys = []
-            prefix_path = self.base_path / prefix.lstrip("/")
+
+            # Validate prefix to prevent path traversal
+            if prefix:
+                prefix_path = (self.base_path / prefix.lstrip("/")).resolve()
+                if not prefix_path.is_relative_to(self.base_path):
+                    return []  # Invalid prefix - return empty (not error)
+            else:
+                prefix_path = self.base_path
+
+            # Ensure prefix_path exists before walking
+            if not prefix_path.exists():
+                return []
 
             # Walk the directory tree
             for root, dirs, files in os.walk(prefix_path):

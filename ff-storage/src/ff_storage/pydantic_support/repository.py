@@ -126,7 +126,7 @@ class PydanticRepository(TemporalRepository[T]):
 
         # Validate tenant_ids is not empty
         if tenant_ids is not None and len(tenant_ids) == 0:
-            raise ValueError("tenant_ids cannot be empty. " "Provide at least one tenant UUID.")
+            raise ValueError("tenant_ids cannot be empty. Provide at least one tenant UUID.")
 
         # Normalize tenant_ids to remove duplicates
         if tenant_ids is not None:

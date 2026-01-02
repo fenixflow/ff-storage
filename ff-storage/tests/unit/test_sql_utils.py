@@ -47,6 +47,41 @@ class TestColumnRef:
         result = ColumnRef.quote_identifier("order")
         assert result == '"order"'
 
+    def test_escape_embedded_quotes_in_format(self):
+        """Format should escape embedded double quotes (Issue #6)."""
+        result = ColumnRef.format('col"name')
+        assert result == 't0."col""name"'
+
+    def test_escape_embedded_quotes_in_quote_identifier(self):
+        """Quote_identifier should escape embedded double quotes."""
+        result = ColumnRef.quote_identifier('foo"bar')
+        assert result == '"foo""bar"'
+
+    def test_escape_embedded_quotes_in_dotted_identifier(self):
+        """Quote_identifier should escape quotes in dotted identifiers."""
+        result = ColumnRef.quote_identifier('schema"x.table"y')
+        assert result == '"schema""x"."table""y"'
+
+    def test_escape_embedded_quotes_in_format_qualified(self):
+        """Format_qualified should escape embedded quotes in all parts."""
+        result = ColumnRef.format_qualified('my"schema', 'my"table', 'my"column')
+        assert result == '"my""schema"."my""table"."my""column"'
+
+    def test_escape_embedded_quotes_in_format_table(self):
+        """Format_table should escape embedded quotes."""
+        result = ColumnRef.format_table('sch"ema', 'tab"le')
+        assert result == '"sch""ema"."tab""le"'
+
+    def test_escape_identifier_helper(self):
+        """_escape_identifier should double quotes."""
+        result = ColumnRef._escape_identifier('test"value"here')
+        assert result == 'test""value""here'
+
+    def test_escape_identifier_no_quotes(self):
+        """_escape_identifier should pass through clean names."""
+        result = ColumnRef._escape_identifier("clean_name")
+        assert result == "clean_name"
+
 
 class TestParameterTracker:
     """Tests for ParameterTracker utility class."""

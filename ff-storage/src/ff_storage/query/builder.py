@@ -251,7 +251,7 @@ class Query(Generic[T]):
         normalized_join_type = join_type.upper()
         if normalized_join_type not in JOIN_TYPES:
             raise ValueError(
-                f"Invalid join type: {join_type!r}. " f"Must be one of: {sorted(JOIN_TYPES)}"
+                f"Invalid join type: {join_type!r}. Must be one of: {sorted(JOIN_TYPES)}"
             )
 
         # Validate on clause format to prevent SQL injection
@@ -528,6 +528,7 @@ class Query(Generic[T]):
         self,
         db_pool: "PostgresPool",
         tenant_id: UUID | None = None,
+        connection=None,
     ) -> List[T]:
         """
         Execute the query and return results.
@@ -535,12 +536,19 @@ class Query(Generic[T]):
         Args:
             db_pool: Database connection pool
             tenant_id: Optional tenant ID for multi-tenant filtering
+            connection: Optional database connection for external transaction
+                       management. When provided, the operation uses this
+                       connection instead of acquiring a new one from the pool.
 
         Returns:
             List of model instances
 
         Example:
             results = await query.execute(db_pool, tenant_id=org_id)
+
+            # Within a transaction
+            async with Transaction(db_pool) as txn:
+                results = await query.execute(db_pool, tenant_id=org_id, connection=txn.connection)
         """
         from .executor import QueryExecutor
 
@@ -555,6 +563,7 @@ class Query(Generic[T]):
             limit=self._limit,
             offset=self._offset,
             tenant_id=tenant_id,
+            connection=connection,
         )
 
         # Apply eager loading if configured
@@ -564,6 +573,7 @@ class Query(Generic[T]):
         self,
         db_pool: "PostgresPool",
         tenant_id: UUID | None = None,
+        connection=None,
     ) -> int:
         """
         Execute a COUNT query.
@@ -571,6 +581,9 @@ class Query(Generic[T]):
         Args:
             db_pool: Database connection pool
             tenant_id: Optional tenant ID for multi-tenant filtering
+            connection: Optional database connection for external transaction
+                       management. When provided, the operation uses this
+                       connection instead of acquiring a new one from the pool.
 
         Returns:
             Count of matching records
@@ -582,12 +595,14 @@ class Query(Generic[T]):
             filters=self._filters,
             joins=self._joins,
             tenant_id=tenant_id,
+            connection=connection,
         )
 
     async def first(
         self,
         db_pool: "PostgresPool",
         tenant_id: UUID | None = None,
+        connection=None,
     ) -> T | None:
         """
         Execute query and return first result or None.
@@ -597,6 +612,9 @@ class Query(Generic[T]):
         Args:
             db_pool: Database connection pool
             tenant_id: Optional tenant ID for multi-tenant filtering
+            connection: Optional database connection for external transaction
+                       management. When provided, the operation uses this
+                       connection instead of acquiring a new one from the pool.
 
         Returns:
             First matching model instance or None
@@ -615,6 +633,7 @@ class Query(Generic[T]):
             limit=1,  # Use limit=1 directly, don't mutate self
             offset=self._offset,
             tenant_id=tenant_id,
+            connection=connection,
         )
 
         # Apply eager loading if configured
@@ -626,6 +645,7 @@ class Query(Generic[T]):
         self,
         db_pool: "PostgresPool",
         tenant_id: UUID | None = None,
+        connection=None,
     ) -> bool:
         """
         Check if any matching records exist.
@@ -633,17 +653,21 @@ class Query(Generic[T]):
         Args:
             db_pool: Database connection pool
             tenant_id: Optional tenant ID for multi-tenant filtering
+            connection: Optional database connection for external transaction
+                       management. When provided, the operation uses this
+                       connection instead of acquiring a new one from the pool.
 
         Returns:
             True if any records match
         """
-        count = await self.count(db_pool, tenant_id)
+        count = await self.count(db_pool, tenant_id, connection=connection)
         return count > 0
 
     async def scalar(
         self,
         db_pool: "PostgresPool",
         tenant_id: UUID | None = None,
+        connection=None,
     ) -> Any:
         """
         Execute query and return a single scalar value.
@@ -653,6 +677,9 @@ class Query(Generic[T]):
         Args:
             db_pool: Database connection pool
             tenant_id: Optional tenant ID for multi-tenant filtering
+            connection: Optional database connection for external transaction
+                       management. When provided, the operation uses this
+                       connection instead of acquiring a new one from the pool.
 
         Returns:
             The scalar value from the first column of the first row
@@ -667,4 +694,5 @@ class Query(Generic[T]):
             having=self._having,
             select_fields=self._select_fields,
             tenant_id=tenant_id,
+            connection=connection,
         )

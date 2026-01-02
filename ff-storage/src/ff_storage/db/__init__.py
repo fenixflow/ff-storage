@@ -8,7 +8,8 @@ Async Pools (for FastAPI, production apps):
     - PostgresPool, MySQLPool, SQLServerPool
 
 Schema Management:
-    - SchemaManager (Terraform-like schema synchronization)
+    - SchemaManager (Terraform-like schema synchronization - sync)
+    - AsyncSchemaManager (NEW in v4.8 - async, works with PostgresPool)
 """
 
 from .connections import (
@@ -22,7 +23,7 @@ from .connections import (
     SQLServerBase,
     SQLServerPool,
 )
-from .schema_sync import SchemaManager
+from .schema_sync import AsyncSchemaManager, SchemaManager
 from .sql import SQL
 
 __all__ = [
@@ -40,5 +41,6 @@ __all__ = [
     "SQLServerPool",  # Async connection pool
     "SQLServerBase",
     # Schema Sync (replaces MigrationManager in v2.0.0)
-    "SchemaManager",
+    "SchemaManager",  # Sync (uses Postgres connection)
+    "AsyncSchemaManager",  # Async (uses PostgresPool)
 ]

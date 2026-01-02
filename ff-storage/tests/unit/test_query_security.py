@@ -412,10 +412,10 @@ class TestStrictValidation:
 
     def test_strict_validation_default_true(self):
         """strict_validation should default to True."""
-        from ff_storage.db.connections.postgres import PostgresBase
-
         # Check default value without instantiating (avoid connection)
         import dataclasses
+
+        from ff_storage.db.connections.postgres import PostgresBase
 
         fields = {f.name: f for f in dataclasses.fields(PostgresBase)}
         assert fields["strict_validation"].default is True

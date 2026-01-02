@@ -205,22 +205,20 @@ class S3ObjectStorage(ObjectStorage):
 
     async def exists(self, key: str) -> bool:
         """Check if an object exists in S3."""
-        try:
-            full_key = self._get_full_key(key)
+        full_key = self._get_full_key(key)
 
-            async with await self._get_client() as client:
-                try:
-                    await client.head_object(Bucket=self.bucket, Key=full_key)
-                    return True
-                except client.exceptions.NoSuchKey:
+        async with await self._get_client() as client:
+            try:
+                await client.head_object(Bucket=self.bucket, Key=full_key)
+                return True
+            except client.exceptions.NoSuchKey:
+                return False
+            except ClientError as e:
+                error_code = e.response.get("Error", {}).get("Code", "")
+                if error_code in ("404", "NoSuchKey"):
                     return False
-                except ClientError as e:
-                    if e.response["Error"]["Code"] == "404":
-                        return False
-                    raise
-
-        except Exception:
-            return False
+                # Re-raise permission, throttling, network errors
+                raise IOError(f"Failed to check existence of {key}: {e}")
 
     async def delete(self, key: str) -> bool:
         """Delete an object from S3."""
@@ -299,14 +297,24 @@ class S3ObjectStorage(ObjectStorage):
             full_key = self._get_full_key(key)
 
             async with await self._get_client() as client:
-                # Prepare metadata
-                s3_metadata = metadata.copy()
-                extra_args = {"Metadata": s3_metadata}
+                # Get current metadata to preserve ContentType if not explicitly set
+                try:
+                    current = await client.head_object(Bucket=self.bucket, Key=full_key)
+                except client.exceptions.NoSuchKey:
+                    raise KeyError(f"Key not found: {key}")
 
-                # Handle content-type specially
+                # Prepare new metadata - always use REPLACE to apply changes
+                s3_metadata = metadata.copy()
+                extra_args = {
+                    "Metadata": s3_metadata,
+                    "MetadataDirective": "REPLACE",
+                }
+
+                # Handle content-type: use new value or preserve existing
                 if "content-type" in metadata:
                     extra_args["ContentType"] = metadata["content-type"]
-                    extra_args["MetadataDirective"] = "REPLACE"
+                elif "ContentType" in current:
+                    extra_args["ContentType"] = current["ContentType"]
 
                 # Copy object to itself with new metadata
                 await client.copy_object(
@@ -318,6 +326,8 @@ class S3ObjectStorage(ObjectStorage):
 
             return True
 
+        except KeyError:
+            raise
         except Exception as e:
             raise IOError(f"Failed to update metadata for {key}: {e}")
 

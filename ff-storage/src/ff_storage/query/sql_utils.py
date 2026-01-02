@@ -29,6 +29,22 @@ class ColumnRef:
     """
 
     @staticmethod
+    def _escape_identifier(name: str) -> str:
+        """
+        Escape double quotes in an identifier for SQL quoting.
+
+        In SQL, a double quote within a quoted identifier must be escaped
+        by doubling it (e.g., 'foo"bar' becomes '"foo""bar"').
+
+        Args:
+            name: Raw identifier name
+
+        Returns:
+            Escaped identifier safe for quoting
+        """
+        return name.replace('"', '""')
+
+    @staticmethod
     def format(field: str, table_alias: str = "t0") -> str:
         """
         Format a column reference with proper quoting.
@@ -40,7 +56,8 @@ class ColumnRef:
         Returns:
             Quoted column reference like 't0."field"'
         """
-        return f'{table_alias}."{field}"'
+        escaped = ColumnRef._escape_identifier(field)
+        return f'{table_alias}."{escaped}"'
 
     @staticmethod
     def format_qualified(schema: str, table: str, column: str) -> str:
@@ -55,7 +72,10 @@ class ColumnRef:
         Returns:
             Fully qualified reference like '"schema"."table"."column"'
         """
-        return f'"{schema}"."{table}"."{column}"'
+        s = ColumnRef._escape_identifier(schema)
+        t = ColumnRef._escape_identifier(table)
+        c = ColumnRef._escape_identifier(column)
+        return f'"{s}"."{t}"."{c}"'
 
     @staticmethod
     def format_table(schema: str, table: str) -> str:
@@ -69,7 +89,9 @@ class ColumnRef:
         Returns:
             Qualified table reference like '"schema"."table"'
         """
-        return f'"{schema}"."{table}"'
+        s = ColumnRef._escape_identifier(schema)
+        t = ColumnRef._escape_identifier(table)
+        return f'"{s}"."{t}"'
 
     @staticmethod
     def quote_identifier(name: str) -> str:
@@ -77,6 +99,7 @@ class ColumnRef:
         Quote a SQL identifier.
 
         Handles dotted identifiers (schema.table) by quoting each part.
+        Escapes embedded double quotes by doubling them.
 
         Args:
             name: Identifier to quote
@@ -86,8 +109,8 @@ class ColumnRef:
         """
         if "." in name:
             parts = name.split(".")
-            return ".".join(f'"{p}"' for p in parts)
-        return f'"{name}"'
+            return ".".join(f'"{ColumnRef._escape_identifier(p)}"' for p in parts)
+        return f'"{ColumnRef._escape_identifier(name)}"'
 
 
 class ParameterTracker:

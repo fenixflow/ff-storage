@@ -7,9 +7,10 @@ Tests cover:
 - Symlink attacks (if applicable)
 """
 
-import pytest
 import tempfile
 from pathlib import Path
+
+import pytest
 
 
 class TestLocalStoragePathTraversal:
@@ -219,3 +220,83 @@ class TestPathValidationEdgeCases:
             for key in special_paths:
                 path = storage._validate_key(key)
                 assert path.is_relative_to(storage.base_path)
+
+
+class TestListKeysPathTraversal:
+    """Tests for list_keys path traversal prevention (Issue #3)."""
+
+    @pytest.mark.asyncio
+    async def test_list_keys_rejects_path_traversal(self):
+        """list_keys should return empty list for path traversal attempts."""
+        from ff_storage.object.local import LocalObjectStorage
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Create base directory inside temp
+            base_path = Path(tmpdir) / "storage"
+            base_path.mkdir()
+
+            # Create a file inside storage
+            (base_path / "legit.txt").write_text("legit content")
+
+            storage = LocalObjectStorage(str(base_path))
+
+            # Path traversal attempts should return empty list
+            traversal_prefixes = [
+                "../",
+                "../../",
+                "../../../etc",
+                "subdir/../../../etc",
+            ]
+
+            for prefix in traversal_prefixes:
+                keys = await storage.list_keys(prefix)
+                assert keys == [], f"Expected empty list for prefix '{prefix}'"
+
+    @pytest.mark.asyncio
+    async def test_list_keys_valid_nested_prefix(self):
+        """list_keys should work with valid nested prefixes."""
+        from ff_storage.object.local import LocalObjectStorage
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            storage = LocalObjectStorage(tmpdir)
+
+            # Create nested directory structure
+            docs_path = Path(tmpdir) / "docs" / "reports"
+            docs_path.mkdir(parents=True)
+            (docs_path / "q1.pdf").write_text("report content")
+
+            # List with valid prefix
+            keys = await storage.list_keys("docs/reports")
+            assert "docs/reports/q1.pdf" in keys
+
+    @pytest.mark.asyncio
+    async def test_list_keys_nonexistent_prefix(self):
+        """list_keys should return empty for nonexistent prefix."""
+        from ff_storage.object.local import LocalObjectStorage
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            storage = LocalObjectStorage(tmpdir)
+
+            keys = await storage.list_keys("nonexistent/path")
+            assert keys == []
+
+    @pytest.mark.asyncio
+    async def test_list_keys_prefix_collision_blocked(self):
+        """list_keys should not allow prefix collision attacks."""
+        from ff_storage.object.local import LocalObjectStorage
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Create base and sibling directories
+            base_path = Path(tmpdir) / "storage"
+            base_path.mkdir()
+            (base_path / "legit.txt").write_text("legit")
+
+            sibling_path = Path(tmpdir) / "storage2"
+            sibling_path.mkdir()
+            (sibling_path / "secret.txt").write_text("secret")
+
+            storage = LocalObjectStorage(str(base_path))
+
+            # Attempt prefix collision
+            keys = await storage.list_keys("../storage2")
+            assert keys == [], "Should not list files from sibling directory"
