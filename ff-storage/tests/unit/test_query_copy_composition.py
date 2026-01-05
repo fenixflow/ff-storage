@@ -24,7 +24,7 @@ class TestQueryCopy:
         copied = base.copy()
 
         # Modifying the copy should not affect the base
-        copied.filter(F.price > 100)
+        copied = copied.filter(F.price > 100)
 
         assert len(base._filters) == 1
         assert len(copied._filters) == 2

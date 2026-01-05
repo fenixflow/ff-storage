@@ -39,6 +39,9 @@ VALID_OPERATORS = frozenset(
         # Set membership
         "IN",
         "NOT IN",
+        # Subquery membership
+        "IN_SUBQUERY",
+        "NOT IN_SUBQUERY",
         # NULL checks
         "IS NULL",
         "IS NOT NULL",

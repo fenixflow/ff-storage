@@ -67,6 +67,7 @@ from .expressions import AND, OR, CompositeExpression, F, FieldProxy, FilterExpr
 from .functions import func
 from .ordering import OrderByClause
 from .sql_utils import ColumnRef, ParameterTracker
+from .subquery import Subquery
 
 __all__ = [
     # Expressions
@@ -81,6 +82,8 @@ __all__ = [
     "OrderByClause",
     # Builder
     "Query",
+    # Subqueries
+    "Subquery",
     # Aggregations
     "AggregateExpression",
     "GroupByClause",

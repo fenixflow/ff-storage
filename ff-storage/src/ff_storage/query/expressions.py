@@ -9,18 +9,50 @@ Security Notes:
     - All user-provided values are parameterized (never interpolated into SQL)
     - LIKE patterns are escaped to prevent wildcard injection
     - Operators are validated against a whitelist to prevent SQL injection
+
+Type Safety Note for FieldProxy:
+    FieldProxy overrides __eq__ and __ne__ to return FilterExpression instead
+    of bool. This is intentional for building query expressions but violates
+    Python's type contract for these magic methods.
+
+    The `# type: ignore[override]` comments suppress mypy warnings about this
+    intentional deviation from the expected return type.
+
+    IMPORTANT: DO NOT use FieldProxy in boolean contexts!
+
+    Example of WRONG usage (always True because FilterExpression is truthy):
+        if F.price == 100:  # WRONG! This is ALWAYS True
+            do_something()
+
+    Example of CORRECT usage (use in filter() method):
+        Query(Product).filter(F.price == 100)  # CORRECT
+        Query(Product).filter(F.name.contains("test"))  # CORRECT
+
+    If you need to check a boolean field value, always use it within Query:
+        # Check if there are products with price == 100
+        exists = await Query(Product).filter(F.price == 100).exists(db_pool)
+
+    The same applies to using FieldProxy in `and`, `or`, `not` expressions:
+        # WRONG - Python short-circuits on truthiness, not SQL logic
+        F.price > 100 and F.status == "active"
+
+        # CORRECT - use AND() and OR() functions
+        from ff_storage.query import AND, OR
+        Query(Product).filter(AND(F.price > 100, F.status == "active"))
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, List, Tuple
+from uuid import UUID
 
 from .constants import LIKE_ESCAPE_CHARS, VALID_OPERATORS
 from .sql_utils import ColumnRef
 
 if TYPE_CHECKING:
     from .ordering import OrderByClause
+    from .subquery import Subquery
 
 
 def _escape_like_pattern(value: str) -> str:
@@ -71,12 +103,15 @@ class FilterExpression:
     value: Any
     table_alias: str = "t0"
 
-    def to_sql(self, param_index: int = 1) -> Tuple[str, Any, int]:
+    def to_sql(self, param_index: int = 1, tenant_id: UUID | None = None) -> Tuple[str, Any, int]:
         """
         Convert to SQL clause with parameter placeholder.
 
         Args:
             param_index: Starting parameter index for $N placeholders
+            tenant_id: Optional tenant ID for subquery multi-tenant filtering.
+                      CRITICAL: For IN_SUBQUERY expressions with multi-tenant models,
+                      this must be provided to ensure proper data isolation.
 
         Returns:
             Tuple of (sql_clause, param_value_or_list, next_param_index)
@@ -128,6 +163,38 @@ class FilterExpression:
                 f"{column} NOT IN ({placeholders})",
                 list(self.value),
                 param_index + len(self.value),
+            )
+
+        # IN_SUBQUERY clause
+        if self.operator == "IN_SUBQUERY":
+            from .subquery import Subquery
+
+            if not isinstance(self.value, Subquery):
+                raise ValueError("IN_SUBQUERY operator requires a Subquery value")
+            # Pass tenant_id to subquery for multi-tenant data isolation
+            subquery_sql, subquery_params, param_index = self.value.to_sql(
+                param_index, tenant_id=tenant_id
+            )
+            return (
+                f"{column} IN ({subquery_sql})",
+                subquery_params,
+                param_index,
+            )
+
+        # NOT IN_SUBQUERY clause
+        if self.operator == "NOT IN_SUBQUERY":
+            from .subquery import Subquery
+
+            if not isinstance(self.value, Subquery):
+                raise ValueError("NOT IN_SUBQUERY operator requires a Subquery value")
+            # Pass tenant_id to subquery for multi-tenant data isolation
+            subquery_sql, subquery_params, param_index = self.value.to_sql(
+                param_index, tenant_id=tenant_id
+            )
+            return (
+                f"{column} NOT IN ({subquery_sql})",
+                subquery_params,
+                param_index,
             )
 
         # BETWEEN clause
@@ -190,12 +257,15 @@ class CompositeExpression:
         if len(self.expressions) < 2:
             raise ValueError("CompositeExpression requires at least 2 expressions.")
 
-    def to_sql(self, param_index: int = 1) -> Tuple[str, List[Any], int]:
+    def to_sql(
+        self, param_index: int = 1, tenant_id: UUID | None = None
+    ) -> Tuple[str, List[Any], int]:
         """
         Generate SQL with proper parentheses for precedence.
 
         Args:
             param_index: Starting parameter index for $N placeholders
+            tenant_id: Optional tenant ID for subquery multi-tenant filtering
 
         Returns:
             Tuple of (sql_clause, param_values, next_param_index)
@@ -212,7 +282,7 @@ class CompositeExpression:
         params: List[Any] = []
 
         for expr in self.expressions:
-            sql, value, param_index = expr.to_sql(param_index)
+            sql, value, param_index = expr.to_sql(param_index, tenant_id=tenant_id)
             parts.append(sql)
             if value is not None:
                 if isinstance(value, (list, tuple)):
@@ -307,6 +377,23 @@ class FieldProxy:
         if self.model_class:
             return f"<FieldProxy {self.model_class.__name__}.{self.field_name}>"
         return f"<FieldProxy {self.field_name}>"
+
+    def __bool__(self) -> bool:
+        """
+        Prevent accidental use in boolean context.
+
+        FieldProxy objects should only be used in Query.filter() expressions,
+        not in Python boolean contexts like `if` statements.
+
+        Raises:
+            TypeError: Always, with guidance on correct usage.
+        """
+        raise TypeError(
+            f"Cannot use FieldProxy '{self.field_name}' in boolean context. "
+            "FieldProxy is for building query expressions, not boolean checks.\n"
+            "Wrong: if F.active:  # Always True!\n"
+            "Right: Query(Model).filter(F.active == True).exists(db_pool)"
+        )
 
     # -------------------------------------------------------------------------
     # Comparison operators
@@ -432,28 +519,52 @@ class FieldProxy:
     # Collection operations
     # -------------------------------------------------------------------------
 
-    def in_(self, values: List[Any]) -> FilterExpression:
+    def in_(self, values: "List[Any] | Subquery") -> FilterExpression:
         """
-        IN clause.
+        IN clause with list of values or subquery.
 
         Args:
-            values: List of values to match against
+            values: List of values to match against, or a Subquery
 
         Returns:
-            FilterExpression with IN operator
+            FilterExpression with IN or IN_SUBQUERY operator
+
+        Example:
+            # With list of values
+            query.filter(F.status.in_(["active", "pending"]))
+
+            # With subquery
+            active_ids = Query(User).filter(F.active == True).subquery()
+            query.filter(F.user_id.in_(active_ids))
         """
+        from .subquery import Subquery
+
+        if isinstance(values, Subquery):
+            return FilterExpression(self.field_name, "IN_SUBQUERY", values)
         return FilterExpression(self.field_name, "IN", list(values))
 
-    def not_in(self, values: List[Any]) -> FilterExpression:
+    def not_in(self, values: "List[Any] | Subquery") -> FilterExpression:
         """
-        NOT IN clause.
+        NOT IN clause with list of values or subquery.
 
         Args:
-            values: List of values to exclude
+            values: List of values to exclude, or a Subquery
 
         Returns:
-            FilterExpression with NOT IN operator
+            FilterExpression with NOT IN or NOT IN_SUBQUERY operator
+
+        Example:
+            # With list of values
+            query.filter(F.status.not_in(["deleted", "archived"]))
+
+            # With subquery
+            banned_ids = Query(BannedUser).subquery()
+            query.filter(F.user_id.not_in(banned_ids))
         """
+        from .subquery import Subquery
+
+        if isinstance(values, Subquery):
+            return FilterExpression(self.field_name, "NOT IN_SUBQUERY", values)
         return FilterExpression(self.field_name, "NOT IN", list(values))
 
     def between(self, low: Any, high: Any) -> FilterExpression:

@@ -64,33 +64,101 @@ class RelationshipLoader:
         relationship_names: List[str],
         db_pool: "PostgresPool",
         tenant_id: UUID | None = None,
+        connection: Any = None,
     ) -> List[T]:
         """
         Load specified relationships for a list of instances.
 
+        Supports nested relationships using dot notation (e.g., "posts.comments").
+        For nested paths, loads the first level, then recursively loads the rest.
+
         Args:
             instances: List of model instances to load relationships for
-            relationship_names: Names of relationships to load
+            relationship_names: Names of relationships to load (supports dot notation)
             db_pool: Database connection pool
             tenant_id: Optional tenant ID for multi-tenant filtering
+            connection: Optional database connection for transaction context
 
         Returns:
             The same instances with relationships populated
 
         Raises:
             ValueError: If a relationship name is not found
+
+        Example:
+            # Load posts for authors
+            await loader.load_relationships(authors, ["posts"], db_pool, tenant_id)
+
+            # Load posts and their comments (nested)
+            await loader.load_relationships(authors, ["posts.comments"], db_pool, tenant_id)
+
+            # Load multiple relationships including nested
+            await loader.load_relationships(authors, ["posts.comments", "profile"], db_pool, tenant_id)
         """
         if not instances:
             return instances
 
-        for rel_name in relationship_names:
-            config = RelationshipRegistry.get_relationship(self.model_name, rel_name)
-            if not config:
-                raise ValueError(f"Unknown relationship: {self.model_name}.{rel_name}")
-
-            await self._load_relationship(instances, rel_name, config, db_pool, tenant_id)
+        for rel_path in relationship_names:
+            await self._load_nested_path(instances, rel_path, db_pool, tenant_id, connection)
 
         return instances
+
+    async def _load_nested_path(
+        self,
+        instances: List[T],
+        rel_path: str,
+        db_pool: "PostgresPool",
+        tenant_id: UUID | None,
+        connection: Any = None,
+    ) -> None:
+        """
+        Load a potentially nested relationship path.
+
+        For simple paths (no dots), loads directly.
+        For nested paths, loads the first level then recurses.
+
+        Args:
+            instances: List of model instances
+            rel_path: Relationship path (e.g., "posts" or "posts.comments")
+            db_pool: Database connection pool
+            tenant_id: Tenant ID for filtering
+            connection: Optional database connection for transaction context
+        """
+        if not instances or not rel_path:
+            return
+
+        # Split the path into first level and remaining
+        parts = rel_path.split(".", 1)
+        first_rel = parts[0]
+        remaining_path = parts[1] if len(parts) > 1 else None
+
+        # Load the first level relationship
+        config = RelationshipRegistry.get_relationship(self.model_name, first_rel)
+        if not config:
+            raise ValueError(f"Unknown relationship: {self.model_name}.{first_rel}")
+
+        await self._load_relationship(instances, first_rel, config, db_pool, tenant_id, connection)
+
+        # If there's a remaining path, recurse into nested instances
+        if remaining_path:
+            # Collect all nested instances from the first-level relationship
+            nested_instances: List[Any] = []
+            for inst in instances:
+                rel_value = getattr(inst, first_rel, None)
+                if rel_value is not None:
+                    if isinstance(rel_value, list):
+                        nested_instances.extend(rel_value)
+                    else:
+                        nested_instances.append(rel_value)
+
+            # Load remaining path on nested instances
+            if nested_instances:
+                # Get the model class of the nested instances
+                nested_model_class = type(nested_instances[0])
+                nested_loader = RelationshipLoader(nested_model_class)
+                await nested_loader._load_nested_path(
+                    nested_instances, remaining_path, db_pool, tenant_id, connection
+                )
 
     async def _load_relationship(
         self,
@@ -99,6 +167,7 @@ class RelationshipLoader:
         config: "RelationshipConfig",
         db_pool: "PostgresPool",
         tenant_id: UUID | None,
+        connection: Any = None,
     ) -> None:
         """
         Load a single relationship for all instances.
@@ -114,13 +183,20 @@ class RelationshipLoader:
             config: RelationshipConfig for this relationship
             db_pool: Database connection pool
             tenant_id: Tenant ID for filtering
+            connection: Optional database connection for transaction context
         """
         if config.is_many_to_many():
-            await self._load_many_to_many(instances, rel_name, config, db_pool, tenant_id)
+            await self._load_many_to_many(
+                instances, rel_name, config, db_pool, tenant_id, connection
+            )
         elif config.is_collection:
-            await self._load_one_to_many(instances, rel_name, config, db_pool, tenant_id)
+            await self._load_one_to_many(
+                instances, rel_name, config, db_pool, tenant_id, connection
+            )
         else:
-            await self._load_many_to_one(instances, rel_name, config, db_pool, tenant_id)
+            await self._load_many_to_one(
+                instances, rel_name, config, db_pool, tenant_id, connection
+            )
 
     async def _load_one_to_many(
         self,
@@ -129,6 +205,7 @@ class RelationshipLoader:
         config: "RelationshipConfig",
         db_pool: "PostgresPool",
         tenant_id: UUID | None,
+        connection: Any = None,
     ) -> None:
         """
         Load a one-to-many relationship.
@@ -136,6 +213,14 @@ class RelationshipLoader:
         Example: Author.posts - load all Posts for given Authors
 
         Query: SELECT * FROM posts WHERE author_id IN ($1, $2, ...) AND ...
+
+        Args:
+            instances: List of model instances
+            rel_name: Name of the relationship to load
+            config: RelationshipConfig for this relationship
+            db_pool: Database connection pool
+            tenant_id: Tenant ID for filtering
+            connection: Optional database connection for transaction context
         """
         # Resolve target model
         target_model = RelationshipRegistry.resolve_model(config.target_model)
@@ -157,6 +242,7 @@ class RelationshipLoader:
             filter_values=instance_ids,
             db_pool=db_pool,
             tenant_id=tenant_id,
+            connection=connection,
         )
 
         # Group by foreign key
@@ -177,6 +263,7 @@ class RelationshipLoader:
         config: "RelationshipConfig",
         db_pool: "PostgresPool",
         tenant_id: UUID | None,
+        connection: Any = None,
     ) -> None:
         """
         Load a many-to-one relationship.
@@ -184,6 +271,14 @@ class RelationshipLoader:
         Example: Post.author - load Authors for given Posts
 
         Query: SELECT * FROM authors WHERE id IN ($1, $2, ...) AND ...
+
+        Args:
+            instances: List of model instances
+            rel_name: Name of the relationship to load
+            config: RelationshipConfig for this relationship
+            db_pool: Database connection pool
+            tenant_id: Tenant ID for filtering
+            connection: Optional database connection for transaction context
         """
         # Resolve target model
         target_model = RelationshipRegistry.resolve_model(config.target_model)
@@ -209,6 +304,7 @@ class RelationshipLoader:
             filter_values=fk_values,
             db_pool=db_pool,
             tenant_id=tenant_id,
+            connection=connection,
         )
 
         # Index by ID
@@ -229,6 +325,7 @@ class RelationshipLoader:
         config: "RelationshipConfig",
         db_pool: "PostgresPool",
         tenant_id: UUID | None,
+        connection: Any = None,
     ) -> None:
         """
         Load a many-to-many relationship.
@@ -238,6 +335,14 @@ class RelationshipLoader:
         Queries:
         1. SELECT * FROM post_tags WHERE post_id IN ($1, $2, ...)
         2. SELECT * FROM tags WHERE id IN ($3, $4, ...)
+
+        Args:
+            instances: List of model instances
+            rel_name: Name of the relationship to load
+            config: RelationshipConfig for this relationship
+            db_pool: Database connection pool
+            tenant_id: Tenant ID for filtering
+            connection: Optional database connection for transaction context
         """
         # Resolve target and link models
         target_model = RelationshipRegistry.resolve_model(config.target_model)
@@ -267,6 +372,7 @@ class RelationshipLoader:
             filter_values=instance_ids,
             db_pool=db_pool,
             tenant_id=tenant_id,
+            connection=connection,
         )
 
         if not link_records:
@@ -298,6 +404,7 @@ class RelationshipLoader:
             filter_values=list(remote_ids_needed),
             db_pool=db_pool,
             tenant_id=tenant_id,
+            connection=connection,
         )
 
         # Index targets by ID
@@ -316,11 +423,20 @@ class RelationshipLoader:
         filter_values: List[UUID],
         db_pool: "PostgresPool",
         tenant_id: UUID | None,
+        connection: Any = None,
     ) -> List[Any]:
         """
         Fetch related records using an IN query.
 
         Builds a query with proper temporal and tenant filtering.
+
+        Args:
+            target_model: The model class to query
+            filter_column: Column name to filter on
+            filter_values: Values to filter by (IN clause)
+            db_pool: Database connection pool
+            tenant_id: Tenant ID for filtering
+            connection: Optional database connection for transaction context
         """
         from ..query import Query
         from ..query.expressions import FieldProxy
@@ -328,8 +444,12 @@ class RelationshipLoader:
         # Build filter expression
         filter_expr = FieldProxy(filter_column).in_(filter_values)
 
-        # Execute query
-        return await Query(target_model).filter(filter_expr).execute(db_pool, tenant_id=tenant_id)
+        # Execute query with connection for transaction context
+        return (
+            await Query(target_model)
+            .filter(filter_expr)
+            .execute(db_pool, tenant_id=tenant_id, connection=connection)
+        )
 
     def _set_relationship(self, instance: T, rel_name: str, value: Any) -> None:
         """

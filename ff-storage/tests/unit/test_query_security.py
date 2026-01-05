@@ -100,7 +100,7 @@ class TestJoinTypeValidation:
 
         for join_type in valid_types:
             query = Query(MockModel)
-            query.join(MockModel, join_type=join_type)
+            query = query.join(MockModel, join_type=join_type)
             # Should not raise
             assert len(query._joins) == 1
             assert query._joins[0].join_type == join_type
@@ -165,7 +165,7 @@ class TestOnClauseValidation:
 
         for on_clause in valid_clauses:
             query = Query(MockModel)
-            query.join(MockModel, on=on_clause)
+            query = query.join(MockModel, on=on_clause)
             # Should not raise
             assert len(query._joins) == 1
 

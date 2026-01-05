@@ -5,6 +5,25 @@ This module executes queries built by the Query class, handling:
 - Soft delete filtering (deleted_at IS NULL)
 - Multi-tenant isolation (tenant_id = ?)
 - JOIN temporal safety (filters applied to joined tables)
+
+SECURITY NOTE:
+--------------
+This executor bypasses the standard validate_query() check used by
+PostgresPool methods. This is intentional and safe because:
+
+1. All SQL identifiers use ColumnRef.quote_identifier() which properly
+   escapes and quotes table/column names to prevent SQL injection.
+
+2. All values are passed as parameterized arguments (*params), never
+   interpolated directly into SQL strings.
+
+3. JOIN types are validated against a whitelist in JoinConfig.
+
+4. No user input is directly incorporated into SQL strings - all filters
+   and expressions are constructed programmatically.
+
+If you modify this module to accept raw user SQL or unvalidated identifiers,
+you MUST add validate_query() calls with appropriate context.
 """
 
 from __future__ import annotations
@@ -83,6 +102,9 @@ class QueryExecutor:
         offset: int | None,
         tenant_id: UUID | None,
         connection=None,
+        for_update: bool = False,
+        for_update_nowait: bool = False,
+        for_update_skip_locked: bool = False,
     ) -> List[T]:
         """
         Execute the query and return model instances.
@@ -100,6 +122,9 @@ class QueryExecutor:
             connection: Optional database connection for external transaction
                        management. When provided, the operation uses this
                        connection instead of acquiring a new one from the pool.
+            for_update: Whether to add FOR UPDATE clause
+            for_update_nowait: Whether to add NOWAIT to FOR UPDATE
+            for_update_skip_locked: Whether to add SKIP LOCKED to FOR UPDATE
 
         Returns:
             List of model instances
@@ -114,6 +139,9 @@ class QueryExecutor:
             limit=limit,
             offset=offset,
             tenant_id=tenant_id,
+            for_update=for_update,
+            for_update_nowait=for_update_nowait,
+            for_update_skip_locked=for_update_skip_locked,
         )
 
         if connection is not None:
@@ -218,6 +246,9 @@ class QueryExecutor:
         limit: int | None,
         offset: int | None,
         tenant_id: UUID | None,
+        for_update: bool = False,
+        for_update_nowait: bool = False,
+        for_update_skip_locked: bool = False,
     ) -> tuple[str, List[Any]]:
         """Build the SELECT query with all components."""
         params: List[Any] = []
@@ -266,7 +297,8 @@ class QueryExecutor:
         if having:
             having_parts = []
             for expr in having:
-                expr_sql, expr_value, param_index = expr.to_sql(param_index)
+                # Pass tenant_id for subquery multi-tenant filtering
+                expr_sql, expr_value, param_index = expr.to_sql(param_index, tenant_id=tenant_id)
                 having_parts.append(expr_sql)
                 if expr_value is not None:
                     if isinstance(expr_value, (list, tuple)):
@@ -280,11 +312,23 @@ class QueryExecutor:
             order_parts = [clause.to_sql() for clause in order_by]
             sql += " ORDER BY " + ", ".join(order_parts)
 
-        # LIMIT and OFFSET
+        # LIMIT and OFFSET - validate before interpolation to prevent injection
         if limit is not None:
+            if not isinstance(limit, int) or limit < 0:
+                raise ValueError(f"limit must be a non-negative integer, got {limit!r}")
             sql += f" LIMIT {limit}"
         if offset is not None:
+            if not isinstance(offset, int) or offset < 0:
+                raise ValueError(f"offset must be a non-negative integer, got {offset!r}")
             sql += f" OFFSET {offset}"
+
+        # FOR UPDATE clause - for row locking within transactions
+        if for_update:
+            sql += " FOR UPDATE"
+            if for_update_nowait:
+                sql += " NOWAIT"
+            elif for_update_skip_locked:
+                sql += " SKIP LOCKED"
 
         return sql, params
 
@@ -363,7 +407,8 @@ class QueryExecutor:
 
         # User-provided filters
         for expr in filters:
-            expr_sql, expr_value, param_index = expr.to_sql(param_index)
+            # Pass tenant_id for subquery multi-tenant filtering
+            expr_sql, expr_value, param_index = expr.to_sql(param_index, tenant_id=tenant_id)
             where_parts.append(expr_sql)
             if expr_value is not None:
                 if isinstance(expr_value, (list, tuple)):

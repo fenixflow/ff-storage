@@ -70,9 +70,9 @@ class AggregateExpression:
         # Build function call
         sql = f"{self.function_name}({col})"
 
-        # Add alias if specified
+        # Add alias if specified - use quote_identifier to escape properly
         if self.alias:
-            sql += f' AS "{self.alias}"'
+            sql += f" AS {ColumnRef.quote_identifier(self.alias)}"
 
         return sql
 

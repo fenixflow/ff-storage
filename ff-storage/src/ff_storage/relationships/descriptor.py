@@ -6,7 +6,7 @@ relationships between models with a clean, declarative syntax.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Generic, TypeVar, get_args, get_origin
+from typing import TYPE_CHECKING, Any, Generic, List, TypeVar, get_args, get_origin, overload
 
 from .config import RelationshipConfig
 from .registry import RelationshipRegistry
@@ -168,7 +168,19 @@ class Relationship(Generic[T]):
             owner._relationships = {}
         owner._relationships[name] = self._config
 
-    def __get__(self, instance: Any, owner: type) -> Any:
+    @overload
+    def __get__(self, instance: None, owner: type) -> "RelationshipProxy":
+        """Class-level access returns RelationshipProxy for query building."""
+        ...
+
+    @overload
+    def __get__(self, instance: "PydanticModel", owner: type) -> T | List[T] | None:
+        """Instance-level access returns the cached relationship data."""
+        ...
+
+    def __get__(
+        self, instance: "PydanticModel | None", owner: type
+    ) -> "T | List[T] | RelationshipProxy | None":
         """
         Get the relationship value.
 

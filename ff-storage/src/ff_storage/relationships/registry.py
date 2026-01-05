@@ -6,6 +6,8 @@ between models without requiring circular imports.
 
 from __future__ import annotations
 
+import threading
+import warnings
 from typing import TYPE_CHECKING, Dict
 
 if TYPE_CHECKING:
@@ -22,8 +24,10 @@ class RelationshipRegistry:
     - Model name -> class mapping (for resolving string references)
 
     Thread Safety:
-        The registry uses class-level dicts which are thread-safe for reads.
-        Writes happen during class definition time, which is typically single-threaded.
+        The registry uses RLock to protect write operations during model registration.
+        Read operations (get_relationship, resolve_model) are lock-free since Python
+        dict reads are atomic. RLock is used instead of Lock to allow re-entrant
+        registration during nested class definitions.
 
     Example:
         # Registration happens automatically via Relationship descriptor
@@ -37,20 +41,25 @@ class RelationshipRegistry:
 
     _registry: Dict[str, Dict[str, "RelationshipConfig"]] = {}
     _models: Dict[str, type] = {}
+    _lock: threading.RLock = threading.RLock()
+    _validated: bool = False
 
     @classmethod
     def register(cls, model_name: str, attr_name: str, config: "RelationshipConfig") -> None:
         """
         Register a relationship for a model.
 
+        Thread-safe: Uses RLock to protect concurrent writes.
+
         Args:
             model_name: Name of the model class that owns the relationship
             attr_name: Name of the relationship attribute
             config: RelationshipConfig with relationship metadata
         """
-        if model_name not in cls._registry:
-            cls._registry[model_name] = {}
-        cls._registry[model_name][attr_name] = config
+        with cls._lock:
+            if model_name not in cls._registry:
+                cls._registry[model_name] = {}
+            cls._registry[model_name][attr_name] = config
 
     @classmethod
     def register_model(cls, model_name: str, model_class: type) -> None:
@@ -60,11 +69,14 @@ class RelationshipRegistry:
         This should be called when a model class is defined to allow
         string references to be resolved later.
 
+        Thread-safe: Uses RLock to protect concurrent writes.
+
         Args:
             model_name: Name of the model class
             model_class: The actual model class object
         """
-        cls._models[model_name] = model_class
+        with cls._lock:
+            cls._models[model_name] = model_class
 
     @classmethod
     def get_relationships(cls, model_name: str) -> Dict[str, "RelationshipConfig"]:
@@ -122,9 +134,37 @@ class RelationshipRegistry:
         Clear the registry.
 
         Useful for testing to reset state between tests.
+        Thread-safe: Uses RLock to protect concurrent access.
         """
-        cls._registry.clear()
-        cls._models.clear()
+        with cls._lock:
+            cls._registry.clear()
+            cls._models.clear()
+            cls._validated = False
+
+    @classmethod
+    def ensure_validated(cls) -> None:
+        """
+        Validate all relationships once, on first usage.
+
+        This method is designed to be called before the first query execution.
+        It validates that all back_populates references are valid and emits
+        warnings for any invalid configurations.
+
+        Thread-safe: Uses double-checked locking pattern.
+        """
+        if cls._validated:
+            return
+
+        with cls._lock:
+            if cls._validated:
+                return
+
+            errors = cls.validate_back_populates()
+            if errors:
+                for err in errors:
+                    warnings.warn(f"Relationship configuration error: {err}", UserWarning)
+
+            cls._validated = True
 
     @classmethod
     def validate_back_populates(cls) -> list[str]:

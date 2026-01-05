@@ -5,6 +5,7 @@ This module provides the Query class for building database queries with a fluent
 
 from __future__ import annotations
 
+import copy
 import warnings
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Generic, List, Type, TypeVar
@@ -19,6 +20,7 @@ if TYPE_CHECKING:
     from ..pydantic_support.base import PydanticModel
     from ..relationships.descriptor import RelationshipProxy
     from .aggregations import AggregateExpression
+    from .subquery import Subquery
 
 
 T = TypeVar("T", bound="PydanticModel")
@@ -42,18 +44,16 @@ class Query(Generic[T]):
     Provides a type-safe, chainable API for building database queries with
     automatic temporal and multi-tenant awareness.
 
-    IMPORTANT - Mutation Behavior:
-        Query methods mutate and return self for chaining. Create a new
-        Query() for each independent query chain:
+    Immutable Design:
+        Query methods return NEW Query instances rather than mutating self.
+        This allows safe query branching without explicit copying:
 
-        # CORRECT - separate Query instances
-        active = Query(Product).filter(Product.active == True)
-        inactive = Query(Product).filter(Product.active == False)
+        # Safe - each method returns a new independent query
+        base = Query(Product).filter(Product.active == True)
+        cheap = base.filter(Product.price < 100)  # New query with both filters
+        expensive = base.filter(Product.price > 1000)  # Different new query
 
-        # WRONG - second filter modifies the first query
-        base = Query(Product)
-        active = base.filter(Product.active == True)
-        inactive = base.filter(Product.active == False)  # Has BOTH filters!
+        # base still only has the .active filter
 
     Example:
         results = await (
@@ -87,6 +87,10 @@ class Query(Generic[T]):
         self._offset: int | None = None
         self._eager_load: List[str] = []
         self._alias_counter = 1
+        # Row locking
+        self._for_update: bool = False
+        self._for_update_nowait: bool = False
+        self._for_update_skip_locked: bool = False
 
     def __repr__(self) -> str:
         """
@@ -125,10 +129,10 @@ class Query(Generic[T]):
 
     def copy(self) -> "Query[T]":
         """
-        Create an independent copy of this query for safe branching.
+        Create an independent deep copy of this query for safe branching.
 
-        Since Query methods mutate and return self for chaining, creating
-        branches from a base query requires making a copy first.
+        Uses deep copy for nested structures (filters, joins, order_by, etc.)
+        to ensure complete independence between the original and copied queries.
 
         Returns:
             A new Query instance with all the same configuration
@@ -141,16 +145,23 @@ class Query(Generic[T]):
             # base, expensive, and cheap are independent queries
         """
         new_query: Query[T] = Query(self.model_class)
-        new_query._filters = self._filters.copy()
-        new_query._joins = self._joins.copy()
-        new_query._order_by = self._order_by.copy()
-        new_query._group_by = self._group_by.copy()
-        new_query._having = self._having.copy()
-        new_query._select_fields = self._select_fields.copy()
+        # Deep copy nested structures to ensure complete independence
+        new_query._filters = copy.deepcopy(self._filters)
+        new_query._joins = copy.deepcopy(self._joins)
+        new_query._order_by = copy.deepcopy(self._order_by)
+        new_query._group_by = copy.deepcopy(self._group_by)
+        new_query._having = copy.deepcopy(self._having)
+        new_query._select_fields = copy.deepcopy(self._select_fields)
+        # Primitive values don't need deep copy
         new_query._limit = self._limit
         new_query._offset = self._offset
+        # List of strings - shallow copy is fine
         new_query._eager_load = self._eager_load.copy()
         new_query._alias_counter = self._alias_counter
+        # Row locking
+        new_query._for_update = self._for_update
+        new_query._for_update_nowait = self._for_update_nowait
+        new_query._for_update_skip_locked = self._for_update_skip_locked
         return new_query
 
     # -------------------------------------------------------------------------
@@ -168,7 +179,7 @@ class Query(Generic[T]):
             expressions: FilterExpression or CompositeExpression objects
 
         Returns:
-            Self for chaining
+            New Query instance with filters added
 
         Example:
             # Simple filters (ANDed together)
@@ -188,8 +199,9 @@ class Query(Generic[T]):
                 )
             )
         """
-        self._filters.extend(expressions)
-        return self
+        new_query = self.copy()
+        new_query._filters.extend(expressions)
+        return new_query
 
     def filter_by(self, **kwargs: Any) -> "Query[T]":
         """
@@ -199,17 +211,18 @@ class Query(Generic[T]):
             **kwargs: Field=value pairs for equality filters
 
         Returns:
-            Self for chaining
+            New Query instance with filters added
 
         Example:
             query.filter_by(status="active", category="electronics")
         """
+        new_query = self.copy()
         for field_name, value in kwargs.items():
             if value is None:
-                self._filters.append(FilterExpression(field_name, "IS NULL", None))
+                new_query._filters.append(FilterExpression(field_name, "IS NULL", None))
             else:
-                self._filters.append(FilterExpression(field_name, "=", value))
-        return self
+                new_query._filters.append(FilterExpression(field_name, "=", value))
+        return new_query
 
     # -------------------------------------------------------------------------
     # Joins
@@ -233,7 +246,7 @@ class Query(Generic[T]):
             join_type: JOIN type (INNER, LEFT, RIGHT, FULL, CROSS)
 
         Returns:
-            Self for chaining
+            New Query instance with join added
 
         Raises:
             ValueError: If join_type is invalid or on clause has invalid format
@@ -267,6 +280,8 @@ class Query(Generic[T]):
                     "For complex joins, use relationships instead."
                 )
 
+        new_query = self.copy()
+
         # Import here to avoid circular imports
         try:
             from ..relationships.descriptor import RelationshipProxy
@@ -278,10 +293,10 @@ class Query(Generic[T]):
                 if not target_model:
                     raise ValueError(f"Cannot resolve model: {target.config.target_model}")
 
-                alias = f"t{self._alias_counter}"
-                self._alias_counter += 1
+                alias = f"t{new_query._alias_counter}"
+                new_query._alias_counter += 1
 
-                self._joins.append(
+                new_query._joins.append(
                     JoinConfig(
                         target_model=target_model,
                         join_type=normalized_join_type,
@@ -292,10 +307,10 @@ class Query(Generic[T]):
                 )
             else:
                 # Direct model join
-                alias = f"t{self._alias_counter}"
-                self._alias_counter += 1
+                alias = f"t{new_query._alias_counter}"
+                new_query._alias_counter += 1
 
-                self._joins.append(
+                new_query._joins.append(
                     JoinConfig(
                         target_model=target,
                         join_type=normalized_join_type,
@@ -305,10 +320,10 @@ class Query(Generic[T]):
                 )
         except ImportError:
             # Relationships module not yet available
-            alias = f"t{self._alias_counter}"
-            self._alias_counter += 1
+            alias = f"t{new_query._alias_counter}"
+            new_query._alias_counter += 1
 
-            self._joins.append(
+            new_query._joins.append(
                 JoinConfig(
                     target_model=target,  # type: ignore
                     join_type=normalized_join_type,
@@ -317,7 +332,7 @@ class Query(Generic[T]):
                 )
             )
 
-        return self
+        return new_query
 
     def left_join(
         self,
@@ -333,7 +348,7 @@ class Query(Generic[T]):
             on: Custom ON clause
 
         Returns:
-            Self for chaining
+            New Query instance with join added
         """
         return self.join(target, on=on, join_type="LEFT")
 
@@ -351,7 +366,7 @@ class Query(Generic[T]):
             on: Custom ON clause
 
         Returns:
-            Self for chaining
+            New Query instance with join added
         """
         return self.join(target, on=on, join_type="RIGHT")
 
@@ -367,14 +382,15 @@ class Query(Generic[T]):
             clauses: OrderByClause objects
 
         Returns:
-            Self for chaining
+            New Query instance with ordering added
 
         Example:
             query.order_by(Product.field("created_at").desc())
             query.order_by(F.name.asc(), F.created_at.desc())
         """
-        self._order_by.extend(clauses)
-        return self
+        new_query = self.copy()
+        new_query._order_by.extend(clauses)
+        return new_query
 
     # -------------------------------------------------------------------------
     # Pagination
@@ -388,10 +404,11 @@ class Query(Generic[T]):
             n: Maximum number of results
 
         Returns:
-            Self for chaining
+            New Query instance with limit set
         """
-        self._limit = n
-        return self
+        new_query = self.copy()
+        new_query._limit = n
+        return new_query
 
     def offset(self, n: int) -> "Query[T]":
         """
@@ -401,10 +418,11 @@ class Query(Generic[T]):
             n: Number of results to skip
 
         Returns:
-            Self for chaining
+            New Query instance with offset set
         """
-        self._offset = n
-        return self
+        new_query = self.copy()
+        new_query._offset = n
+        return new_query
 
     # -------------------------------------------------------------------------
     # Eager Loading
@@ -414,17 +432,135 @@ class Query(Generic[T]):
         """
         Eager load relationships to prevent N+1 queries.
 
+        Supports nested loading with dot notation (e.g., "posts.comments").
+
         Args:
             relationship_names: Names of relationships to load
 
         Returns:
-            Self for chaining
+            New Query instance with eager loading configured
 
         Example:
             query.load(["posts", "comments"])
+            query.load(["posts.comments"])  # Nested loading
         """
-        self._eager_load.extend(relationship_names)
-        return self
+        new_query = self.copy()
+        new_query._eager_load.extend(relationship_names)
+        return new_query
+
+    # -------------------------------------------------------------------------
+    # Row Locking
+    # -------------------------------------------------------------------------
+
+    def for_update(
+        self,
+        *,
+        nowait: bool = False,
+        skip_locked: bool = False,
+    ) -> "Query[T]":
+        """
+        Add SELECT ... FOR UPDATE to lock selected rows.
+
+        Use this within a transaction to lock rows for update, preventing
+        concurrent modifications until the transaction completes.
+
+        Args:
+            nowait: If True, fail immediately if rows are locked (NOWAIT)
+            skip_locked: If True, skip locked rows instead of waiting (SKIP LOCKED)
+
+        Returns:
+            New Query instance with row locking configured
+
+        Note:
+            - nowait and skip_locked are mutually exclusive
+            - This only works when executed within a transaction
+            - Without a transaction, the lock is released immediately
+
+        Example:
+            # Basic locking - waits for locks
+            async with Transaction(db_pool) as txn:
+                product = await (
+                    Query(Product)
+                    .filter(Product.field("id") == product_id)
+                    .for_update()
+                    .first(db_pool, tenant_id, connection=txn.connection)
+                )
+                # product row is locked until transaction commits
+
+            # NOWAIT - fail immediately if locked
+            try:
+                product = await (
+                    Query(Product)
+                    .for_update(nowait=True)
+                    .first(db_pool, tenant_id, connection=txn.connection)
+                )
+            except Exception:
+                # Handle "could not obtain lock" error
+                pass
+
+            # SKIP LOCKED - skip locked rows (useful for job queues)
+            jobs = await (
+                Query(Job)
+                .filter(Job.field("status") == "pending")
+                .for_update(skip_locked=True)
+                .limit(10)
+                .execute(db_pool, tenant_id, connection=txn.connection)
+            )
+        """
+        if nowait and skip_locked:
+            raise ValueError("Cannot use both nowait and skip_locked")
+
+        new_query = self.copy()
+        new_query._for_update = True
+        new_query._for_update_nowait = nowait
+        new_query._for_update_skip_locked = skip_locked
+        return new_query
+
+    # -------------------------------------------------------------------------
+    # Subqueries
+    # -------------------------------------------------------------------------
+
+    def subquery(
+        self,
+        alias: str = "sq",
+        select_column: str | None = None,
+    ) -> "Subquery[T]":
+        """
+        Return this query as a subquery for use in IN clauses.
+
+        Args:
+            alias: Alias for the subquery (default: "sq")
+            select_column: Column to select for the subquery. If None,
+                          defaults to "id" for IN clause usage.
+
+        Returns:
+            Subquery instance that can be used with .in_() or .not_in()
+
+        Example:
+            # Find products in categories with active sales
+            active_category_ids = (
+                Query(Sale)
+                .filter(Sale.field("completed") == True)
+                .subquery(select_column="category_id")
+            )
+
+            products = await (
+                Query(Product)
+                .filter(Product.field("category_id").in_(active_category_ids))
+                .execute(db_pool, tenant_id)
+            )
+
+            # Using F shorthand
+            banned_users = Query(BannedUser).subquery()
+            posts = await (
+                Query(Post)
+                .filter(F.author_id.not_in(banned_users))
+                .execute(db_pool, tenant_id)
+            )
+        """
+        from .subquery import Subquery
+
+        return Subquery(self, alias=alias, select_column=select_column)
 
     # -------------------------------------------------------------------------
     # Aggregations
@@ -438,13 +574,14 @@ class Query(Generic[T]):
             fields: FieldProxy objects to group by
 
         Returns:
-            Self for chaining
+            New Query instance with grouping added
 
         Example:
             query.group_by(Product.field("category"))
         """
-        self._group_by.extend(fields)
-        return self
+        new_query = self.copy()
+        new_query._group_by.extend(fields)
+        return new_query
 
     def having(self, *expressions: "FilterExpression | CompositeExpression") -> "Query[T]":
         """
@@ -454,13 +591,14 @@ class Query(Generic[T]):
             expressions: FilterExpression or CompositeExpression objects
 
         Returns:
-            Self for chaining
+            New Query instance with having clause added
 
         Example:
             query.having(func.count() > 5)
         """
-        self._having.extend(expressions)
-        return self
+        new_query = self.copy()
+        new_query._having.extend(expressions)
+        return new_query
 
     def select(self, *fields: "FieldProxy | AggregateExpression") -> "Query[T]":
         """
@@ -470,13 +608,14 @@ class Query(Generic[T]):
             fields: Fields or aggregate expressions to select
 
         Returns:
-            Self for chaining
+            New Query instance with selection added
 
         Example:
             query.select(Product.field("category"), func.avg(Product.field("price")))
         """
-        self._select_fields.extend(fields)
-        return self
+        new_query = self.copy()
+        new_query._select_fields.extend(fields)
+        return new_query
 
     # -------------------------------------------------------------------------
     # Internal Helpers
@@ -487,6 +626,7 @@ class Query(Generic[T]):
         results: List[T],
         db_pool: "PostgresPool",
         tenant_id: UUID | None,
+        connection: Any = None,
     ) -> List[T]:
         """
         Apply eager loading to results if configured.
@@ -498,6 +638,7 @@ class Query(Generic[T]):
             results: Query results to load relationships for
             db_pool: Database connection pool
             tenant_id: Optional tenant ID for multi-tenant filtering
+            connection: Optional database connection for transaction context
 
         Returns:
             Results with relationships populated
@@ -509,7 +650,9 @@ class Query(Generic[T]):
             from ..relationships.loader import RelationshipLoader
 
             loader = RelationshipLoader(self.model_class)
-            return await loader.load_relationships(results, self._eager_load, db_pool, tenant_id)
+            return await loader.load_relationships(
+                results, self._eager_load, db_pool, tenant_id, connection=connection
+            )
         except ImportError:
             # Relationships module not available - warn the developer
             warnings.warn(
@@ -550,6 +693,11 @@ class Query(Generic[T]):
             async with Transaction(db_pool) as txn:
                 results = await query.execute(db_pool, tenant_id=org_id, connection=txn.connection)
         """
+        # Validate relationships on first query (emits warnings if misconfigured)
+        from ..relationships.registry import RelationshipRegistry
+
+        RelationshipRegistry.ensure_validated()
+
         from .executor import QueryExecutor
 
         executor = QueryExecutor(self.model_class, db_pool)
@@ -564,10 +712,13 @@ class Query(Generic[T]):
             offset=self._offset,
             tenant_id=tenant_id,
             connection=connection,
+            for_update=self._for_update,
+            for_update_nowait=self._for_update_nowait,
+            for_update_skip_locked=self._for_update_skip_locked,
         )
 
-        # Apply eager loading if configured
-        return await self._apply_eager_loading(results, db_pool, tenant_id)
+        # Apply eager loading if configured (forward connection for transaction context)
+        return await self._apply_eager_loading(results, db_pool, tenant_id, connection=connection)
 
     async def count(
         self,
@@ -636,8 +787,10 @@ class Query(Generic[T]):
             connection=connection,
         )
 
-        # Apply eager loading if configured
-        results = await self._apply_eager_loading(results, db_pool, tenant_id)
+        # Apply eager loading if configured (forward connection for transaction context)
+        results = await self._apply_eager_loading(
+            results, db_pool, tenant_id, connection=connection
+        )
 
         return results[0] if results else None
 
