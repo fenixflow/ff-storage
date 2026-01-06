@@ -1,10 +1,10 @@
-# ff-storage v3.3.0 Production Deployment Guide
+# ff-storage Production Deployment Guide
 
 ## Overview
 
-ff-storage v3.3.0 is production-ready with comprehensive resilience, monitoring, and caching features. This guide covers deployment best practices, configuration recommendations, and monitoring setup for POC and production environments.
+ff-storage is production-ready with comprehensive resilience, monitoring, and caching features. This guide covers deployment best practices, configuration recommendations, and monitoring setup for POC and production environments.
 
-> **🔥 v3.3.0 Update**: Critical schema sync bug fix. If using schema sync (v2.0+), upgrade immediately to eliminate false positives causing unnecessary index recreation.
+> **v4.7.0+**: Adds Query Builder, Relationships, Transactions, and Bulk Operations. All production features documented here remain unchanged and fully compatible.
 
 ## Quick Start for POC
 

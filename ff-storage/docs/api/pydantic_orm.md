@@ -2,12 +2,21 @@
 
 Complete API documentation for ff-storage's Pydantic ORM integration.
 
+> **v4.7.0+**: For Query Builder, Relationships, and Transactions, see the [FRAMEWORK.md](../../FRAMEWORK.md) guide which covers all new APIs.
+
 ## Table of Contents
 
 - [PydanticModel](#pydanticmodel)
 - [PydanticRepository](#pydanticrepository)
 - [Field Metadata](#field-metadata)
 - [Schema Synchronization](#schema-synchronization)
+
+## See Also (v4.7.0+)
+
+- **Query Builder**: `Query`, `F`, `AND`, `OR`, `func` - Fluent query API
+- **Relationships**: `Relationship` descriptor for model associations
+- **Transactions**: `Transaction`, `UnitOfWork`, `IsolationLevel`
+- **Bulk Operations**: `bulk_insert`, `bulk_update`
 
 ## PydanticModel
 

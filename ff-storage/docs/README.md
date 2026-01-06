@@ -8,7 +8,7 @@ Complete documentation for ff-storage's Pydantic ORM, Query Builder, Relationshi
 
 **New to ff-storage?** Start here:
 
-- **[Quickstart Guide](quickstart_v3.md)** - Get up and running in 5 minutes
+- **[Quickstart Guide](quickstart.md)** - Get up and running in 5 minutes
 - **[Strategy Selection Guide](guides/strategy_selection.md)** - Choose the right temporal strategy
 
 ## Guides
@@ -16,7 +16,7 @@ Complete documentation for ff-storage's Pydantic ORM, Query Builder, Relationshi
 ### Core Concepts
 - **[Strategy Selection](guides/strategy_selection.md)** - none vs copy_on_change vs scd2
 - **[SCD2 Foreign Keys](guides/scd2_foreign_keys.md)** - FK patterns for versioned data
-- **[Production Deployment](FF_STORAGE_V3_PRODUCTION_GUIDE.md)** - Operational best practices
+- **[Production Deployment](PRODUCTION_GUIDE.md)** - Operational best practices
 
 ### API Reference
 - **[Pydantic ORM API](api/pydantic_orm.md)** - PydanticModel, Field, Repository
@@ -177,4 +177,4 @@ New features are opt-in:
 
 ---
 
-**Ready to build?** Start with the [Quickstart Guide](quickstart_v3.md)!
+**Ready to build?** Start with the [Quickstart Guide](quickstart.md)!

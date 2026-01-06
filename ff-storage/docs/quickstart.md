@@ -1,6 +1,8 @@
-# FF-Storage v3.3.0 Quickstart Guide
+# FF-Storage Quickstart Guide
 
-Get started with ff-storage's Pydantic ORM and temporal data management in 5 minutes.
+Get started with ff-storage's Pydantic ORM, Query Builder, and temporal data management in 5 minutes.
+
+> **v4.7.0+**: Includes Query Builder, Relationships, Transactions. All examples below are backward compatible.
 
 ## Installation
 
@@ -146,12 +148,34 @@ print(f"Updated user: {updated.name}, age={updated.age}, role={updated.role}")
 user = await repo.get(created.id)
 print(f"Retrieved: {user.name}")
 
-# LIST with filters
+# LIST with filters (repository pattern)
 admins = await repo.list(
     filters={"role": "superadmin"},
     limit=10,
 )
 print(f"Found {len(admins)} superadmins")
+
+# QUERY BUILDER (v4.7.0+) - Alternative for complex queries
+from ff_storage import Query, F
+
+# Fluent query with type-safe filters
+active_users = await (
+    Query(User)
+    .filter(F.age >= 21)
+    .filter(F.role.in_(["admin", "superadmin"]))
+    .order_by(F.created_at.desc())
+    .limit(10)
+    .execute(db_pool, tenant_id=org_id)
+)
+print(f"Found {len(active_users)} active adult admins")
+
+# Complex filters with OR
+from ff_storage import OR
+special_users = await (
+    Query(User)
+    .filter(OR(F.role == "superadmin", F.age >= 65))
+    .execute(db_pool, tenant_id=org_id)
+)
 
 # SOFT DELETE
 deleted = await repo.delete(created.id, user_id=user_id)
@@ -347,7 +371,7 @@ await repo.restore(user_id)
 - **[Strategy Selection Guide](guides/strategy_selection.md)** - Choose the right temporal strategy
 - **[API Reference](api/pydantic_orm.md)** - Complete API documentation
 - **[SCD2 Foreign Keys](guides/scd2_foreign_keys.md)** - FK patterns for versioned data
-- **[Production Deployment](guides/production_deployment.md)** - Operational best practices
+- **[Production Deployment](PRODUCTION_GUIDE.md)** - Operational best practices
 - **[Examples](examples/)** - More complete examples
 
 ## Troubleshooting
