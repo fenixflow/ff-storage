@@ -586,7 +586,7 @@ wheels = [
 
 [[package]]
 name = "ff-storage"
-version = "4.6.4"
+version = "4.7.0"
 source = { editable = "." }
 dependencies = [
     { name = "aioboto3" },

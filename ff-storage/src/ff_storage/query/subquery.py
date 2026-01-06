@@ -25,8 +25,8 @@ from typing import TYPE_CHECKING, Any, Generic, List, Tuple, TypeVar
 from uuid import UUID
 
 if TYPE_CHECKING:
-    from .builder import Query
     from ..pydantic_support.base import PydanticModel
+    from .builder import Query
 
 T = TypeVar("T", bound="PydanticModel")
 

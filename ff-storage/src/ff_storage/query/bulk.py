@@ -338,7 +338,7 @@ async def bulk_delete(
     param_idx = len(ids) + 1
 
     # Build WHERE clause
-    placeholders = ", ".join(f"${i+1}" for i in range(len(ids)))
+    placeholders = ", ".join(f"${i + 1}" for i in range(len(ids)))
     where_parts = [f"id IN ({placeholders})"]
 
     if temporal_strategy == "scd2":
