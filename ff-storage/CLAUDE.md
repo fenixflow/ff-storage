@@ -132,7 +132,7 @@ products = await repo.list(filters={"status": "active"})
 
 ## Documentation
 
-- [Quickstart Guide](docs/quickstart_v3.md)
-- [Production Guide](docs/FF_STORAGE_V3_PRODUCTION_GUIDE.md)
+- [Quickstart Guide](docs/quickstart.md)
+- [Production Guide](docs/PRODUCTION_GUIDE.md)
 - [Type Mapping](docs/TYPE_MAPPING.md)
 - [Strategy Selection](docs/guides/strategy_selection.md)

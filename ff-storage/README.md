@@ -72,7 +72,7 @@ repo_admin = PydanticRepository(Product, db_pool, tenant_ids=[tenant1, tenant2])
 - **🔧 Rich Field Metadata** - Complete SQL control (FK, CHECK, defaults, partial indexes)
 - **🚀 Auto-Sync Schema** - SchemaManager now creates auxiliary tables (audit tables)
 
-**[📚 v3.0.0 Documentation](docs/README.md)** | **[⚡ Quickstart Guide](docs/quickstart_v3.md)** | **[🎯 Strategy Selection](docs/guides/strategy_selection.md)**
+**[📚 Documentation](docs/README.md)** | **[⚡ Quickstart Guide](docs/quickstart.md)** | **[🎯 Strategy Selection](docs/guides/strategy_selection.md)**
 
 **Backwards Compatible**: All v2 features work unchanged. v3 is fully opt-in.
 
@@ -210,7 +210,7 @@ async def get_user(user_id: int):
 
 ### v2.x → v3.0.0 (Breaking - Pydantic ORM)
 
-See [docs/quickstart_v3.md](docs/quickstart_v3.md) for full migration guide.
+See [docs/quickstart.md](docs/quickstart.md) for full migration guide.
 
 ### v0.x → v1.0.0 (Breaking - Async Pools)
 

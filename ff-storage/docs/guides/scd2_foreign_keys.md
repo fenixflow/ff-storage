@@ -319,5 +319,5 @@ contract_at_time = await contract_repo.get(
 
 **Next Steps**:
 - [Strategy Selection Guide](strategy_selection.md)
-- [Quickstart Guide](../quickstart_v3.md)
+- [Quickstart Guide](../quickstart.md)
 - [API Reference](../api/pydantic_orm.md)

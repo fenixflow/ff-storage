@@ -306,7 +306,7 @@ class Country(PydanticModel):
 
 ## Next Steps
 
-- **[Quickstart Guide](../quickstart_v3.md)** - Get started in 5 minutes
+- **[Quickstart Guide](../quickstart.md)** - Get started in 5 minutes
 - **[SCD2 Foreign Keys](scd2_foreign_keys.md)** - FK patterns for versioned data
 - **[API Reference](../api/pydantic_orm.md)** - Complete API documentation
 - **[Production Deployment](production_deployment.md)** - Operational best practices
