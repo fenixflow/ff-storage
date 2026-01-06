@@ -7,6 +7,120 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.7.0] - 2026-01-06
+
+### Added
+
+- **[QUERY BUILDER]** New fluent query API for type-safe database queries
+  - `Query(Model).filter(...).order_by(...).limit(...).execute()` syntax
+  - `FilterExpression` and `FieldProxy` for type-safe filtering
+  - `F` shorthand for field references (e.g., `F.price > 100`)
+  - Comparison operators: `==`, `!=`, `<`, `>`, `<=`, `>=`
+  - String operations: `contains()`, `icontains()`, `startswith()`, `endswith()`
+  - Collection operations: `in_()`, `not_in()`, `between()`
+  - Null checks: `is_null()`, `is_not_null()`
+  - Composite expressions: `AND()`, `OR()` for complex filters
+  - `OrderByClause` with `ASC`/`DESC` and `NULLS FIRST/LAST`
+  - Aggregate functions: `func.count()`, `func.sum()`, `func.avg()`, `func.min()`, `func.max()`
+  - `GROUP BY` support with `AggregateExpression` and `GroupByClause`
+  - Subquery support for complex nested queries
+  - Row locking: `for_update()`, `for_update_nowait()`, `for_update_skip_locked()`
+
+- **[RELATIONSHIPS]** ORM-style relationship definitions between models
+  - `Relationship` descriptor for defining model relationships
+  - One-to-many relationships (e.g., Author.posts)
+  - Many-to-one relationships (e.g., Post.author)
+  - Many-to-many relationships with junction table support
+  - `back_populates` for bidirectional relationships
+  - Auto-detection of foreign keys from field names
+  - `RelationshipRegistry` for global relationship tracking
+  - `RelationshipLoader` with N+1 query prevention (selectinload pattern)
+  - Nested relationship loading with dot notation (e.g., `"posts.comments"`)
+  - Lazy loading strategies: select, joined, subquery, noload
+
+- **[BULK OPERATIONS]** Efficient batch database operations
+  - `insert_many()` for batch inserts with RETURNING support
+  - `update_many()` for batch updates with filters
+  - `delete_many()` for batch deletes with filters
+  - Optimized for performance with single-query execution
+
+- **[TRANSACTIONS]** Full transaction management system
+  - `Transaction` context manager for automatic commit/rollback
+  - `Savepoint` support for nested transactions
+  - `IsolationLevel` enum (READ_COMMITTED, REPEATABLE_READ, SERIALIZABLE)
+  - `UnitOfWork` pattern for complex multi-repository operations
+  - `TransactionBoundRepository` for transaction-scoped repositories
+  - Transaction timeout support
+  - Proper exception handling with automatic rollback
+
+- **[TEMPORAL HELPERS]** Enhanced temporal utilities
+  - `CacheManager` for query result caching
+  - `TenantScope` for managing multi-tenant context
+  - `ModelConverter` for type-safe model transformations
+
+- **[SECURITY]** SQL injection prevention and query validation
+  - Parameterized queries throughout all operations
+  - LIKE pattern escaping for user input
+  - JOIN type validation (whitelist approach)
+  - ORDER BY direction/nulls validation
+  - ON clause format validation
+  - `quote_identifier()` for safe table/column names
+  - `trusted_source` context for internal queries
+
+- **[QUERY ENHANCEMENTS]** Additional query features
+  - Query immutability (filter/join/order_by return new Query instances)
+  - Query composition and branching
+  - `copy()` method for query cloning
+  - `first()`, `exists()`, `count()` convenience methods
+  - Automatic SCD2 temporal filtering (`valid_to IS NULL`)
+  - Automatic soft delete filtering (`deleted_at IS NULL`)
+  - Multi-tenant isolation in JOINs
+
+### Changed
+
+- **[VALIDATION]** Unified validation approach across query builder and repository
+  - Consistent parameter validation patterns
+  - Improved error messages with context
+  - Metrics parity between old and new APIs
+
+- **[DB TYPE DETECTION]** Improved database type detection
+  - Auto-detection from pool type for adapter selection
+  - Better handling of wrapped pool classes
+
+### Technical Details
+
+**Query Builder Architecture**:
+```
+Query(Model)
+  ├── .filter(expressions)     → FilterExpression[]
+  ├── .join(relationship)      → JoinConfig[]
+  ├── .order_by(clauses)       → OrderByClause[]
+  ├── .limit(n) / .offset(n)   → Pagination
+  ├── .load(relationships)     → Eager loading
+  └── .execute(pool)           → QueryExecutor
+```
+
+**Relationship Architecture**:
+```
+Relationship(back_populates="...")
+  ├── __set_name__()           → Registers with RelationshipRegistry
+  ├── __get__()                → Returns RelationshipProxy (class) or value (instance)
+  └── __set__()                → Caches loaded data (WeakKeyDictionary)
+```
+
+**Non-Breaking Guarantee**:
+- All existing `repo.list(filters={...})` calls work unchanged
+- Old dict-based filter syntax fully supported
+- Query builder is an alternative API, not a replacement
+- All temporal strategies work with new features
+
+### Test Coverage
+
+- 570+ tests passing
+- Unit tests for expressions, relationships, security validation
+- Integration tests for temporal strategies and schema consistency
+- Security tests for SQL injection prevention
+
 ## [4.6.4] - 2025-12-29
 
 ### Fixed
@@ -1547,7 +1661,10 @@ db.close_connection()
 
 Maintained by **Ben Moag** ([Fenixflow](https://fenixflow.com))
 
-[Unreleased]: https://gitlab.com/fenixflow/fenix-packages/-/compare/ff-storage-v4.6.2...HEAD
+[Unreleased]: https://gitlab.com/fenixflow/fenix-packages/-/compare/ff-storage-v4.7.0...HEAD
+[4.7.0]: https://gitlab.com/fenixflow/fenix-packages/-/compare/ff-storage-v4.6.4...ff-storage-v4.7.0
+[4.6.4]: https://gitlab.com/fenixflow/fenix-packages/-/compare/ff-storage-v4.6.3...ff-storage-v4.6.4
+[4.6.3]: https://gitlab.com/fenixflow/fenix-packages/-/compare/ff-storage-v4.6.2...ff-storage-v4.6.3
 [4.6.2]: https://gitlab.com/fenixflow/fenix-packages/-/compare/ff-storage-v4.6.1...ff-storage-v4.6.2
 [4.6.1]: https://gitlab.com/fenixflow/fenix-packages/-/compare/ff-storage-v4.6.0...ff-storage-v4.6.1
 [4.6.0]: https://gitlab.com/fenixflow/fenix-packages/-/compare/ff-storage-v4.5.0...ff-storage-v4.6.0
