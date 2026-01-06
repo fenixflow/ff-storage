@@ -170,7 +170,10 @@ def db_connection(ensure_test_db):
     try:
         tables = ["test_all_types", "test_scd2_temporal", "test_minimal"]
         for table in tables:
-            db.execute_query(f"DROP TABLE IF EXISTS public.{table} CASCADE")
+            db.execute_query(
+                f"DROP TABLE IF EXISTS public.{table} CASCADE",
+                context={"trusted_source": True, "source": "test_cleanup"},
+            )
     except Exception as e:
         logging.warning(f"Cleanup failed: {e}")
     finally:
@@ -443,7 +446,8 @@ class TestIndexColumnOrder:
                 col_a TEXT,
                 col_b TEXT
             )
-        """
+        """,
+            context={"trusted_source": True, "source": "test_fixture"},
         )
 
         # Create index with DIFFERENT order than table columns
@@ -452,7 +456,8 @@ class TestIndexColumnOrder:
             """
             CREATE INDEX IF NOT EXISTS idx_specific_order
             ON test_idx_order (col_b, col_c, col_a)
-        """
+        """,
+            context={"trusted_source": True, "source": "test_fixture"},
         )
 
         # Verify with pg_get_indexdef (authoritative source)
@@ -489,7 +494,10 @@ class TestIndexColumnOrder:
         ), f"Introspector must return index definition order (col_b, col_c, col_a), got {idx.columns}"
 
         # Cleanup
-        db_connection.execute_query("DROP TABLE test_idx_order CASCADE")
+        db_connection.execute_query(
+            "DROP TABLE test_idx_order CASCADE",
+            context={"trusted_source": True, "source": "test_cleanup"},
+        )
 
 
 class TestRealWorldModels:

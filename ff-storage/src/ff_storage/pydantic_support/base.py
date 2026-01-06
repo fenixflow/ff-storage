@@ -6,13 +6,15 @@ Pydantic with ff-storage's temporal and schema synchronization systems.
 """
 
 from datetime import datetime, timezone
-from typing import Any, ClassVar, Optional
+from typing import TYPE_CHECKING, Any, ClassVar, Optional
 from uuid import UUID, uuid4
+
+if TYPE_CHECKING:
+    from ..query.expressions import FieldProxy
 
 from pydantic import BaseModel, ConfigDict, Field
 from pydantic.fields import FieldInfo
 
-from ..db.query_builder import PostgresQueryBuilder
 from ..temporal.enums import TemporalStrategyType
 
 
@@ -70,6 +72,7 @@ class PydanticModel(BaseModel):
     __soft_delete__: ClassVar[bool] = True  # Default: enabled
     __multi_tenant__: ClassVar[bool] = True  # Default: enabled
     __tenant_field__: ClassVar[str] = "tenant_id"
+    __db_type__: ClassVar[str] = "postgres"  # Database type for SQL generation
 
     # Standard fields (present in ALL models)
     id: UUID = Field(
@@ -209,6 +212,15 @@ class PydanticModel(BaseModel):
                 # The fields are still injected and will work
                 pass
 
+        # Register model with RelationshipRegistry for relationship resolution
+        try:
+            from ..relationships.registry import RelationshipRegistry
+
+            RelationshipRegistry.register_model(cls.__name__, cls)
+        except ImportError:
+            # Relationships module not yet available
+            pass
+
     # ==================== Table Name Management ====================
 
     @classmethod
@@ -241,6 +253,46 @@ class PydanticModel(BaseModel):
         """
         return f"{cls.__schema__}.{cls.table_name()}"
 
+    # ==================== Query Builder Support ====================
+
+    @classmethod
+    def field(cls, name: str) -> "FieldProxy":
+        """
+        Get a FieldProxy for building query expressions.
+
+        This method enables type-safe query building with fluent syntax:
+
+        Example:
+            >>> from ff_storage.query import Query
+            >>> results = await (
+            ...     Query(Product)
+            ...     .filter(Product.field("price") > 100)
+            ...     .filter(Product.field("name").contains("Widget"))
+            ...     .order_by(Product.field("created_at").desc())
+            ...     .execute(db_pool, tenant_id=tenant)
+            ... )
+
+        Args:
+            name: The field name to create a proxy for
+
+        Returns:
+            FieldProxy instance for building expressions
+
+        Raises:
+            ValueError: If the field doesn't exist on the model
+        """
+        from ..query.expressions import FieldProxy
+
+        # Validate field exists
+        all_fields = set(cls.model_fields.keys())
+        if name not in all_fields:
+            raise ValueError(
+                f"Field '{name}' does not exist on {cls.__name__}. "
+                f"Available fields: {sorted(all_fields)}"
+            )
+
+        return FieldProxy(name, cls)
+
     # ==================== Temporal Configuration ====================
 
     @classmethod
@@ -252,6 +304,69 @@ class PydanticModel(BaseModel):
             TemporalStrategyType enum value
         """
         return TemporalStrategyType(cls.__temporal_strategy__)
+
+    # ==================== Database Type Helpers ====================
+
+    @classmethod
+    def _get_query_builder(cls):
+        """
+        Get the appropriate QueryBuilder for this model's database type.
+
+        Uses the __db_type__ class variable to select the correct QueryBuilder
+        implementation. Defaults to PostgresQueryBuilder for backwards compatibility.
+
+        Returns:
+            QueryBuilder instance for the configured database type
+        """
+        db_type = getattr(cls, "__db_type__", "postgres")
+
+        if db_type == "postgres":
+            from ..db.query_builder import PostgresQueryBuilder
+
+            return PostgresQueryBuilder()
+        elif db_type == "mysql":
+            from ..db.query_builder import MySQLQueryBuilder
+
+            return MySQLQueryBuilder()
+        elif db_type == "sqlserver":
+            from ..db.query_builder import SQLServerQueryBuilder
+
+            return SQLServerQueryBuilder()
+        else:
+            # Default fallback to Postgres
+            from ..db.query_builder import PostgresQueryBuilder
+
+            return PostgresQueryBuilder()
+
+    @classmethod
+    def _get_migration_generator(cls):
+        """
+        Get the appropriate MigrationGenerator for this model's database type.
+
+        Uses the __db_type__ class variable to select the correct MigrationGenerator
+        implementation. Defaults to PostgresMigrationGenerator for backwards compatibility.
+
+        Returns:
+            MigrationGenerator instance for the configured database type
+        """
+        db_type = getattr(cls, "__db_type__", "postgres")
+
+        if db_type == "postgres":
+            from ..db.schema_sync.postgres import PostgresMigrationGenerator
+
+            return PostgresMigrationGenerator()
+        # Add MySQL/SQLServer generators when implemented:
+        # elif db_type == "mysql":
+        #     from ..db.schema_sync.mysql import MySQLMigrationGenerator
+        #     return MySQLMigrationGenerator()
+        # elif db_type == "sqlserver":
+        #     from ..db.schema_sync.sqlserver import SQLServerMigrationGenerator
+        #     return SQLServerMigrationGenerator()
+        else:
+            # Default fallback to Postgres
+            from ..db.schema_sync.postgres import PostgresMigrationGenerator
+
+            return PostgresMigrationGenerator()
 
     @classmethod
     def get_temporal_fields(cls) -> dict[str, tuple[type, Any]]:
@@ -279,9 +394,8 @@ class PydanticModel(BaseModel):
         """
         from ..temporal.registry import get_strategy
 
-        # Create QueryBuilder for database-agnostic SQL generation
-        # TODO: Auto-detect database type and select appropriate QueryBuilder
-        query_builder = PostgresQueryBuilder()
+        # Get QueryBuilder for this model's database type
+        query_builder = cls._get_query_builder()
 
         # Get strategy instance
         strategy = get_strategy(
@@ -378,8 +492,8 @@ class PydanticModel(BaseModel):
         """
         from ..temporal.registry import get_strategy
 
-        # Create QueryBuilder for database-agnostic SQL generation
-        query_builder = PostgresQueryBuilder()
+        # Get QueryBuilder for this model's database type
+        query_builder = cls._get_query_builder()
 
         strategy = get_strategy(
             strategy_type=cls.get_temporal_strategy(),
@@ -411,8 +525,8 @@ class PydanticModel(BaseModel):
         """
         from ..temporal.registry import get_strategy
 
-        # Create QueryBuilder for database-agnostic SQL generation
-        query_builder = PostgresQueryBuilder()
+        # Get QueryBuilder for this model's database type
+        query_builder = cls._get_query_builder()
 
         strategy = get_strategy(
             strategy_type=cls.get_temporal_strategy(),
@@ -459,15 +573,14 @@ class PydanticModel(BaseModel):
             ...
         """
         # Import here to avoid circular dependency
-        from ..db.schema_sync.postgres import PostgresMigrationGenerator
         from .introspector import PydanticSchemaIntrospector
 
         # Extract table definition from Pydantic model
         introspector = PydanticSchemaIntrospector()
         table_def = introspector.extract_table_definition(cls)
 
-        # Generate SQL using existing migration generator
-        generator = PostgresMigrationGenerator()
+        # Generate SQL using migration generator for this model's database type
+        generator = cls._get_migration_generator()
         create_table_sql = generator.generate_create_table(table_def)
 
         # Generate index SQL
@@ -506,13 +619,13 @@ class PydanticModel(BaseModel):
             );
         """
         from ..db.schema_sync.models import ColumnDefinition, IndexDefinition, TableDefinition
-        from ..db.schema_sync.postgres import PostgresMigrationGenerator
 
         aux_tables = cls.get_auxiliary_tables()
         if not aux_tables:
             return []
 
-        generator = PostgresMigrationGenerator()
+        # Get migration generator for this model's database type
+        generator = cls._get_migration_generator()
         sql_statements = []
 
         for aux_table_def in aux_tables:
@@ -564,3 +677,36 @@ class PydanticModel(BaseModel):
         # Exclude computed fields - they are derived, not stored in DB
         computed_fields = set(self.model_computed_fields.keys())
         return self.model_dump(exclude_none=exclude_none, mode="python", exclude=computed_fields)
+
+    def invalidate_relationship_cache(self, *relationship_names: str) -> None:
+        """
+        Clear cached relationship data.
+
+        Call this method after making changes that affect relationships
+        (creates, updates, deletes) to ensure fresh data on next access.
+
+        Args:
+            *relationship_names: Names of specific relationships to invalidate.
+                               If not provided, all relationship caches are cleared.
+
+        Example:
+            # Clear all relationship caches
+            author.invalidate_relationship_cache()
+
+            # Clear specific relationships
+            author.invalidate_relationship_cache("posts", "comments")
+
+            # Typical usage after a save
+            await repo.create(new_post)
+            author.invalidate_relationship_cache("posts")
+        """
+        if not relationship_names:
+            # Clear all relationship caches
+            to_remove = [k for k in self.__dict__ if k.startswith("_rel_cache_")]
+            for key in to_remove:
+                del self.__dict__[key]
+        else:
+            # Clear specific relationship caches
+            for name in relationship_names:
+                cache_key = f"_rel_cache_{name}"
+                self.__dict__.pop(cache_key, None)

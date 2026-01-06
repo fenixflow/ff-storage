@@ -8,15 +8,37 @@ A comprehensive storage package for Fenixflow applications, providing **async co
 
 Created by **Ben Moag** at **[Fenixflow](https://fenixflow.com)**
 
-## 🔥 Version 4.6.3 - Latest Release
+## 🔥 Version 4.7.0 - Query Builder & Relationships
 
-**What's New in v4.6.x**:
+**Major new features**:
 
-- **v4.6.3** - Fixed false positive schema drift for float types + added PK/FK introspection to schema sync
-- **v4.6.2** - Documentation updates
-- **v4.6.1** - Fixed JSONB field serialization in `update()` methods (NoneStrategy & CopyOnChangeStrategy)
-- **v4.6.0** - Fixed false positive schema drift for SQL function defaults (case sensitivity: `now()` vs `NOW()`)
-- **v4.5.0** - Field introspection methods (`get_base_fields()`, `get_system_fields()`, `get_user_fields()`) and computed field exclusion from DB operations
+- **Query Builder** - Fluent, type-safe query API with JOINs and aggregations
+- **Relationships** - ORM-style model relationships with eager loading
+- **Transactions** - Full transaction management with Unit of Work pattern
+- **Bulk Operations** - Efficient batch insert/update/delete
+
+```python
+from ff_storage import Query, F, Relationship
+
+# Fluent query API
+results = await (
+    Query(Product)
+    .filter(F.price > 100)
+    .filter(F.status == "active")
+    .order_by(F.created_at.desc())
+    .limit(10)
+    .execute(db_pool, tenant_id=tenant)
+)
+
+# Model relationships
+class Author(PydanticModel):
+    posts: list["Post"] = Relationship(back_populates="author")
+
+# Eager loading (prevents N+1 queries)
+authors = await Query(Author).load(["posts"]).execute(db_pool)
+```
+
+**100% backward compatible** - all existing code works unchanged.
 
 ---
 
@@ -200,9 +222,10 @@ See [docs/quickstart_v3.md](docs/quickstart_v3.md) for full migration guide.
 - **Async Connection Pools**: High-performance async pools for PostgreSQL, MySQL, and SQL Server
 - **Sync Direct Connections**: Simple sync connections for scripts and non-async code
 - **Multi-Database Support**: Uniform interface across PostgreSQL, MySQL, and Microsoft SQL Server
-- **Transaction Management**: Built-in support for transactions with rollback
-- **Batch Operations**: Execute many queries efficiently
-- **Query Builder**: SQL query construction utilities
+- **Transaction Management**: Full transaction support with savepoints and isolation levels
+- **Batch Operations**: Execute many queries efficiently with bulk insert/update/delete
+- **Query Builder**: Fluent, type-safe query API with JOINs and aggregations
+- **Model Relationships**: ORM-style relationships with eager loading (N+1 prevention)
 
 ### Schema Sync System (v2.0.0+, Fixed in v3.3.0)
 - **Production-Ready**: v3.3.0 fixes critical false positive detection bugs
@@ -535,7 +558,121 @@ print(f"Open connections: {open_connections}")
 pool.close_all_connections()
 ```
 
-### Query Builder Utilities
+### Fluent Query Builder (v4.7.0+)
+
+```python
+from ff_storage import Query, F, AND, OR
+
+# Simple filtering
+products = await (
+    Query(Product)
+    .filter(F.price > 100)
+    .filter(F.status == "active")
+    .order_by(F.created_at.desc())
+    .limit(10)
+    .execute(db_pool, tenant_id=tenant)
+)
+
+# Complex filters with AND/OR
+results = await (
+    Query(Product)
+    .filter(AND(
+        F.category == "electronics",
+        OR(F.price < 50, F.on_sale == True)
+    ))
+    .execute(db_pool)
+)
+
+# String operations
+results = await (
+    Query(User)
+    .filter(F.email.icontains("@example.com"))
+    .filter(F.name.startswith("John"))
+    .execute(db_pool)
+)
+
+# Aggregations
+from ff_storage import func
+
+total = await (
+    Query(Order)
+    .filter(F.status == "completed")
+    .select(func.sum(F.total))
+    .execute(db_pool)
+)
+
+# First result or None
+user = await Query(User).filter(F.email == email).first(db_pool)
+
+# Check existence
+exists = await Query(User).filter(F.email == email).exists(db_pool)
+```
+
+### Model Relationships (v4.7.0+)
+
+```python
+from ff_storage import PydanticModel, Relationship, Field
+
+class Author(PydanticModel):
+    __table_name__ = "authors"
+    name: str = Field(max_length=255)
+
+    # One-to-many relationship
+    posts: list["Post"] = Relationship(back_populates="author")
+
+class Post(PydanticModel):
+    __table_name__ = "posts"
+    title: str = Field(max_length=255)
+    author_id: UUID  # Foreign key
+
+    # Many-to-one relationship
+    author: "Author" = Relationship(back_populates="posts")
+
+# Query with JOINs
+results = await (
+    Query(Author)
+    .filter(F.name.contains("John"))
+    .join(Author.posts)  # JOIN posts table
+    .execute(db_pool)
+)
+
+# Eager loading (prevents N+1 queries)
+authors = await (
+    Query(Author)
+    .load(["posts"])  # Batch load all posts
+    .execute(db_pool)
+)
+
+for author in authors:
+    print(f"{author.name} has {len(author.posts)} posts")
+```
+
+### Transactions (v4.7.0+)
+
+```python
+from ff_storage import Transaction, IsolationLevel
+
+# Simple transaction
+async with Transaction(db_pool) as tx:
+    await tx.execute("INSERT INTO orders ...")
+    await tx.execute("UPDATE inventory ...")
+    # Auto-commits on success, rollbacks on exception
+
+# With isolation level
+async with Transaction(db_pool, isolation=IsolationLevel.SERIALIZABLE) as tx:
+    await tx.execute("SELECT ... FOR UPDATE")
+    await tx.execute("UPDATE ...")
+
+# Savepoints for nested transactions
+async with Transaction(db_pool) as tx:
+    await tx.execute("INSERT INTO parent ...")
+
+    async with tx.savepoint("child_ops"):
+        await tx.execute("INSERT INTO child ...")
+        # Can rollback just this savepoint
+```
+
+### Legacy Query Builder Utilities
 ```python
 from ff_storage.db.sql import build_insert, build_update, build_select
 

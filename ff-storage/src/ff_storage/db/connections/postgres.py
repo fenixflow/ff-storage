@@ -7,7 +7,10 @@ import asyncio
 import logging
 import time
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
+
+if TYPE_CHECKING:
+    from ...transactions import IsolationLevel, Transaction
 
 import psycopg2
 from psycopg2 import DatabaseError, OperationalError
@@ -19,13 +22,13 @@ from ...exceptions import (
 )
 from ...health import HealthCheckResult, HealthStatus
 from ...utils.metrics import async_timer, get_global_collector, timer
+from ...utils.postgres import quote_identifier
 from ...utils.retry import (
     CircuitBreaker,
     exponential_backoff,
     retry,
     retry_async,
 )
-from ...utils.postgres import quote_identifier
 from ...utils.validation import validate_query
 from ..sql import SQL
 
@@ -45,6 +48,7 @@ class PostgresBase(SQL):
     query_timeout: int = 30000  # 30 seconds in milliseconds
     idle_timeout: int = 60000  # 60 seconds in milliseconds
     validate_queries: bool = True  # Enable query validation
+    strict_validation: bool = True  # Raise exceptions on validation failure (security)
     collect_metrics: bool = True  # Enable metrics collection
 
     # Internal
@@ -70,6 +74,7 @@ class PostgresBase(SQL):
         params: Optional[Dict[str, Any]] = None,
         as_dict: bool = True,
         context: Optional[Dict[str, Any]] = None,
+        raise_on_error: bool = True,
     ) -> List[Any]:
         """
         Execute a read-only SQL query and fetch all rows with enhanced monitoring.
@@ -78,16 +83,21 @@ class PostgresBase(SQL):
         :param params: Optional dictionary of query parameters.
         :param as_dict: If True, return list of dicts. If False, return list of tuples.
         :param context: Optional context for validation (e.g., trusted_source=True).
+        :param raise_on_error: If True (default), raise exceptions on database errors.
+                               If False, return empty list on error (legacy behavior).
         :return: A list of dicts (default) or tuples representing the query results.
         :raises ConnectionFailure: If connection fails.
         :raises QueryTimeout: If query exceeds timeout.
+        :raises DatabaseError: If query fails and raise_on_error is True.
         """
         # Validate query if enabled
         if self.validate_queries:
             try:
                 validate_query(query, params, context)
             except Exception as e:
-                self.logger.warning(f"Query validation failed: {e}")
+                if self.strict_validation:
+                    raise  # Security: stop execution on validation failure
+                self.logger.warning(f"Query validation warning (strict_validation=False): {e}")
 
         if not self.connection:
             self.connect()
@@ -116,6 +126,8 @@ class PostgresBase(SQL):
             self.logger.error(f"Database query error: {e}", exc_info=True)
             if "timeout" in str(e).lower():
                 raise QueryTimeout(query, self.query_timeout / 1000)
+            if raise_on_error:
+                raise  # Re-raise to allow callers to handle the error
             return []
 
         finally:
@@ -152,7 +164,9 @@ class PostgresBase(SQL):
             try:
                 validate_query(query, params, context)
             except Exception as e:
-                self.logger.warning(f"Query validation failed: {e}")
+                if self.strict_validation:
+                    raise  # Security: stop execution on validation failure
+                self.logger.warning(f"Query validation warning (strict_validation=False): {e}")
 
         if not self.connection:
             self.connect()
@@ -168,16 +182,31 @@ class PostgresBase(SQL):
                     if self.collect_metrics and self._metrics_collector:
                         self._metrics_collector.increment("postgres.execute.success")
 
-            except Exception as e:
+            except (DatabaseError, OperationalError) as e:
+                # Re-raise database errors to allow retry decorator to handle them
                 self.connection.rollback()
                 if self.collect_metrics and self._metrics_collector:
                     self._metrics_collector.increment("postgres.execute.failed")
 
                 if "timeout" in str(e).lower():
                     raise QueryTimeout(query, self.query_timeout / 1000)
+                raise  # Let retry decorator handle transient database errors
+
+            except Exception as e:
+                # Wrap non-database errors in ConnectionFailure
+                self.connection.rollback()
+                if self.collect_metrics and self._metrics_collector:
+                    self._metrics_collector.increment("postgres.execute.failed")
+
                 raise ConnectionFailure(self.host, self.port, self.dbname, 1, str(e))
 
-    def execute_query(self, query: str, params: Optional[Dict[str, Any]] = None) -> List[Any]:
+    @retry(max_attempts=3, delay=exponential_backoff(base_delay=0.5), exceptions=(DatabaseError,))
+    def execute_query(
+        self,
+        query: str,
+        params: Optional[Dict[str, Any]] = None,
+        context: Optional[Dict[str, Any]] = None,
+    ) -> List[Any]:
         """
         Execute a query that includes a RETURNING statement and fetch the result.
 
@@ -186,40 +215,116 @@ class PostgresBase(SQL):
 
         :param query: The SQL query containing RETURNING.
         :param params: Optional dictionary of query parameters.
+        :param context: Optional context for validation (e.g., trusted_source=True).
         :return: A list of tuples with the returned values.
         :raises RuntimeError: If the query execution fails.
+        :raises QueryTimeout: If query exceeds timeout.
         """
+        # Validate query if enabled
+        if self.validate_queries:
+            try:
+                validate_query(query, params, context)
+            except Exception as e:
+                if self.strict_validation:
+                    raise  # Security: stop execution on validation failure
+                self.logger.warning(f"Query validation warning (strict_validation=False): {e}")
+
         if not self.connection:
             self.connect()
+
+        start_time = time.perf_counter()
+        rows_affected = 0
+        success = False
+        error = None
 
         try:
             with self.connection.cursor() as cursor:
                 cursor.execute(query, params)
                 result = cursor.fetchall() if "RETURNING" in query.upper() else []
                 self.connection.commit()
+                rows_affected = len(result) if result else 0
+                success = True
                 return result
-        except DatabaseError as e:
-            self.connection.rollback()
-            raise RuntimeError(f"Execution failed: {e}")
 
-    def execute_many(self, query: str, params_list: List[Dict[str, Any]]) -> None:
+        except (DatabaseError, OperationalError) as e:
+            error = str(e)
+            self.connection.rollback()
+            if "timeout" in str(e).lower():
+                raise QueryTimeout(query, self.query_timeout / 1000)
+            raise  # Let retry decorator handle transient database errors
+
+        finally:
+            # Record metrics
+            if self.collect_metrics and self._metrics_collector:
+                duration = time.perf_counter() - start_time
+                self._metrics_collector.record_query(
+                    query=query,
+                    duration=duration,
+                    rows_affected=rows_affected,
+                    success=success,
+                    error=error,
+                    connection_id=f"{self.host}:{self.port}/{self.dbname}",
+                )
+
+    @retry(max_attempts=3, delay=exponential_backoff(base_delay=0.5), exceptions=(DatabaseError,))
+    def execute_many(
+        self,
+        query: str,
+        params_list: List[Dict[str, Any]],
+        context: Optional[Dict[str, Any]] = None,
+    ) -> None:
         """
         Execute the same query with multiple parameter sets for batch operations.
 
         :param query: The SQL statement to execute.
         :param params_list: List of parameter dictionaries.
+        :param context: Optional context for validation (e.g., trusted_source=True).
         :raises RuntimeError: If batch execution fails.
+        :raises QueryTimeout: If query exceeds timeout.
         """
+        # Validate the template query (using first param set for validation)
+        if self.validate_queries:
+            try:
+                first_params = params_list[0] if params_list else None
+                validate_query(query, first_params, context)
+            except Exception as e:
+                if self.strict_validation:
+                    raise  # Security: stop execution on validation failure
+                self.logger.warning(f"Query validation warning (strict_validation=False): {e}")
+
         if not self.connection:
             self.connect()
+
+        start_time = time.perf_counter()
+        rows_affected = len(params_list)
+        success = False
+        error = None
 
         try:
             with self.connection.cursor() as cursor:
                 cursor.executemany(query, params_list)
                 self.connection.commit()
-        except DatabaseError as e:
+                success = True
+
+        except (DatabaseError, OperationalError) as e:
+            error = str(e)
             self.connection.rollback()
-            raise RuntimeError(f"Batch execution failed: {e}")
+            if "timeout" in str(e).lower():
+                raise QueryTimeout(query, self.query_timeout / 1000)
+            raise  # Let retry decorator handle transient database errors
+
+        finally:
+            # Record metrics for batch operation
+            if self.collect_metrics and self._metrics_collector:
+                duration = time.perf_counter() - start_time
+                self._metrics_collector.record_query(
+                    query=query,
+                    duration=duration,
+                    rows_affected=rows_affected if success else 0,
+                    success=success,
+                    error=error,
+                    connection_id=f"{self.host}:{self.port}/{self.dbname}",
+                )
 
     def table_exists(self, table_name: str, schema: Optional[str] = None) -> bool:
         """
@@ -617,7 +722,9 @@ class PostgresPool:
             try:
                 validate_query(query, args, context)
             except Exception as e:
-                self.logger.warning(f"Query validation failed: {e}")
+                if self.strict_validation:
+                    raise  # Security: stop execution on validation failure
+                self.logger.warning(f"Query validation warning (strict_validation=False): {e}")
 
         # Record metrics periodically
         if time.time() - self._last_pool_check > 10:  # Every 10 seconds
@@ -689,7 +796,9 @@ class PostgresPool:
             try:
                 validate_query(query, args, context)
             except Exception as e:
-                self.logger.warning(f"Query validation failed: {e}")
+                if self.strict_validation:
+                    raise  # Security: stop execution on validation failure
+                self.logger.warning(f"Query validation warning (strict_validation=False): {e}")
 
         start_time = time.perf_counter()
         success = False
@@ -730,7 +839,13 @@ class PostgresPool:
                     connection_id=f"pool_{self.host}:{self.port}/{self.dbname}",
                 )
 
-    async def execute(self, query: str, *args):
+    async def execute(
+        self,
+        query: str,
+        *args,
+        context: Optional[Dict[str, Any]] = None,
+        timeout: Optional[float] = None,
+    ):
         """
         Execute query without returning results (INSERT, UPDATE, DELETE).
 
@@ -738,26 +853,115 @@ class PostgresPool:
 
         :param query: SQL query (use $1, $2 for parameters).
         :param args: Query parameters.
+        :param context: Optional context for validation (e.g., trusted_source=True).
+        :param timeout: Optional timeout in seconds.
         :return: Status string (e.g., "INSERT 0 1").
+        :raises ConnectionPoolExhausted: If pool has no available connections.
+        :raises QueryTimeout: If query exceeds timeout.
         """
         if not self.pool:
-            raise RuntimeError("Pool not connected. Call await pool.connect() first.")
+            raise ConnectionPoolExhausted(self.max_size, self.connection_timeout)
 
-        async with self.pool.acquire() as conn:
-            return await conn.execute(query, *args)
+        # Validate query if enabled
+        if self.validate_queries:
+            try:
+                validate_query(query, args, context)
+            except Exception as e:
+                if self.strict_validation:
+                    raise  # Security: stop execution on validation failure
+                self.logger.warning(f"Query validation warning (strict_validation=False): {e}")
 
-    async def execute_many(self, query: str, args_list: list):
+        start_time = time.perf_counter()
+        success = False
+        error = None
+
+        try:
+            async with self.pool.acquire(timeout=timeout or self.connection_timeout) as conn:
+                result = await conn.execute(query, *args)
+                success = True
+                return result
+
+        except asyncio.TimeoutError:
+            error = "Pool acquisition timeout"
+            raise ConnectionPoolExhausted(self.max_size, self.connection_timeout)
+        except Exception as e:
+            error = str(e)
+            if "timeout" in str(e).lower():
+                raise QueryTimeout(query, self.query_timeout / 1000)
+            raise
+        finally:
+            # Record query metrics
+            if self.collect_metrics and self._metrics_collector:
+                duration = time.perf_counter() - start_time
+                self._metrics_collector.record_query(
+                    query=query,
+                    duration=duration,
+                    rows_affected=0,  # execute doesn't return row count directly
+                    success=success,
+                    error=error,
+                    connection_id=f"pool_{self.host}:{self.port}/{self.dbname}",
+                )
+
+    @retry_async(max_attempts=2, delay=exponential_backoff(base_delay=0.5), exceptions=(Exception,))
+    async def execute_many(
+        self,
+        query: str,
+        args_list: list,
+        context: Optional[Dict[str, Any]] = None,
+    ):
         """
         Execute query with multiple parameter sets (batch operation).
 
         :param query: SQL query (use $1, $2 for parameters).
         :param args_list: List of argument tuples.
+        :param context: Optional context for validation (e.g., trusted_source=True).
+        :raises ConnectionPoolExhausted: If pool has no available connections.
+        :raises QueryTimeout: If query exceeds timeout.
         """
         if not self.pool:
             raise ConnectionPoolExhausted(self.max_size, self.connection_timeout)
 
-        async with self.pool.acquire(timeout=self.connection_timeout) as conn:
-            await conn.executemany(query, args_list)
+        # Validate the template query (using first arg set for validation)
+        if self.validate_queries:
+            try:
+                first_args = args_list[0] if args_list else None
+                validate_query(query, first_args, context)
+            except Exception as e:
+                if self.strict_validation:
+                    raise  # Security: stop execution on validation failure
+                self.logger.warning(f"Query validation warning (strict_validation=False): {e}")
+
+        start_time = time.perf_counter()
+        rows_affected = len(args_list)
+        success = False
+        error = None
+
+        try:
+            async with async_timer("postgres_pool.execute_many"):
+                async with self.pool.acquire(timeout=self.connection_timeout) as conn:
+                    await conn.executemany(query, args_list)
+                    success = True
+
+        except asyncio.TimeoutError:
+            error = "Pool acquisition timeout"
+            raise ConnectionPoolExhausted(self.max_size, self.connection_timeout)
+        except Exception as e:
+            error = str(e)
+            if "timeout" in str(e).lower():
+                raise QueryTimeout(query, self.query_timeout / 1000)
+            raise
+        finally:
+            # Record query metrics for batch operation
+            if self.collect_metrics and self._metrics_collector:
+                duration = time.perf_counter() - start_time
+                self._metrics_collector.record_query(
+                    query=query,
+                    duration=duration,
+                    rows_affected=rows_affected if success else 0,
+                    success=success,
+                    error=error,
+                    connection_id=f"pool_{self.host}:{self.port}/{self.dbname}",
+                )
 
     def acquire(self, timeout: Optional[float] = None):
         """
@@ -779,6 +983,44 @@ class PostgresPool:
 
         timeout = timeout or self.connection_timeout
         return self.pool.acquire(timeout=timeout)
+
+    def transaction(
+        self,
+        isolation: Optional["IsolationLevel"] = None,
+        readonly: bool = False,
+    ) -> "Transaction":
+        """
+        Create a transaction context manager.
+
+        Provides a convenient way to wrap multiple operations in a single
+        database transaction with automatic commit/rollback.
+
+        :param isolation: Transaction isolation level (defaults to READ COMMITTED).
+                         Options: READ_UNCOMMITTED, READ_COMMITTED, REPEATABLE_READ, SERIALIZABLE
+        :param readonly: If True, the transaction only allows read operations.
+        :return: Transaction context manager.
+
+        Usage:
+            async with db_pool.transaction() as txn:
+                await repo.create(model, connection=txn.connection)
+                await repo.update(id, data, connection=txn.connection)
+                # Auto-commit on success, auto-rollback on exception
+
+            # With isolation level
+            from ff_storage.transactions import IsolationLevel
+
+            async with db_pool.transaction(isolation=IsolationLevel.SERIALIZABLE) as txn:
+                # High-consistency operations
+                ...
+        """
+        from ..transactions import IsolationLevel as IsoLevel
+        from ..transactions import Transaction
+
+        return Transaction(
+            self,
+            isolation=isolation or IsoLevel.READ_COMMITTED,
+            readonly=readonly,
+        )
 
     async def check_health(self) -> HealthCheckResult:
         """

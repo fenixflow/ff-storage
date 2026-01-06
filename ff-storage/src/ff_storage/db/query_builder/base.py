@@ -21,6 +21,55 @@ class QueryBuilder(ABC):
     Subclasses must implement all abstract methods for their target database.
     """
 
+    # Valid ORDER BY directions (for SQL injection prevention)
+    _VALID_ORDER_DIRECTIONS = {"ASC", "DESC"}
+
+    def _validate_order_direction(self, direction: str) -> str:
+        """
+        Validate ORDER BY direction to prevent SQL injection.
+
+        Args:
+            direction: Direction string (ASC or DESC)
+
+        Returns:
+            Validated uppercase direction
+
+        Raises:
+            ValueError: If direction is invalid
+        """
+        normalized = direction.upper()
+        if normalized not in self._VALID_ORDER_DIRECTIONS:
+            raise ValueError(
+                f"Invalid ORDER BY direction: {direction!r}. "
+                f"Must be one of: {sorted(self._VALID_ORDER_DIRECTIONS)}"
+            )
+        return normalized
+
+    def _validate_limit_offset(self, value: Any, param_name: str) -> int:
+        """
+        Validate and coerce LIMIT/OFFSET to non-negative integer.
+
+        Args:
+            value: Value to validate
+            param_name: Parameter name for error message
+
+        Returns:
+            Validated non-negative integer
+
+        Raises:
+            ValueError: If value is not a valid non-negative integer
+        """
+        try:
+            int_value = int(value)
+        except (TypeError, ValueError) as e:
+            raise ValueError(
+                f"Invalid {param_name} value: {value!r}. Must be a non-negative integer."
+            ) from e
+
+        if int_value < 0:
+            raise ValueError(f"Invalid {param_name} value: {int_value}. Must be non-negative.")
+        return int_value
+
     @abstractmethod
     def quote_identifier(self, identifier: str) -> str:
         """
@@ -167,19 +216,25 @@ class QueryBuilder(ABC):
 
         # Add ORDER BY
         if order_by:
-            # Parse "column" or "column DESC"
+            # Parse "column" or "column DESC" with validation
             order_parts = []
             for order_spec in order_by:
                 parts = order_spec.split()
                 col = self.quote_identifier(parts[0])
-                direction = f" {parts[1]}" if len(parts) > 1 else ""
-                order_parts.append(f"{col}{direction}")
+                if len(parts) > 1:
+                    # Validate direction to prevent SQL injection
+                    validated_direction = self._validate_order_direction(parts[1])
+                    order_parts.append(f"{col} {validated_direction}")
+                else:
+                    order_parts.append(col)
             query += f" ORDER BY {', '.join(order_parts)}"
 
-        # Add LIMIT/OFFSET (subclasses may override for dialect differences)
+        # Add LIMIT/OFFSET (validated to prevent SQL injection)
         if limit is not None:
-            query += f" LIMIT {limit}"
+            validated_limit = self._validate_limit_offset(limit, "LIMIT")
+            query += f" LIMIT {validated_limit}"
         if offset is not None:
-            query += f" OFFSET {offset}"
+            validated_offset = self._validate_limit_offset(offset, "OFFSET")
+            query += f" OFFSET {validated_offset}"
 
         return query, values

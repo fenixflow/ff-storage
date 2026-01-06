@@ -1,12 +1,12 @@
-# FF-Storage v3.3.0 Documentation
+# FF-Storage v4.7.0 Documentation
 
-Complete documentation for ff-storage's Pydantic ORM and temporal data management.
+Complete documentation for ff-storage's Pydantic ORM, Query Builder, Relationships, and Temporal Data Management.
 
-> **🔥 v3.3.0 Critical Update**: Fixes production bug in schema sync causing false positives. If you're using schema sync (v2.0+), upgrade immediately.
+> **🔥 v4.7.0 Major Release**: Adds Query Builder, Model Relationships, Transactions, and Bulk Operations. 100% backward compatible.
 
 ## Getting Started
 
-**New to ff-storage v3?** Start here:
+**New to ff-storage?** Start here:
 
 - **[Quickstart Guide](quickstart_v3.md)** - Get up and running in 5 minutes
 - **[Strategy Selection Guide](guides/strategy_selection.md)** - Choose the right temporal strategy
@@ -19,8 +19,8 @@ Complete documentation for ff-storage's Pydantic ORM and temporal data managemen
 - **[Production Deployment](FF_STORAGE_V3_PRODUCTION_GUIDE.md)** - Operational best practices
 
 ### API Reference
-- **[Pydantic ORM API](api/pydantic_orm.md)** - PydanticModel, Field, Repository (coming soon)
-- **[Temporal Strategies](api/temporal_strategies.md)** - Strategy interfaces and methods (coming soon)
+- **[Pydantic ORM API](api/pydantic_orm.md)** - PydanticModel, Field, Repository
+- **[Temporal Strategies](api/temporal_strategies.md)** - Strategy interfaces and methods
 
 ## Examples
 
@@ -28,90 +28,117 @@ Complete documentation for ff-storage's Pydantic ORM and temporal data managemen
 - **[Schema Manager Example](examples/schema_manager_example.py)** - Auto-create main + audit tables
 - **[Basic Product Model](examples/basic_product_model.py)** - copy_on_change strategy
 - **[Regulation SCD2](examples/regulation_scd2.py)** - SCD2 with time travel
-- **[Complete Integration](examples/complete_example.py)** - Multi-model setup (coming soon)
-- **[Temporal Queries](examples/temporal_queries.py)** - Advanced query patterns (coming soon)
 
 ## What's New
 
-### v3.3.0 (Critical Production Fix)
-- **Schema Normalization Framework**: Centralized comparison logic (DRY principle)
-- **WHERE Clause Parser**: SQL AST parsing with proper precedence handling
-- **Production Bug Fix**: Eliminates false positives causing index recreation on every schema sync
-- **327 Tests**: Including 93 new normalization tests for comprehensive coverage
-- **Backward Compatible**: Internal improvements only, no API changes
+### v4.7.0 (Query Builder & Relationships)
+
+**Query Builder**:
+- **Fluent API** with chaining: `Query(Model).filter(...).order_by(...).limit(...).execute()`
+- **Type-safe filtering** with `F.field` syntax and comparison operators
+- **Complex filters** with `AND()`, `OR()` composite expressions
+- **Aggregations** with `func.count()`, `func.sum()`, `func.avg()`, etc.
+- **JOINs** with automatic temporal and tenant safety
+
+**Relationships**:
+- **One-to-many**: `posts: list["Post"] = Relationship(back_populates="author")`
+- **Many-to-one**: `author: "Author" = Relationship(back_populates="posts")`
+- **Many-to-many**: Junction table support
+- **Eager loading**: `Query(Model).load(["relationship"])` prevents N+1 queries
+
+**Transactions**:
+- **Context manager**: `async with Transaction(pool) as tx:`
+- **Savepoints**: Nested transactions with rollback
+- **Isolation levels**: READ_COMMITTED, REPEATABLE_READ, SERIALIZABLE
+- **Unit of Work**: Complex multi-repository operations
+
+**Bulk Operations**:
+- **insert_many()**: Batch inserts with RETURNING
+- **update_many()**: Batch updates with filters
+- **delete_many()**: Batch deletes with filters
+
+### v3.3.0 (Schema Sync Fixes)
+- **Schema Normalization Framework**: Centralized comparison logic
+- **WHERE Clause Parser**: SQL AST parsing with proper precedence
+- **Production Bug Fix**: Eliminates false positives in schema sync
 
 ### v3.0.0 (Pydantic ORM)
-
-**Pydantic ORM**:
 - **Type-safe models** with Pydantic validation
-- **Automatic schema generation** from model definitions
-- **Rich field metadata** for complete SQL control (FK, CHECK, defaults, partial indexes)
-
-**Temporal Data Management**:
-- **Three strategies**: none, copy_on_change, scd2
+- **Temporal strategies**: none, copy_on_change, scd2
 - **Multi-tenant by default** with automatic filtering
-- **Soft delete by default** with restore capability
-- **Audit trails** with copy_on_change (field-level tracking)
-- **Time travel** with scd2 (immutable versions)
-
-**Schema Management**:
-- **Auto-sync schema** from Pydantic models
-- **Auxiliary table support** (audit tables auto-created)
-- **Terraform-like migrations** (state-based, not file-based)
-
-### Production Features
-- **Row-level locking** in copy_on_change (prevents race conditions)
-- **Validation system** to catch configuration errors
-- **Connection pooling** for high concurrency
+- **Audit trails** and **time travel** queries
 
 ## Architecture
 
 ```
 ff_storage/
-├── pydantic_support/
-│   ├── base.py              # PydanticModel base class
-│   ├── field_metadata.py    # Enhanced Field() with SQL metadata
-│   ├── repository.py        # PydanticRepository CRUD
-│   ├── introspector.py      # Schema extraction
-│   └── type_mapping.py      # Python → SQL type mapping
+├── pydantic_support/         # Pydantic ORM layer
+│   ├── base.py               # PydanticModel base class
+│   ├── repository.py         # PydanticRepository CRUD
+│   └── schema_sync.py        # Schema synchronization
+│
+├── query/                    # Query Builder (v4.7.0)
+│   ├── builder.py            # Query class with fluent API
+│   ├── expressions.py        # FilterExpression, FieldProxy, F
+│   ├── executor.py           # QueryExecutor with temporal awareness
+│   └── bulk.py               # Bulk operations
+│
+├── relationships/            # Relationships (v4.7.0)
+│   ├── descriptor.py         # Relationship descriptor
+│   ├── loader.py             # RelationshipLoader (N+1 prevention)
+│   └── registry.py           # RelationshipRegistry
+│
+├── transactions/             # Transactions (v4.7.0)
+│   ├── context.py            # Transaction context manager
+│   └── unit_of_work.py       # Unit of Work pattern
 │
 ├── temporal/
-│   ├── enums.py             # TemporalStrategyType
-│   ├── repository_base.py   # TemporalRepository base
-│   ├── validation.py        # Configuration validation
-│   ├── strategies/
-│   │   ├── none.py          # No history strategy
-│   │   ├── copy_on_change.py # Field-level audit
-│   │   └── scd2.py          # Immutable versions
-│   └── utils/               # Query helpers, cleanup, etc.
+│   ├── strategies/           # none, scd2, copy_on_change
+│   └── repository.py         # TemporalRepository base
 │
 └── db/
-    └── schema_sync/
-        └── manager.py       # SchemaManager (auto-sync)
+    └── schema_sync/          # Schema introspection
 ```
 
 ## Quick Reference
 
-### Define Model
+### Query Builder
 
 ```python
-from ff_storage import PydanticModel, Field
+from ff_storage import Query, F
 
-class User(PydanticModel):
-    __table_name__ = "users"
-    __temporal_strategy__ = "copy_on_change"
+# Fluent query API
+results = await (
+    Query(Product)
+    .filter(F.price > 100)
+    .filter(F.status == "active")
+    .order_by(F.created_at.desc())
+    .limit(10)
+    .execute(db_pool, tenant_id=tenant)
+)
 
-    email: str = Field(max_length=255, db_unique=True)
-    name: str
+# Convenience methods
+user = await Query(User).filter(F.email == email).first(db_pool)
+exists = await Query(User).filter(F.email == email).exists(db_pool)
+count = await Query(Product).filter(F.active == True).count(db_pool)
 ```
 
-### Auto-Sync Schema
+### Relationships
 
 ```python
-from ff_storage import SchemaManager
+from ff_storage import PydanticModel, Relationship, Field
 
-manager = SchemaManager(db_pool)
-manager.sync_schema(models=[User], dry_run=False)
+class Author(PydanticModel):
+    __table_name__ = "authors"
+    posts: list["Post"] = Relationship(back_populates="author")
+
+class Post(PydanticModel):
+    __table_name__ = "posts"
+    author_id: UUID
+    author: "Author" = Relationship(back_populates="posts")
+
+# Eager loading
+authors = await Query(Author).load(["posts"]).execute(db_pool)
 ```
 
 ### CRUD Operations
@@ -128,45 +155,25 @@ users = await repo.list(filters={"role": "admin"})
 await repo.delete(user_id, user_id=admin_id)
 ```
 
-### Query Audit History
+### Transactions
 
 ```python
-# Full history
-history = await repo.get_audit_history(user_id)
+from ff_storage import Transaction
 
-# Field-specific history
-email_changes = await repo.get_field_history(user_id, "email")
+async with Transaction(db_pool) as tx:
+    await tx.execute("INSERT INTO ...")
+    await tx.execute("UPDATE ...")
+    # Auto-commits on success, rollbacks on exception
 ```
 
-### Time Travel (SCD2)
+## Migration from Earlier Versions
 
-```python
-# Current version
-user = await repo.get(user_id)
+v4.7.0 is **100% backwards compatible**. All existing code works unchanged.
 
-# Historical version
-user_at_time = await repo.get(user_id, as_of=datetime(2024, 1, 1))
-
-# Version comparison
-diff = await repo.compare_versions(user_id, version1=1, version2=2)
-```
-
-## Migration from v2.x
-
-v3 is **fully backwards compatible**. Existing v2 code works unchanged.
-
-New v3 features are opt-in:
-- Keep using SQL base classes (Postgres, MySQL) for direct SQL
-- Add Pydantic models alongside existing code
-- Migrate models incrementally
-
-See `CLAUDE.md` for full architecture details.
-
-## Support & Contributing
-
-- **Issues**: https://gitlab.com/fenixflow/fenix-packages/-/issues
-- **Discussions**: https://gitlab.com/fenixflow/fenix-packages/-/discussions
-- **Contributing**: See `CONTRIBUTING.md` (coming soon)
+New features are opt-in:
+- Existing `repo.list(filters={...})` syntax continues to work
+- Query Builder is an alternative API, not a replacement
+- Relationships are optional model attributes
 
 ---
 

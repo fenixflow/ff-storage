@@ -5,15 +5,15 @@ Tests the mapping of various Python/Pydantic types to SQL column types,
 including the enhanced support for native PostgreSQL arrays.
 """
 
-import pytest
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 from typing import Dict, List, Optional, Set, Tuple
 from uuid import UUID
 
-from pydantic import BaseModel, Field
-from ff_storage.pydantic_support.type_mapping import map_pydantic_type_to_column_type
+import pytest
 from ff_storage.db.schema_sync.models import ColumnType
+from ff_storage.pydantic_support.type_mapping import map_pydantic_type_to_column_type
+from pydantic import BaseModel, Field
 
 
 class TestBasicTypeMapping:

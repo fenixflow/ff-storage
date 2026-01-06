@@ -17,12 +17,12 @@ Tenant Scoping:
 """
 
 import asyncio
-import hashlib
-import json
 import logging
-import time
-from typing import Any, Dict, Generic, List, Optional, Tuple, TypeVar
+from typing import TYPE_CHECKING, Any, Dict, Generic, List, Optional, TypeVar
 from uuid import UUID
+
+if TYPE_CHECKING:
+    from ..transactions import IsolationLevel, Transaction
 
 from ..db.adapters import DatabaseAdapter, detect_adapter
 from ..exceptions import (
@@ -32,6 +32,7 @@ from ..exceptions import (
 )
 from ..utils.metrics import async_timer, get_global_collector
 from ..utils.retry import exponential_backoff, retry_async
+from .helpers import CacheManager, ModelConverter, TenantScope
 from .strategies.base import TemporalStrategy
 
 T = TypeVar("T")
@@ -126,9 +127,9 @@ class TemporalRepository(Generic[T]):
         self.strategy = strategy
         self.logger = logger or logging.getLogger(__name__)
 
-        # Validate and set tenant scope
-        self._tenant_id: Optional[UUID] = None
-        self._tenant_ids: Optional[List[UUID]] = None
+        # Validate and set tenant scope using TenantScope helper
+        normalized_tenant_id: Optional[UUID] = None
+        normalized_tenant_ids: Optional[List[UUID]] = None
 
         if strategy.multi_tenant:
             # Validate mutual exclusion
@@ -148,18 +149,18 @@ class TemporalRepository(Generic[T]):
 
             # Validate tenant_ids is not empty
             if tenant_ids is not None and len(tenant_ids) == 0:
-                raise ValueError("tenant_ids cannot be empty. " "Provide at least one tenant UUID.")
+                raise ValueError("tenant_ids cannot be empty. Provide at least one tenant UUID.")
 
             # Set tenant scope based on which parameter was provided
             if tenant_id is not None:
                 # Normalize to UUID if provided as string
-                self._tenant_id = UUID(tenant_id) if isinstance(tenant_id, str) else tenant_id
+                normalized_tenant_id = UUID(tenant_id) if isinstance(tenant_id, str) else tenant_id
             elif tenant_ids is not None:
                 # Normalize tenant_ids to remove duplicates and convert strings
                 normalized = []
                 for tid in tenant_ids:
                     normalized.append(UUID(tid) if isinstance(tid, str) else tid)
-                self._tenant_ids = list(set(normalized))
+                normalized_tenant_ids = list(set(normalized))
             else:
                 # Neither tenant_id nor tenant_ids provided for multi-tenant model
                 raise TenantNotConfigured(
@@ -169,15 +170,30 @@ class TemporalRepository(Generic[T]):
                     "tenant_ids for permissive scope (admin cross-tenant access).",
                 )
 
-        # Caching configuration
+        # Initialize TenantScope helper
+        self._tenant_scope = TenantScope(
+            tenant_id=normalized_tenant_id,
+            tenant_ids=normalized_tenant_ids,
+            tenant_field=strategy.tenant_field if strategy.multi_tenant else "tenant_id",
+        )
+
+        # Initialize CacheManager helper
+        self._cache_manager = CacheManager(
+            enabled=cache_enabled,
+            ttl_seconds=cache_ttl,
+        )
+
+        # Backward-compatible attributes
         self.cache_enabled = cache_enabled
         self.cache_ttl = cache_ttl
-        self._cache: Dict[str, Tuple[Any, float]] = {}  # key -> (value, expiry_time)
-        self._cache_lock = asyncio.Lock()
 
         # Metrics configuration
         self.collect_metrics = collect_metrics
         self._metrics = get_global_collector() if collect_metrics else None
+
+        # Connect metrics to cache manager
+        if self._metrics:
+            self._cache_manager.set_metrics_collector(self._metrics)
 
         # Retry configuration
         self.max_retries = max_retries
@@ -190,7 +206,7 @@ class TemporalRepository(Generic[T]):
         Returns single tenant UUID if configured, None otherwise.
         For multi-tenant scope, use tenant_ids property instead.
         """
-        return self._tenant_id
+        return self._tenant_scope.tenant_id
 
     @property
     def tenant_ids(self) -> Optional[List[UUID]]:
@@ -200,7 +216,7 @@ class TemporalRepository(Generic[T]):
         Returns list of allowed tenant UUIDs if configured, None otherwise.
         For strict single-tenant scope, use tenant_id property instead.
         """
-        return self._tenant_ids
+        return self._tenant_scope.tenant_ids
 
     @property
     def tenant_filter_value(self) -> Optional[UUID | List[UUID]]:
@@ -212,11 +228,7 @@ class TemporalRepository(Generic[T]):
             - List[UUID] if tenant_ids is set (permissive scope)
             - None if neither is set (admin scope)
         """
-        if self._tenant_id is not None:
-            return self._tenant_id
-        elif self._tenant_ids is not None:
-            return self._tenant_ids
-        return None
+        return self._tenant_scope.filter_value
 
     def _validate_tenant_for_write(self, data: Dict[str, Any]) -> None:
         """
@@ -236,36 +248,8 @@ class TemporalRepository(Generic[T]):
         if not self.strategy.multi_tenant:
             return
 
-        tenant_field = self.strategy.tenant_field
-
-        if self._tenant_id is not None:
-            # STRICT SCOPE: Force tenant_id on the model
-            data[tenant_field] = self._tenant_id
-
-        elif self._tenant_ids is not None:
-            # PERMISSIVE SCOPE: Validate model.tenant_id is in allowed list
-            model_tenant = data.get(tenant_field)
-            if model_tenant is None:
-                raise TenantIsolationError(
-                    requested_tenant="None",
-                    actual_tenant=str(self._tenant_ids),
-                    operation="create/update",
-                    message=f"Model must specify {tenant_field} when using multi-tenant scope. "
-                    f"Allowed tenants: {self._tenant_ids}",
-                )
-            # Normalize to UUID for comparison
-            model_tenant_uuid = (
-                UUID(model_tenant) if isinstance(model_tenant, str) else model_tenant
-            )
-            if model_tenant_uuid not in self._tenant_ids:
-                raise TenantIsolationError(
-                    requested_tenant=str(model_tenant_uuid),
-                    actual_tenant=str(self._tenant_ids),
-                    operation="create/update",
-                    message=f"Tenant {model_tenant_uuid} not in allowed list: {self._tenant_ids}",
-                )
-
-        # If neither tenant_id nor tenant_ids is set, allow any (admin scope)
+        # Delegate to TenantScope helper (modifies data in place for strict scope)
+        self._tenant_scope.validate_for_write(data)
 
     def _validate_tenant_for_read(self, result: T) -> None:
         """
@@ -280,32 +264,8 @@ class TemporalRepository(Generic[T]):
         if not self.strategy.multi_tenant or result is None:
             return
 
-        result_tenant = getattr(result, self.strategy.tenant_field, None)
-        if result_tenant is None:
-            return
-
-        # Normalize to UUID for comparison
-        result_tenant_uuid = (
-            UUID(result_tenant) if isinstance(result_tenant, str) else result_tenant
-        )
-
-        if self._tenant_id is not None:
-            # STRICT SCOPE: Must match exactly
-            if result_tenant_uuid != self._tenant_id:
-                raise TenantIsolationError(
-                    requested_tenant=str(self._tenant_id),
-                    actual_tenant=str(result_tenant_uuid),
-                    operation="get",
-                )
-
-        elif self._tenant_ids is not None:
-            # PERMISSIVE SCOPE: Must be in list
-            if result_tenant_uuid not in self._tenant_ids:
-                raise TenantIsolationError(
-                    requested_tenant=str(self._tenant_ids),
-                    actual_tenant=str(result_tenant_uuid),
-                    operation="get",
-                )
+        # Delegate to TenantScope helper
+        self._tenant_scope.validate_for_read(result)
 
     # ==================== Cache Management ====================
 
@@ -324,88 +284,23 @@ class TemporalRepository(Generic[T]):
         - invalidate_cache("list") to match all list queries
         - invalidate_cache(":id={uuid}") to match all operations for that record
         """
-        # Build structured key parts
-        parts = [
-            self.model_class.__name__,
-            str(self.tenant_id) if self.tenant_id else "global",
-            operation,  # Keep operation visible for pattern matching
-        ]
-
-        # Add parameters (sorted for consistency)
-        if kwargs:
-            sorted_params = sorted(kwargs.items())
-            param_str = ":".join(f"{k}={v}" for k, v in sorted_params)
-            parts.append(param_str)
-
-        key = ":".join(parts)
-
-        # Limit key size by hashing params if too long
-        if len(key) > 500:
-            base_parts = parts[:3]  # model, tenant, operation
-            param_data = {k: v for k, v in kwargs.items()}
-            param_hash = hashlib.sha256(
-                json.dumps(param_data, default=str, sort_keys=True).encode()
-            ).hexdigest()[:16]
-
-            # Keep ID visible for pattern matching
-            id_val = kwargs.get("id")
-            if id_val:
-                key = f"{':'.join(base_parts)}:h{param_hash}:id={id_val}"
-            else:
-                key = f"{':'.join(base_parts)}:h{param_hash}"
-
-        return key
+        # Delegate to CacheManager helper
+        return self._cache_manager.generate_key(
+            model_name=self.model_class.__name__,
+            tenant_id=self.tenant_id,
+            operation=operation,
+            **kwargs,
+        )
 
     async def _get_cached(self, cache_key: str) -> Optional[Any]:
         """Get value from cache if not expired."""
-        if not self.cache_enabled:
-            return None
-
-        async with self._cache_lock:
-            if cache_key in self._cache:
-                value, expiry = self._cache[cache_key]
-                if time.time() < expiry:
-                    if self._metrics:
-                        self._metrics.increment("cache.hits")
-                    # Return a deep copy to prevent mutation
-                    import copy
-
-                    return copy.deepcopy(value)
-                else:
-                    # Expired, remove from cache
-                    del self._cache[cache_key]
-
-        if self._metrics:
-            self._metrics.increment("cache.misses")
-        return None
+        # Delegate to CacheManager helper (handles deep copy internally)
+        return await self._cache_manager.get(cache_key)
 
     async def _set_cached(self, cache_key: str, value: Any):
         """Set value in cache with TTL."""
-        if not self.cache_enabled:
-            return
-
-        # Store a deep copy to prevent mutation
-        import copy
-
-        cached_value = copy.deepcopy(value)
-
-        expiry = time.time() + self.cache_ttl
-        async with self._cache_lock:
-            self._cache[cache_key] = (cached_value, expiry)
-
-            # Limit cache size (simple LRU by removing oldest entries)
-            if len(self._cache) > 1000:
-                # Remove expired entries first
-                now = time.time()
-                expired_keys = [k for k, (_, exp) in self._cache.items() if exp < now]
-                for k in expired_keys:
-                    del self._cache[k]
-
-                # If still too large, remove oldest 20%
-                if len(self._cache) > 1000:
-                    sorted_items = sorted(self._cache.items(), key=lambda x: x[1][1])
-                    for k, _ in sorted_items[:200]:
-                        del self._cache[k]
+        # Delegate to CacheManager helper (handles deep copy and eviction)
+        await self._cache_manager.set(cache_key, value)
 
     async def invalidate_cache(self, pattern: Optional[str] = None):
         """
@@ -414,13 +309,43 @@ class TemporalRepository(Generic[T]):
         Args:
             pattern: Optional pattern to match keys (None = clear all)
         """
-        async with self._cache_lock:
-            if pattern is None:
-                self._cache.clear()
-            else:
-                keys_to_remove = [k for k in self._cache if pattern in k]
-                for k in keys_to_remove:
-                    del self._cache[k]
+        # Delegate to CacheManager helper
+        await self._cache_manager.invalidate(pattern)
+
+    # ==================== Transaction Support ====================
+
+    def transaction(
+        self,
+        isolation: "Optional[IsolationLevel]" = None,
+        readonly: bool = False,
+    ) -> "Transaction":
+        """
+        Create a transaction context manager for this repository's pool.
+
+        Convenience method that returns a Transaction bound to this
+        repository's database pool, allowing atomic operations across
+        multiple repository calls.
+
+        Args:
+            isolation: Transaction isolation level (defaults to READ COMMITTED)
+            readonly: If True, the transaction only allows read operations
+
+        Returns:
+            Transaction context manager
+
+        Example:
+            async with repo.transaction() as txn:
+                author = await author_repo.create(Author(name="John"), connection=txn.connection)
+                await post_repo.create(Post(author_id=author.id), connection=txn.connection)
+                # Auto-commit on success, auto-rollback on exception
+        """
+        from ..transactions import IsolationLevel, Transaction
+
+        return Transaction(
+            self.db_pool,
+            isolation=isolation or IsolationLevel.READ_COMMITTED,
+            readonly=readonly,
+        )
 
     # ==================== CRUD Operations ====================
 
@@ -1012,6 +937,8 @@ class TemporalRepository(Generic[T]):
         models: List[T],
         user_id: Optional[UUID] = None,
         batch_size: int = 100,
+        atomic: bool = False,
+        connection=None,
     ) -> List[T]:
         """
         Create multiple records efficiently in batches.
@@ -1020,13 +947,61 @@ class TemporalRepository(Generic[T]):
             models: List of model instances
             user_id: User performing the action
             batch_size: Number of records per batch
+            atomic: If True, all creates happen in a single transaction.
+                   If any create fails, all are rolled back. Default False.
+            connection: Optional database connection for external transaction
+                       management. When provided, the operation uses this
+                       connection instead of acquiring a new one from the pool.
 
         Returns:
             List of created model instances
+
+        Example:
+            # Non-atomic (default) - partial success possible
+            results = await repo.create_many(models)
+
+            # Atomic - all-or-nothing
+            results = await repo.create_many(models, atomic=True)
+
+            # With external transaction
+            async with repo.transaction() as txn:
+                results = await repo.create_many(models, connection=txn.connection)
         """
         if not models:
             return []
 
+        if atomic and connection is None:
+            # Wrap in a transaction for all-or-nothing semantics
+            return await self._create_many_atomic(models, user_id, batch_size)
+
+        return await self._create_many_batched(models, user_id, batch_size, connection)
+
+    async def _create_many_atomic(
+        self,
+        models: List[T],
+        user_id: Optional[UUID] = None,
+        batch_size: int = 100,
+    ) -> List[T]:
+        """
+        Create all records atomically within a single transaction.
+
+        If any create fails, all changes are rolled back.
+        """
+        async with self.transaction() as txn:
+            return await self._create_many_batched(
+                models, user_id, batch_size, connection=txn.connection
+            )
+
+    async def _create_many_batched(
+        self,
+        models: List[T],
+        user_id: Optional[UUID] = None,
+        batch_size: int = 100,
+        connection=None,
+    ) -> List[T]:
+        """
+        Create records in batches, optionally using an external connection.
+        """
         results = []
         total = len(models)
 
@@ -1045,6 +1020,7 @@ class TemporalRepository(Generic[T]):
                             adapter=self.adapter,
                             tenant_id=self.tenant_id,
                             user_id=user_id,
+                            connection=connection,
                         )
                     else:
                         # Fall back to individual creates
@@ -1056,6 +1032,7 @@ class TemporalRepository(Generic[T]):
                                 adapter=self.adapter,
                                 tenant_id=self.tenant_id,
                                 user_id=user_id,
+                                connection=connection,
                             )
                             batch_results.append(result)
 
@@ -1179,21 +1156,8 @@ class TemporalRepository(Generic[T]):
         Returns schema-qualified name (e.g., "public.products") to ensure
         queries work correctly regardless of PostgreSQL search_path configuration.
         """
-        # Try to use full_table_name() method if available (includes schema)
-        if hasattr(self.model_class, "full_table_name"):
-            return self.model_class.full_table_name()
-
-        # Fallback: construct schema-qualified name manually
-        schema = getattr(self.model_class, "__schema__", "public")
-
-        if hasattr(self.model_class, "table_name"):
-            table = self.model_class.table_name()
-        elif hasattr(self.model_class, "__table_name__"):
-            table = self.model_class.__table_name__
-        else:
-            table = self.model_class.__name__.lower() + "s"
-
-        return f"{schema}.{table}"
+        # Delegate to ModelConverter helper
+        return ModelConverter.get_table_name(self.model_class)
 
     def _model_to_dict(self, model: T, exclude_unset: bool = False) -> Dict[str, Any]:
         """
@@ -1213,37 +1177,10 @@ class TemporalRepository(Generic[T]):
         Returns:
             Dictionary representation of the model
         """
-        if hasattr(model, "model_dump"):
-            # Pydantic v2 - exclude computed fields
-            computed = set(getattr(model.__class__, "model_computed_fields", {}).keys())
-            return model.model_dump(exclude_unset=exclude_unset, exclude=computed)
-        elif hasattr(model, "dict"):
-            # Pydantic v1 - no computed fields support
-            return model.dict(exclude_unset=exclude_unset)
-        elif hasattr(model, "__dataclass_fields__"):
-            # Dataclass - exclude_unset not applicable
-            from dataclasses import asdict
-
-            return asdict(model)
-        else:
-            # Fallback: dict of non-private attributes
-            return {
-                k: getattr(model, k)
-                for k in dir(model)
-                if not k.startswith("_") and not callable(getattr(model, k))
-            }
+        # Delegate to ModelConverter helper
+        return ModelConverter.to_dict(model, exclude_unset=exclude_unset)
 
     def _dict_to_model(self, data: Dict[str, Any]) -> T:
         """Convert dict to model instance."""
-        if hasattr(self.model_class, "model_validate"):
-            # Pydantic v2
-            return self.model_class.model_validate(data)
-        elif hasattr(self.model_class, "parse_obj"):
-            # Pydantic v1
-            return self.model_class.parse_obj(data)
-        elif hasattr(self.model_class, "__dataclass_fields__"):
-            # Dataclass
-            return self.model_class(**data)
-        else:
-            # Fallback: direct instantiation
-            return self.model_class(**data)
+        # Delegate to ModelConverter helper
+        return ModelConverter.from_dict(self.model_class, data)

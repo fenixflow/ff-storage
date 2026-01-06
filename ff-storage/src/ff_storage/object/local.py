@@ -62,7 +62,9 @@ class LocalObjectStorage(ObjectStorage):
         full_path = (self.base_path / clean_key).resolve()
 
         # Ensure the path is within our base directory (prevent traversal)
-        if not str(full_path).startswith(str(self.base_path)):
+        # Use is_relative_to() for safe containment check (Python 3.9+)
+        # This prevents prefix collision attacks (e.g., /data/storage vs /data/storage2)
+        if not full_path.is_relative_to(self.base_path):
             raise ValueError(f"Invalid key: {key} (path traversal detected)")
 
         return full_path
@@ -212,7 +214,18 @@ class LocalObjectStorage(ObjectStorage):
         """List files with optional prefix filter."""
         try:
             keys = []
-            prefix_path = self.base_path / prefix.lstrip("/")
+
+            # Validate prefix to prevent path traversal
+            if prefix:
+                prefix_path = (self.base_path / prefix.lstrip("/")).resolve()
+                if not prefix_path.is_relative_to(self.base_path):
+                    return []  # Invalid prefix - return empty (not error)
+            else:
+                prefix_path = self.base_path
+
+            # Ensure prefix_path exists before walking
+            if not prefix_path.exists():
+                return []
 
             # Walk the directory tree
             for root, dirs, files in os.walk(prefix_path):

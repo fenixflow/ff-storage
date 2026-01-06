@@ -172,6 +172,87 @@ class SchemaManager:
         # Must start with letter or underscore, followed by alphanumeric or underscore
         return bool(re.match(r"^[a-zA-Z_][a-zA-Z0-9_]*$", identifier))
 
+    def _generate_sql_for_change(self, change, table_def) -> None:
+        """
+        Generate SQL for a schema change and populate change.sql.
+
+        Args:
+            change: SchemaChange object to populate
+            table_def: TableDefinition providing schema context
+        """
+        if change.change_type == ChangeType.ADD_COLUMN:
+            change.sql = self.generator.generate_add_column(
+                table_name=change.table_name,
+                schema=table_def.schema,
+                column=change.column,
+            )
+        elif change.change_type == ChangeType.ADD_INDEX:
+            change.sql = self.generator.generate_create_index(
+                schema=table_def.schema, index=change.index
+            )
+        elif change.change_type == ChangeType.CREATE_TABLE:
+            change.sql = self.generator.generate_create_table(table_def)
+        elif change.change_type == ChangeType.DROP_INDEX:
+            change.sql = self.generator.generate_drop_index(
+                schema=table_def.schema, index=change.index
+            )
+        elif change.change_type == ChangeType.DROP_COLUMN:
+            change.sql = self.generator.generate_drop_column(
+                table_name=change.table_name,
+                schema=table_def.schema,
+                column=change.column,
+            )
+        elif change.change_type == ChangeType.ALTER_COLUMN_TYPE:
+            change.sql = self.generator.generate_alter_column(
+                table_name=change.table_name,
+                schema=table_def.schema,
+                column=change.column,
+            )
+
+    def compare_schemas(
+        self,
+        desired_schema: dict,
+        current_schema: dict,
+    ) -> list:
+        """
+        Compare desired schema against current schema and return list of changes.
+
+        This method is useful for inspecting what changes would be made without
+        actually applying them.
+
+        Args:
+            desired_schema: Dict of {schema_name: {table_name: TableDefinition}}
+            current_schema: Dict of {schema_name: {table_name: TableDefinition}}
+
+        Returns:
+            List of SchemaChange objects representing the differences
+        """
+        all_changes = []
+
+        for schema_name, desired_tables in desired_schema.items():
+            current_tables = current_schema.get(schema_name, {})
+
+            for table_name, desired_table in desired_tables.items():
+                current_table = current_tables.get(table_name)
+
+                # Compute diff between desired and current
+                changes = self.differ.compute_changes(desired_table, current_table)
+
+                # Generate SQL for each change
+                for change in changes:
+                    try:
+                        self._generate_sql_for_change(change, desired_table)
+                    except Exception as e:
+                        self.logger.error(
+                            f"Failed to generate SQL for change: {change.description}",
+                            extra={"error": str(e)},
+                        )
+                        continue
+
+                all_changes.extend(changes)
+
+        return all_changes
+
     def sync_schema(
         self, models: List[Type], allow_destructive: bool = False, dry_run: bool = False
     ) -> int:
@@ -296,34 +377,7 @@ class SchemaManager:
             # Generate SQL for each change
             for change in changes:
                 try:
-                    if change.change_type == ChangeType.ADD_COLUMN:
-                        change.sql = self.generator.generate_add_column(
-                            table_name=change.table_name,
-                            schema=desired.schema,
-                            column=change.column,
-                        )
-                    elif change.change_type == ChangeType.ADD_INDEX:
-                        change.sql = self.generator.generate_create_index(
-                            schema=desired.schema, index=change.index
-                        )
-                    elif change.change_type == ChangeType.CREATE_TABLE:
-                        change.sql = self.generator.generate_create_table(desired)
-                    elif change.change_type == ChangeType.DROP_INDEX:
-                        change.sql = self.generator.generate_drop_index(
-                            schema=desired.schema, index=change.index
-                        )
-                    elif change.change_type == ChangeType.DROP_COLUMN:
-                        change.sql = self.generator.generate_drop_column(
-                            table_name=change.table_name,
-                            schema=desired.schema,
-                            column=change.column,
-                        )
-                    elif change.change_type == ChangeType.ALTER_COLUMN_TYPE:
-                        change.sql = self.generator.generate_alter_column(
-                            table_name=change.table_name,
-                            schema=desired.schema,
-                            column=change.column,
-                        )
+                    self._generate_sql_for_change(change, desired)
                 except Exception as e:
                     self.logger.error(
                         f"Failed to generate SQL for change: {change.description}",
@@ -381,35 +435,7 @@ class SchemaManager:
                     # Generate SQL
                     for change in aux_changes:
                         try:
-                            if change.change_type == ChangeType.CREATE_TABLE:
-                                change.sql = self.generator.generate_create_table(aux_table)
-                            elif change.change_type == ChangeType.ADD_COLUMN:
-                                change.sql = self.generator.generate_add_column(
-                                    table_name=aux_table.name,
-                                    schema=aux_table.schema,
-                                    column=change.column,
-                                )
-                            elif change.change_type == ChangeType.ADD_INDEX:
-                                change.sql = self.generator.generate_create_index(
-                                    schema=aux_table.schema,
-                                    index=change.index,
-                                )
-                            elif change.change_type == ChangeType.DROP_INDEX:
-                                change.sql = self.generator.generate_drop_index(
-                                    schema=aux_table.schema, index=change.index
-                                )
-                            elif change.change_type == ChangeType.DROP_COLUMN:
-                                change.sql = self.generator.generate_drop_column(
-                                    table_name=aux_table.name,
-                                    schema=aux_table.schema,
-                                    column=change.column,
-                                )
-                            elif change.change_type == ChangeType.ALTER_COLUMN_TYPE:
-                                change.sql = self.generator.generate_alter_column(
-                                    table_name=aux_table.name,
-                                    schema=aux_table.schema,
-                                    column=change.column,
-                                )
+                            self._generate_sql_for_change(change, aux_table)
                         except Exception as e:
                             self.logger.error(
                                 f"Failed to generate SQL for auxiliary table change: {change.description}",
