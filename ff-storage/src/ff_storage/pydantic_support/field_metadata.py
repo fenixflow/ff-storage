@@ -1,5 +1,5 @@
 """
-Enhanced Field metadata for database-specific configuration.
+Enhanced Field metadata for database-specific and mock data configuration.
 
 Provides a rich Field() wrapper that extends Pydantic Field with
 database-specific metadata for "Pydantic as source of truth" architecture.
@@ -11,9 +11,14 @@ This allows complete SQL schema definition at the field level, including:
 - Check constraints (db_check)
 - Index specifications (db_index, db_index_where for partial indexes)
 - Numeric precision/scale (db_precision, db_scale)
+
+Mock data generation hints:
+- mock_pattern: Named pattern for value generation (e.g., "email", "name")
+- mock_generator: Custom generator function
+- mock_skip: Skip field in mock generation (use overrides instead)
 """
 
-from typing import Literal, Optional
+from typing import Any, Callable, Literal, Optional
 
 from pydantic import Field as PydanticField
 
@@ -46,6 +51,10 @@ def Field(
     db_on_update: Literal["CASCADE", "SET NULL", "RESTRICT", "NO ACTION"] = "CASCADE",
     db_check: Optional[str] = None,
     db_generated: Optional[str] = None,
+    # Mock data generation parameters
+    mock_pattern: Optional[str] = None,
+    mock_generator: Optional[Callable[[Any], Any]] = None,
+    mock_skip: bool = False,
     **kwargs,
 ):
     """
@@ -83,6 +92,15 @@ def Field(
         db_check: CHECK constraint expression (e.g., "price > 0")
         db_generated: Generated column expression (e.g., "STORED AS (field1 + field2)")
 
+        # Mock data generation parameters
+        mock_pattern: Named pattern for value generation. Supported patterns:
+            "email", "name", "first_name", "last_name", "company", "address",
+            "city", "country", "phone", "url", "title", "description", "text"
+        mock_generator: Custom generator function. Receives a Faker instance
+            and returns the generated value. Example: lambda f: f.bothify("POL-####")
+        mock_skip: If True, skip this field in mock generation. Must provide
+            value via overrides parameter when creating mock instances.
+
     Returns:
         Pydantic FieldInfo with database metadata in json_schema_extra
 
@@ -118,6 +136,11 @@ def Field(
         ...     created_at: datetime = Field(
         ...         db_default="NOW()"
         ...     )
+        ...
+        ...     # Mock data patterns
+        ...     email: str = Field(mock_pattern="email")
+        ...     policy_number: str = Field(mock_generator=lambda f: f.bothify("POL-####-????"))
+        ...     internal_ref: str = Field(mock_skip=True)  # Provide via overrides
     """
     # Build json_schema_extra with all database metadata
     json_schema_extra = {}
@@ -139,10 +162,15 @@ def Field(
         "db_on_update": db_on_update,
         "db_check": db_check,
         "db_generated": db_generated,
+        # Mock data generation
+        "mock_pattern": mock_pattern,
+        "mock_generator": mock_generator,
+        "mock_skip": mock_skip,
     }
 
-    # Filter out None values
-    json_schema_extra = {k: v for k, v in db_metadata.items() if v is not None}
+    # Filter out None values and False booleans (for mock_skip, db_primary_key, etc.)
+    # We want to include True booleans but exclude False defaults
+    json_schema_extra = {k: v for k, v in db_metadata.items() if v is not None and v is not False}
 
     # Handle kwargs json_schema_extra merge
     if "json_schema_extra" in kwargs:

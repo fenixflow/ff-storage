@@ -710,3 +710,162 @@ class PydanticModel(BaseModel):
             for name in relationship_names:
                 cache_key = f"_rel_cache_{name}"
                 self.__dict__.pop(cache_key, None)
+
+    # ==================== Mock Data Generation ====================
+
+    @classmethod
+    def create_mock(
+        cls,
+        *,
+        overrides: Optional[dict[str, Any]] = None,
+        seed: Optional[int] = None,
+        registry: Optional[Any] = None,
+        cascade: bool = False,
+        cascade_depth: int = 3,
+    ) -> "PydanticModel":
+        """Create a mock instance with generated values.
+
+        Uses Field() metadata as the source of truth for generation rules:
+        - max_length, ge, le, gt, lt -> value constraints
+        - mock_pattern -> explicit pattern generator ("email", "name", etc.)
+        - mock_generator -> custom generator function
+        - mock_skip -> skip field (must provide via overrides)
+
+        Args:
+            overrides: Field values to override (highest priority)
+            seed: Random seed for reproducible generation
+            registry: Custom ValueGeneratorRegistry for domain-specific patterns
+            cascade: If True, also create related models via relationships
+            cascade_depth: Maximum depth for relationship cascading
+
+        Returns:
+            A new instance with generated mock values
+
+        Example:
+            >>> user = User.create_mock()
+            >>> user.email  # Generated email
+            'john.doe@example.com'
+
+            >>> admin = User.create_mock(overrides={"role": "admin"})
+            >>> admin.role
+            'admin'
+
+            >>> # Reproducible generation
+            >>> user1 = User.create_mock(seed=42)
+            >>> user2 = User.create_mock(seed=42)
+            >>> user1.email == user2.email
+            True
+
+            >>> # With custom domain patterns
+            >>> from ff_storage.mock import GeneratorExtension, ValueGeneratorRegistry
+            >>>
+            >>> class InsuranceExtension(GeneratorExtension):
+            ...     NAME_PATTERNS = [
+            ...         (r"^policy_number$", lambda f, m: f.bothify("POL-####-????").upper()),
+            ...     ]
+            >>>
+            >>> registry = ValueGeneratorRegistry(seed=42).extend(InsuranceExtension())
+            >>> policy = Policy.create_mock(registry=registry)
+        """
+        from ..mock.factory import MockFactory
+
+        if registry is None:
+            from ..mock.generators import ValueGeneratorRegistry
+
+            registry = ValueGeneratorRegistry(seed=seed)
+        elif seed is not None:
+            registry.reset_seed(seed)
+
+        factory = MockFactory(registry=registry)
+        return factory.create(
+            cls,
+            overrides=overrides,
+            cascade=cascade,
+            cascade_depth=cascade_depth,
+        )
+
+    @classmethod
+    def create_mock_batch(
+        cls,
+        count: int,
+        *,
+        overrides: Optional[dict[str, Any]] = None,
+        seed: Optional[int] = None,
+        registry: Optional[Any] = None,
+        cascade: bool = False,
+        cascade_depth: int = 3,
+    ) -> list["PydanticModel"]:
+        """Create multiple mock instances.
+
+        Args:
+            count: Number of instances to create
+            overrides: Field values to override (applied to all instances)
+            seed: Random seed for reproducible generation
+            registry: Custom ValueGeneratorRegistry for domain-specific patterns
+            cascade: If True, also create related models via relationships
+            cascade_depth: Maximum depth for relationship cascading
+
+        Returns:
+            List of mock instances
+
+        Example:
+            >>> users = User.create_mock_batch(100)
+            >>> len(users)
+            100
+
+            >>> # Reproducible batch
+            >>> users1 = User.create_mock_batch(10, seed=42)
+            >>> users2 = User.create_mock_batch(10, seed=42)
+            >>> users1[0].email == users2[0].email
+            True
+        """
+        from ..mock.factory import MockFactory
+
+        if registry is None:
+            from ..mock.generators import ValueGeneratorRegistry
+
+            registry = ValueGeneratorRegistry(seed=seed)
+        elif seed is not None:
+            registry.reset_seed(seed)
+
+        factory = MockFactory(registry=registry)
+        return factory.create_batch(
+            cls,
+            count,
+            overrides=overrides,
+            cascade=cascade,
+            cascade_depth=cascade_depth,
+        )
+
+    @classmethod
+    def mock_factory(
+        cls,
+        seed: Optional[int] = None,
+        registry: Optional[Any] = None,
+    ) -> Any:
+        """Get a MockFactory configured for this model.
+
+        Useful when you need more control over the factory or want to
+        reuse it for multiple creations.
+
+        Args:
+            seed: Random seed for reproducible generation
+            registry: Custom ValueGeneratorRegistry for domain-specific patterns
+
+        Returns:
+            MockFactory instance
+
+        Example:
+            >>> factory = User.mock_factory(seed=42)
+            >>> user1 = factory.create(User)
+            >>> user2 = factory.create(User)
+            >>> # Same factory, different users but reproducible sequence
+        """
+        from ..mock.factory import MockFactory
+
+        if registry is None:
+            from ..mock.generators import ValueGeneratorRegistry
+
+            registry = ValueGeneratorRegistry(seed=seed)
+
+        return MockFactory(registry=registry)

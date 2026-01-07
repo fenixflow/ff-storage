@@ -127,6 +127,34 @@ from .utils import (  # Retry utilities; Metrics utilities; Validation utilities
     validate_query,
 )
 
+# ERD Module (NEW in v4.9)
+from .erd import (
+    ERDBuilder,
+    ERDColumn,
+    ERDRelationship,
+    ERDResponse,
+    ERDTable,
+    to_mermaid,
+    to_mermaid_compact,
+)
+
+# Mock Data Generation (NEW in v4.9)
+from .mock import (
+    DEFAULT_NAME_PATTERNS,
+    ExampleExtension,
+    FieldMeta,
+    GeneratorExtension,
+    GeneratorFunc,
+    MockFactory,
+    NAMED_PATTERNS,
+    RelationshipCascadeManager,
+    TYPE_GENERATORS,
+    ValueGeneratorRegistry,
+    get_named_pattern_generator,
+    get_pattern_generator,
+    get_type_generator,
+)
+
 __all__ = [
     # Version
     "__version__",
@@ -224,4 +252,26 @@ __all__ = [
     "HealthChecker",
     "get_health_checker",
     "check_system_health",
+    # ERD
+    "ERDBuilder",
+    "ERDTable",
+    "ERDColumn",
+    "ERDRelationship",
+    "ERDResponse",
+    "to_mermaid",
+    "to_mermaid_compact",
+    # Mock Data Generation
+    "MockFactory",
+    "ValueGeneratorRegistry",
+    "FieldMeta",
+    "GeneratorExtension",
+    "ExampleExtension",
+    "GeneratorFunc",
+    "RelationshipCascadeManager",
+    "DEFAULT_NAME_PATTERNS",
+    "NAMED_PATTERNS",
+    "TYPE_GENERATORS",
+    "get_pattern_generator",
+    "get_named_pattern_generator",
+    "get_type_generator",
 ]
