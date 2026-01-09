@@ -7,6 +7,100 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.8.0] - 2026-01-09
+
+### Added
+
+- **[MOCK DATA GENERATION]** Complete mock data generation system for testing
+  - `MockFactory` class for creating PydanticModel instances with realistic data
+  - `ValueGeneratorRegistry` for pattern-based value generation
+  - Field name pattern matching (email, first_name, phone, etc.)
+  - Type-based generation (str, int, Decimal, UUID, datetime, etc.)
+  - Constraint-aware generation (respects `min_length`, `max_length`, `ge`, `le`, etc.)
+  - `create()` for single instance creation
+  - `create_batch(count)` for bulk mock data generation
+  - `create_stream(count)` for memory-efficient iteration
+  - Reproducible results with `seed` parameter
+
+- **[PYDANTIC MODEL MOCK METHODS]** Convenience methods on PydanticModel
+  - `Model.create_mock()` - Create a single mock instance
+  - `Model.create_mock_batch(count)` - Create multiple mock instances
+  - `Model.mock_factory()` - Get a MockFactory for the model
+
+- **[FIELD MOCK METADATA]** New Field() parameters for mock generation
+  - `mock_pattern` - Named pattern (e.g., "email", "phone", "money")
+  - `mock_generator` - Custom generator function `Callable[[Faker], Any]`
+  - `mock_skip` - Skip field in mock generation (use overrides)
+
+- **[GENERATOR EXTENSIONS]** Extensible pattern system for domain-specific mocks
+  - `GeneratorExtension` base class for custom patterns
+  - `NAME_PATTERNS` for regex-based field name matching
+  - `TYPE_OVERRIDES` for type-specific generators
+  - `FIELD_OVERRIDES` for exact field name matching
+  - `ExampleExtension` as reference implementation
+  - `registry.extend(extension)` for adding custom patterns
+
+- **[RELATIONSHIP CASCADE]** Mock data with relationship support
+  - `RelationshipCascadeManager` for parent-child mock generation
+  - Automatic FK resolution between related models
+  - Cascade depth control to prevent infinite loops
+  - Support for one-to-many, many-to-one relationships
+
+- **[ERD MODULE]** Entity Relationship Diagram generation
+  - `ERDBuilder` for model discovery and introspection
+  - Auto-discovery of all PydanticModel subclasses with `__table_name__`
+  - `ERDTable`, `ERDColumn`, `ERDRelationship` data models
+  - `ERDResponse` for structured ERD data
+  - FK relationship inference from field naming patterns
+  - Schema filtering (e.g., `schema_filter="public"`)
+
+- **[MERMAID OUTPUT]** ERD visualization export
+  - `to_mermaid(erd)` for standard Mermaid ER diagram syntax
+  - `to_mermaid_compact(erd)` for simplified diagrams
+  - Primary key (`PK`) and foreign key (`FK`) markers
+  - Relationship cardinality notation (N:1, 1:N, N:M)
+
+### Technical Details
+
+**Mock Generation Priority**:
+```
+1. Field overrides (exact field name match)
+2. mock_generator from Field() metadata
+3. mock_pattern from Field() metadata
+4. Name patterns (regex match against field name)
+5. Type generators (based on Python type)
+6. Fallback generators
+```
+
+**Supported Named Patterns**:
+- Identity: `email`, `first_name`, `last_name`, `name`, `username`
+- Contact: `phone`, `phone_number`, `address`, `city`, `country`, `zip_code`
+- Business: `company`, `company_name`, `job_title`
+- Content: `title`, `description`, `text`, `sentence`, `paragraph`
+- Web: `url`, `website`, `domain`
+- Financial: `money`, `price`, `currency`
+- Identifiers: `uuid`, `sku`, `barcode`
+
+**Usage Example**:
+```python
+from ff_storage import PydanticModel, Field
+from ff_storage.mock import MockFactory, GeneratorExtension
+
+# Simple usage
+user = User.create_mock(seed=42)
+users = User.create_mock_batch(100, seed=42)
+
+# With custom patterns
+class MyExtension(GeneratorExtension):
+    NAME_PATTERNS = [
+        (r"^order_id$", lambda f, m: f.bothify("ORD-########")),
+    ]
+
+factory = MockFactory(seed=42)
+factory.registry.extend(MyExtension())
+order = factory.create(Order)
+```
+
 ## [4.7.0] - 2026-01-06
 
 ### Added

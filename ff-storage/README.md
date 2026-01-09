@@ -8,6 +8,44 @@ A comprehensive storage package for Fenixflow applications, providing **async co
 
 Created by **Ben Moag** at **[Fenixflow](https://fenixflow.com)**
 
+## 🧪 Version 4.8.0 - Mock Data Generation & ERD
+
+**New testing infrastructure**:
+
+- **Mock Factory** - Generate realistic test data from Pydantic models
+- **ERD Builder** - Auto-discover models and generate Entity Relationship Diagrams
+- **Generator Extensions** - Add domain-specific patterns for your industry
+
+```python
+from ff_storage import PydanticModel, Field
+from ff_storage.mock import MockFactory, GeneratorExtension
+from ff_storage.erd import ERDBuilder, to_mermaid
+
+# Simple mock creation - uses Field() constraints
+user = User.create_mock(seed=42)
+users = User.create_mock_batch(100, seed=42)
+
+# Custom patterns for your domain
+class InsuranceExtension(GeneratorExtension):
+    NAME_PATTERNS = [
+        (r"^policy_number$", lambda f, m: f.bothify("POL-####-????").upper()),
+        (r"^premium$", lambda f, m: Decimal(str(f.pyfloat(100, 10000)))),
+    ]
+
+factory = MockFactory(seed=42)
+factory.registry.extend(InsuranceExtension())
+policy = factory.create(Policy)
+
+# ERD generation
+builder = ERDBuilder()
+erd = builder.build()
+print(to_mermaid(erd))  # Mermaid diagram syntax
+```
+
+**100% backward compatible** - all existing code works unchanged.
+
+---
+
 ## 🔥 Version 4.7.0 - Query Builder & Relationships
 
 **Major new features**:

@@ -12,6 +12,8 @@ ff-storage is a Pydantic-first ORM with built-in temporal versioning for Postgre
 - **Relationships**: One-to-many, many-to-one, many-to-many with eager loading
 - **Transactions**: Full transaction support with Unit of Work pattern
 - **Multi-Tenant**: Automatic tenant isolation with strict/permissive scopes
+- **Mock Data**: Generate realistic test data from Field() constraints (NEW in v4.8.0)
+- **ERD Generation**: Auto-discover models and generate diagrams (NEW in v4.8.0)
 
 ## Development Commands
 
@@ -55,6 +57,15 @@ src/ff_storage/
 ├── transactions/         # Transaction management (NEW in v4.7.0)
 │   ├── context.py        # Transaction context
 │   └── unit_of_work.py   # Unit of Work pattern
+├── mock/                 # Mock data generation (NEW in v4.8.0)
+│   ├── factory.py        # MockFactory for model instances
+│   ├── generators/       # Pattern and type generators
+│   ├── extensions.py     # GeneratorExtension base class
+│   └── cascade.py        # Relationship cascade manager
+├── erd/                  # ERD generation (NEW in v4.8.0)
+│   ├── builder.py        # ERDBuilder with model discovery
+│   ├── models.py         # ERDTable, ERDColumn, ERDRelationship
+│   └── mermaid.py        # Mermaid diagram output
 ├── db/                   # Database layer
 │   ├── pool/             # Async connection pools
 │   ├── query_builder/    # SQL query building
@@ -118,6 +129,37 @@ async with Transaction(db_pool) as tx:
     await tx.execute("INSERT INTO ...")
     await tx.execute("UPDATE ...")
     # Auto-commits on success, rollbacks on exception
+```
+
+### Mock Data Generation
+
+```python
+from ff_storage import PydanticModel, Field
+from ff_storage.mock import MockFactory, GeneratorExtension
+
+# Simple creation - uses Field() constraints
+user = User.create_mock(seed=42)
+users = User.create_mock_batch(100, seed=42)
+
+# Custom domain patterns
+class InsuranceExtension(GeneratorExtension):
+    NAME_PATTERNS = [
+        (r"^policy_number$", lambda f, m: f.bothify("POL-####-????").upper()),
+    ]
+
+factory = MockFactory(seed=42)
+factory.registry.extend(InsuranceExtension())
+policy = factory.create(Policy)
+```
+
+### ERD Generation
+
+```python
+from ff_storage.erd import ERDBuilder, to_mermaid
+
+builder = ERDBuilder()
+erd = builder.build(schema_filter="public")
+print(to_mermaid(erd))  # Mermaid diagram output
 ```
 
 ## Non-Breaking Changes
