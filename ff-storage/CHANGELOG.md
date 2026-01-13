@@ -7,6 +7,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.9.0] - 2026-01-13
+
+### Added
+
+- **[INDEX TYPES]** Support for specialized index types and operator classes
+  - New `db_index_type` parameter: Literal["btree", "hash", "gin", "gist", "brin"]
+  - New `db_index_opclass` parameter for operator classes (e.g., "gin_trgm_ops")
+  - GIN index support for full-text search with trigram operators
+  - GiST, BRIN index type support for specialized use cases
+  - Schema sync correctly detects and compares operator classes
+
+### Fixed
+
+- **[SCHEMA SYNC]** Fixed multi-column index SQL generation with operator classes
+  - Opclass is now correctly applied to each column in multi-column indexes
+  - Schema introspection now retrieves operator class from PostgreSQL catalogs
+  - Index comparison now includes opclass in equality check
+
+### Usage Example
+
+```python
+from ff_storage import PydanticModel, Field
+
+class Product(PydanticModel):
+    __table_name__ = "products"
+
+    # GIN index with trigram operator class for fuzzy search
+    name: str = Field(
+        max_length=255,
+        db_index=True,
+        db_index_type="gin",
+        db_index_opclass="gin_trgm_ops"
+    )
+```
+
+Generates:
+```sql
+CREATE INDEX idx_products_name ON public.products USING gin ("name" gin_trgm_ops);
+```
+
 ## [4.8.0] - 2026-01-09
 
 ### Added
@@ -1755,7 +1795,9 @@ db.close_connection()
 
 Maintained by **Ben Moag** ([Fenixflow](https://fenixflow.com))
 
-[Unreleased]: https://gitlab.com/fenixflow/fenix-packages/-/compare/ff-storage-v4.7.0...HEAD
+[Unreleased]: https://gitlab.com/fenixflow/fenix-packages/-/compare/ff-storage-v4.9.0...HEAD
+[4.9.0]: https://gitlab.com/fenixflow/fenix-packages/-/compare/ff-storage-v4.8.0...ff-storage-v4.9.0
+[4.8.0]: https://gitlab.com/fenixflow/fenix-packages/-/compare/ff-storage-v4.7.0...ff-storage-v4.8.0
 [4.7.0]: https://gitlab.com/fenixflow/fenix-packages/-/compare/ff-storage-v4.6.4...ff-storage-v4.7.0
 [4.6.4]: https://gitlab.com/fenixflow/fenix-packages/-/compare/ff-storage-v4.6.3...ff-storage-v4.6.4
 [4.6.3]: https://gitlab.com/fenixflow/fenix-packages/-/compare/ff-storage-v4.6.2...ff-storage-v4.6.3

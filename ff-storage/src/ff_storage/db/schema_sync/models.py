@@ -73,6 +73,7 @@ class IndexDefinition:
     unique: bool = False
     index_type: str = "btree"
     where_clause: Optional[str] = None
+    opclass: Optional[str] = None  # e.g., "gin_trgm_ops" for trigram indexes
 
 
 @dataclass

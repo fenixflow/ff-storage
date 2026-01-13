@@ -274,6 +274,7 @@ class PydanticSchemaIntrospector:
         unique = metadata.get("db_unique", False)
         index_type = metadata.get("db_index_type", "btree")
         where_clause = metadata.get("db_index_where", None)  # Partial index support
+        opclass = metadata.get("db_index_opclass", None)  # Operator class (e.g., gin_trgm_ops)
 
         # Handle multi-column indexes
         columns = metadata.get("db_index_columns", [field_name])
@@ -287,6 +288,7 @@ class PydanticSchemaIntrospector:
             unique=unique,
             index_type=index_type,
             where_clause=where_clause,
+            opclass=opclass,
         )
 
     def _create_temporal_column(

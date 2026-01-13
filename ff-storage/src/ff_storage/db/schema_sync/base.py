@@ -394,6 +394,8 @@ class SchemaDifferBase:
             differences.append(f"index_type: {norm1.index_type} != {norm2.index_type}")
         if norm1.where_clause != norm2.where_clause:
             differences.append(f"where_clause: {norm1.where_clause} != {norm2.where_clause}")
+        if norm1.opclass != norm2.opclass:
+            differences.append(f"opclass: {norm1.opclass} != {norm2.opclass}")
 
         if differences and self.verbose and self.logger:
             self.logger.debug(f"  Index '{idx1.name}' differences found:")

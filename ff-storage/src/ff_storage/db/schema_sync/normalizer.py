@@ -241,6 +241,7 @@ class SchemaNormalizer:
             idx,
             index_type=self.normalize_index_type(idx.index_type),
             where_clause=self.normalize_where_clause(idx.where_clause),
+            opclass=self.normalize_opclass(idx.opclass),
             # NOTE: columns NOT normalized - order matters in SQL!
         )
 
@@ -261,6 +262,24 @@ class SchemaNormalizer:
             return None
 
         return index_type.upper()
+
+    def normalize_opclass(self, opclass: Optional[str]) -> Optional[str]:
+        """
+        Normalize operator class for comparison.
+
+        Normalization rules:
+            - Case: Convert to lowercase
+
+        Args:
+            opclass: Original operator class (e.g., 'gin_trgm_ops', 'GIN_TRGM_OPS')
+
+        Returns:
+            Normalized operator class or None
+        """
+        if opclass is None:
+            return None
+
+        return opclass.lower()
 
     def normalize_where_clause(self, where: Optional[str]) -> Optional[str]:
         """

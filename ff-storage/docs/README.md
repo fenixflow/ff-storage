@@ -1,8 +1,8 @@
-# FF-Storage v4.7.0 Documentation
+# FF-Storage v4.9.0 Documentation
 
 Complete documentation for ff-storage's Pydantic ORM, Query Builder, Relationships, and Temporal Data Management.
 
-> **🔥 v4.7.0 Major Release**: Adds Query Builder, Model Relationships, Transactions, and Bulk Operations. 100% backward compatible.
+> **🔥 v4.9.0**: Adds GIN/GiST/BRIN index support with operator classes for full-text search. 100% backward compatible.
 
 ## Getting Started
 
@@ -30,6 +30,45 @@ Complete documentation for ff-storage's Pydantic ORM, Query Builder, Relationshi
 - **[Regulation SCD2](examples/regulation_scd2.py)** - SCD2 with time travel
 
 ## What's New
+
+### v4.9.0 (GIN Index Support)
+
+**Index Types & Operator Classes**:
+- **GIN indexes** for full-text search with trigram operators
+- **GiST, BRIN** index type support for specialized use cases
+- **Operator classes**: `gin_trgm_ops`, `gist_trgm_ops`, etc.
+- **Schema sync**: Correctly detects and compares operator classes
+
+```python
+from ff_storage import PydanticModel, Field
+
+class Product(PydanticModel):
+    __table_name__ = "products"
+
+    # GIN index with trigram operator class for fuzzy search
+    name: str = Field(
+        max_length=255,
+        db_index=True,
+        db_index_type="gin",
+        db_index_opclass="gin_trgm_ops"
+    )
+```
+
+Generates:
+```sql
+CREATE INDEX idx_products_name ON public.products USING gin ("name" gin_trgm_ops);
+```
+
+### v4.8.0 (Mock Data & ERD)
+
+**Mock Data Generation**:
+- `Model.create_mock()` for single instances
+- `Model.create_mock_batch(count)` for bulk generation
+- Field patterns: `mock_pattern="email"`, `mock_generator=lambda f: ...`
+
+**ERD Generation**:
+- `ERDBuilder` auto-discovers models
+- `to_mermaid(erd)` for diagram output
 
 ### v4.7.0 (Query Builder & Relationships)
 
@@ -141,6 +180,34 @@ class Post(PydanticModel):
 authors = await Query(Author).load(["posts"]).execute(db_pool)
 ```
 
+### Index Types
+
+```python
+from ff_storage import PydanticModel, Field
+
+class Document(PydanticModel):
+    __table_name__ = "documents"
+
+    # Standard btree index (default)
+    email: str = Field(max_length=255, db_index=True)
+
+    # GIN index with trigram operator class for fuzzy search
+    title: str = Field(
+        max_length=500,
+        db_index=True,
+        db_index_type="gin",
+        db_index_opclass="gin_trgm_ops"
+    )
+
+    # Partial index (only index active records)
+    status: str = Field(
+        db_index=True,
+        db_index_where="deleted_at IS NULL"
+    )
+```
+
+**Supported index types**: btree, hash, gin, gist, brin
+
 ### CRUD Operations
 
 ```python
@@ -168,12 +235,13 @@ async with Transaction(db_pool) as tx:
 
 ## Migration from Earlier Versions
 
-v4.7.0 is **100% backwards compatible**. All existing code works unchanged.
+v4.9.0 is **100% backwards compatible**. All existing code works unchanged.
 
 New features are opt-in:
 - Existing `repo.list(filters={...})` syntax continues to work
 - Query Builder is an alternative API, not a replacement
 - Relationships are optional model attributes
+- Index types default to btree if not specified
 
 ---
 

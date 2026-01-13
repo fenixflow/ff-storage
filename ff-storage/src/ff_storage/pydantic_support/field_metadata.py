@@ -46,6 +46,7 @@ def Field(
     db_index: bool = False,
     db_index_type: Literal["btree", "hash", "gin", "gist", "brin"] = "btree",
     db_index_where: Optional[str] = None,
+    db_index_opclass: Optional[str] = None,
     db_foreign_key: Optional[str] = None,
     db_on_delete: Literal["CASCADE", "SET NULL", "RESTRICT", "NO ACTION"] = "RESTRICT",
     db_on_update: Literal["CASCADE", "SET NULL", "RESTRICT", "NO ACTION"] = "CASCADE",
@@ -86,6 +87,7 @@ def Field(
         db_index: Create index on this field
         db_index_type: Index type (btree, hash, gin, gist, brin)
         db_index_where: WHERE clause for partial index (e.g., "deleted_at IS NULL")
+        db_index_opclass: Index operator class (e.g., "gin_trgm_ops" for trigram GIN indexes)
         db_foreign_key: Foreign key reference (format: "schema.table(column)")
         db_on_delete: ON DELETE action for FK (CASCADE, SET NULL, RESTRICT, NO ACTION)
         db_on_update: ON UPDATE action for FK (CASCADE, SET NULL, RESTRICT, NO ACTION)
@@ -157,6 +159,7 @@ def Field(
         "db_index": db_index,
         "db_index_type": db_index_type,
         "db_index_where": db_index_where,
+        "db_index_opclass": db_index_opclass,
         "db_foreign_key": db_foreign_key,
         "db_on_delete": db_on_delete,
         "db_on_update": db_on_update,

@@ -8,7 +8,7 @@ This module provides complete PostgreSQL support for:
 """
 
 import re
-from typing import List
+from typing import List, Optional
 
 from ...utils.postgres import quote_identifier
 from .base import MigrationGeneratorBase, SchemaIntrospectorBase, SQLParserBase
@@ -235,7 +235,9 @@ class PostgresSchemaIntrospector(SchemaIntrospectorBase):
                 ARRAY_AGG(a.attname ORDER BY array_position(ix.indkey, a.attnum)) as column_names,
                 ix.indisunique as is_unique,
                 am.amname as index_type,
-                pg_get_expr(ix.indpred, ix.indrelid) as where_clause
+                pg_get_expr(ix.indpred, ix.indrelid) as where_clause,
+                (SELECT opc.opcname FROM pg_opclass opc
+                 WHERE opc.oid = ix.indclass[0]) as opclass
             FROM pg_class t
             JOIN pg_index ix ON t.oid = ix.indrelid
             JOIN pg_class i ON i.oid = ix.indexrelid
@@ -248,7 +250,7 @@ class PostgresSchemaIntrospector(SchemaIntrospectorBase):
             AND t.relkind = 'r'
             AND NOT ix.indisprimary  -- Exclude primary key indexes
             AND co.conindid IS NULL  -- Exclude indexes backing constraints
-            GROUP BY i.relname, ix.indisunique, am.amname, ix.indpred, ix.indrelid
+            GROUP BY i.relname, ix.indisunique, am.amname, ix.indpred, ix.indrelid, ix.indclass
             ORDER BY i.relname
         """
         results = self.db.read_query(
@@ -260,7 +262,10 @@ class PostgresSchemaIntrospector(SchemaIntrospectorBase):
 
         indexes = []
         for row in results:
-            idx_name, col_names, is_unique, idx_type, where_clause = row
+            idx_name, col_names, is_unique, idx_type, where_clause, opclass = row
+            # Only include opclass if it's non-default (not btree default operators)
+            # Default opclasses like 'text_ops', 'int4_ops' should be treated as None
+            normalized_opclass = self._normalize_opclass(opclass, idx_type)
             indexes.append(
                 IndexDefinition(
                     name=idx_name,
@@ -269,10 +274,45 @@ class PostgresSchemaIntrospector(SchemaIntrospectorBase):
                     unique=is_unique,
                     index_type=idx_type,
                     where_clause=where_clause,
+                    opclass=normalized_opclass,
                 )
             )
 
         return indexes
+
+    def _normalize_opclass(self, opclass: Optional[str], index_type: str) -> Optional[str]:
+        """Normalize opclass, returning None for default operator classes.
+
+        Default operator classes (like 'text_ops', 'int4_ops' for btree) should
+        be treated as None since they're implicit and don't need to be specified.
+        Only non-default opclasses like 'gin_trgm_ops' should be preserved.
+        """
+        if opclass is None:
+            return None
+
+        # These are common default operator classes that don't need explicit specification
+        default_opclasses = {
+            # btree defaults
+            "text_ops",
+            "varchar_ops",
+            "int4_ops",
+            "int8_ops",
+            "bool_ops",
+            "uuid_ops",
+            "timestamp_ops",
+            "timestamptz_ops",
+            "numeric_ops",
+            # gin defaults (for arrays)
+            "array_ops",
+            # hash defaults
+            "text_pattern_ops",
+            "varchar_pattern_ops",
+        }
+
+        if opclass.lower() in default_opclasses:
+            return None
+
+        return opclass
 
     def table_exists(self, table_name: str, schema: str) -> bool:
         """Check if table exists."""
@@ -617,7 +657,15 @@ class PostgresMigrationGenerator(MigrationGeneratorBase):
         if index.index_type and index.index_type != "btree":
             sql += f" USING {index.index_type}"
 
-        sql += f" ({quoted_columns})"
+        # Handle operator class for specialized indexes (e.g., gin_trgm_ops)
+        if index.opclass:
+            # Apply opclass to each column for multi-column indexes
+            columns_with_opclass = ", ".join(
+                f"{quote_identifier(col)} {index.opclass}" for col in index.columns
+            )
+            sql += f" ({columns_with_opclass})"
+        else:
+            sql += f" ({quoted_columns})"
 
         if index.where_clause:
             sql += f" WHERE {index.where_clause}"
