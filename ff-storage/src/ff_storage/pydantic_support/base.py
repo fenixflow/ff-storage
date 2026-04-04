@@ -73,6 +73,7 @@ class PydanticModel(BaseModel):
     __multi_tenant__: ClassVar[bool] = True  # Default: enabled
     __tenant_field__: ClassVar[str] = "tenant_id"
     __db_type__: ClassVar[str] = "postgres"  # Database type for SQL generation
+    __mongo_indexes__: ClassVar[list] = []  # MongoDB compound index definitions
 
     # Standard fields (present in ALL models)
     id: UUID = Field(

@@ -412,3 +412,16 @@ async def check_s3_health(storage: Any) -> HealthCheckResult:
 async def check_local_storage_health(storage: Any) -> HealthCheckResult:
     """Check local storage health."""
     return await get_health_checker().check_object_storage(storage, "local_storage")
+
+
+async def check_mongo_health(pool: Any) -> HealthCheckResult:
+    """Check MongoDB pool health."""
+    if hasattr(pool, "health_check"):
+        return await pool.health_check("mongodb")
+    return HealthCheckResult(
+        name="mongodb",
+        status=HealthStatus.UNHEALTHY,
+        message="Pool does not support health_check()",
+        duration_ms=0,
+        error="Not a MongoPool instance",
+    )

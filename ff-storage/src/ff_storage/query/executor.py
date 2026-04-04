@@ -34,6 +34,7 @@ from uuid import UUID
 from .expressions import CompositeExpression, FieldProxy, FilterExpression
 from .ordering import OrderByClause
 from .sql_utils import ColumnRef
+from ..pydantic_support.jsonb_utils import deserialize_jsonb_fields
 
 if TYPE_CHECKING:
     from ..db.pool.postgres import PostgresPool
@@ -528,6 +529,11 @@ class QueryExecutor:
 
     def _row_to_model(self, row_dict: Dict[str, Any]) -> T:
         """Convert a database row to a model instance."""
+        # Deserialize JSONB fields from JSON strings back to Python objects
+        # This is necessary because PostgreSQL drivers may return JSONB columns
+        # as JSON strings that need parsing before Pydantic validation
+        row_dict = deserialize_jsonb_fields(self.model_class, row_dict)
+
         if hasattr(self.model_class, "model_validate"):
             # Pydantic v2
             return self.model_class.model_validate(row_dict)

@@ -215,6 +215,34 @@ class ConcurrencyError(FFStorageError):
         super().__init__(message, {"operation": operation, "resource": resource})
 
 
+# ── MongoDB Exceptions ─────────────────────────────────────────────
+
+
+class MongoError(FFStorageError):
+    """Base exception for MongoDB errors."""
+
+    pass
+
+
+class MongoConnectionError(MongoError):
+    """Raised when unable to connect to MongoDB."""
+
+    def __init__(self, host: str, port: int, database: str, error: str):
+        message = f"Failed to connect to MongoDB at {host}:{port}/{database}: {error}"
+        super().__init__(
+            message,
+            {"host": host, "port": port, "database": database, "original_error": error},
+        )
+
+
+class MongoDuplicateKeyError(MongoError):
+    """Raised when a duplicate key violation occurs in MongoDB."""
+
+    def __init__(self, collection: str, error: str):
+        message = f"Duplicate key in collection '{collection}': {error}"
+        super().__init__(message, {"collection": collection, "original_error": error})
+
+
 class RateLimitExceeded(FFStorageError):
     """Raised when rate limit is exceeded."""
 

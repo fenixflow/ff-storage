@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ff-storage"
-version = "4.9.0"
+version = "4.9.1"
 description = "Fenixflow storage package with Pydantic ORM, temporal data management, and state-based schema sync"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -66,6 +66,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+mongo = [
+    "motor>=3.3",
+]
 dev = [
     "pytest>=7.4",
     "pytest-asyncio>=0.21",
@@ -73,6 +76,7 @@ dev = [
     "ruff>=0.1",
     "moto[s3]>=5.0.0",
     "aioboto3>=12.0.0",
+    "motor>=3.3",
 ]
 
 [project.urls]

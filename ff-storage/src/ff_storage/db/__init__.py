@@ -5,7 +5,7 @@ Sync Connections (for scripts, simple apps):
     - Postgres, MySQL, SQLServer
 
 Async Pools (for FastAPI, production apps):
-    - PostgresPool, MySQLPool, SQLServerPool
+    - PostgresPool, MySQLPool, SQLServerPool, MongoPool
 
 Schema Management:
     - SchemaManager (Terraform-like schema synchronization - sync)
@@ -13,6 +13,7 @@ Schema Management:
 """
 
 from .connections import (
+    MongoPool,
     MySQL,
     MySQLBase,
     MySQLPool,
@@ -40,6 +41,8 @@ __all__ = [
     "SQLServer",  # Sync direct connection
     "SQLServerPool",  # Async connection pool
     "SQLServerBase",
+    # MongoDB - async
+    "MongoPool",  # Async MongoDB pool (requires motor)
     # Schema Sync (replaces MigrationManager in v2.0.0)
     "SchemaManager",  # Sync (uses Postgres connection)
     "AsyncSchemaManager",  # Async (uses PostgresPool)

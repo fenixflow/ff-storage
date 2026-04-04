@@ -23,7 +23,15 @@ except Exception:
     __version__ = "3.0.0"
 
 # Database exports
-from .db import AsyncSchemaManager, MySQL, MySQLPool, Postgres, PostgresPool, SchemaManager
+from .db import (
+    AsyncSchemaManager,
+    MongoPool,
+    MySQL,
+    MySQLPool,
+    Postgres,
+    PostgresPool,
+    SchemaManager,
+)
 
 # Exceptions (ENHANCED in v3.0)
 from .exceptions import (
@@ -34,6 +42,9 @@ from .exceptions import (
     ConnectionFailure,
     ConnectionPoolExhausted,
     FFStorageError,
+    MongoConnectionError,
+    MongoDuplicateKeyError,
+    MongoError,
     ObjectNotFound,
     ObjectStorageError,
     QueryError,
@@ -62,6 +73,7 @@ from .object import AzureBlobObjectStorage, LocalObjectStorage, ObjectStorage, S
 # Pydantic ORM (NEW in v3.0)
 from .pydantic_support.base import PydanticModel
 from .pydantic_support.field_metadata import Field
+from .pydantic_support.mongo_repository import MongoRepository
 from .pydantic_support.repository import PydanticRepository
 
 # Query Builder (NEW in v4.7)
@@ -73,6 +85,8 @@ from .query import (
     GroupByClause,
     OrderByClause,
     Query,
+    compile_filter,
+    compile_filters,
     func,
 )
 
@@ -161,6 +175,7 @@ __all__ = [
     # Pydantic ORM
     "PydanticModel",
     "PydanticRepository",
+    "MongoRepository",
     "Field",
     # Query Builder
     "Query",
@@ -171,6 +186,9 @@ __all__ = [
     "AggregateExpression",
     "GroupByClause",
     "func",
+    # MongoDB Query Compiler
+    "compile_filter",
+    "compile_filters",
     # Relationships
     "Relationship",
     "RelationshipConfig",
@@ -203,6 +221,8 @@ __all__ = [
     # MySQL
     "MySQL",
     "MySQLPool",
+    # MongoDB
+    "MongoPool",
     # Schema Management
     "SchemaManager",
     "AsyncSchemaManager",
@@ -230,6 +250,10 @@ __all__ = [
     "ObjectNotFound",
     "ConfigurationError",
     "ConcurrencyError",
+    # MongoDB exceptions
+    "MongoError",
+    "MongoConnectionError",
+    "MongoDuplicateKeyError",
     # Utilities
     "CircuitBreaker",
     "RetryPolicy",

@@ -251,12 +251,43 @@ class SQLServerAdapter(DatabaseAdapter):
         return query
 
 
+class MongoAdapter(DatabaseAdapter):
+    """Adapter for MongoDB using motor.
+
+    MongoDB does not use SQL, so query builder and parameter conversion
+    are not applicable. Use MongoRepository or MongoPool directly.
+    """
+
+    def get_query_builder(self):
+        """MongoDB does not use SQL query builders."""
+        return None
+
+    def get_param_style(self) -> str:
+        """MongoDB uses document-based queries, not parameterized SQL."""
+        return "document"
+
+    async def execute_with_returning(
+        self, pool, query: str, params: Union[List, Dict], table: Optional[str] = None
+    ) -> Optional[Dict[str, Any]]:
+        """Not applicable for MongoDB."""
+        raise NotImplementedError(
+            "MongoAdapter does not support execute_with_returning(). "
+            "Use MongoRepository or MongoPool directly."
+        )
+
+    def convert_params(
+        self, query: str, params: Union[List, Dict]
+    ) -> tuple[str, Union[List, Dict]]:
+        """Not applicable for MongoDB."""
+        raise NotImplementedError("MongoAdapter does not support SQL parameter conversion.")
+
+
 def detect_adapter(pool) -> DatabaseAdapter:
     """
     Automatically detect database type from pool and return appropriate adapter.
 
     Handles both raw driver pools (asyncpg, aiomysql, aioodbc) and wrapper
-    classes (PostgresPool, MySQLPool) that have a .pool attribute.
+    classes (PostgresPool, MySQLPool, MongoPool) that have a .pool attribute.
 
     Args:
         pool: Database connection pool (raw or wrapped)
@@ -278,8 +309,11 @@ def detect_adapter(pool) -> DatabaseAdapter:
         actual_pool.__module__ if hasattr(actual_pool, "__module__") else str(type(actual_pool))
     )
 
+    # Check for MongoDB (MongoPool uses motor internally)
+    if "motor" in pool_module or "ff_storage.db.connections.mongo" in pool_module:
+        return MongoAdapter()
     # Check for raw driver pools (after unwrapping or direct usage)
-    if "asyncpg" in pool_module:
+    elif "asyncpg" in pool_module:
         return PostgresAdapter()
     elif "aiomysql" in pool_module:
         return MySQLAdapter()
@@ -293,5 +327,5 @@ def detect_adapter(pool) -> DatabaseAdapter:
     else:
         raise ValueError(
             f"Unsupported database pool type: {pool_module}. "
-            f"Supported: asyncpg, aiomysql, aioodbc, PostgresPool, MySQLPool"
+            f"Supported: asyncpg, aiomysql, aioodbc, motor, PostgresPool, MySQLPool, MongoPool"
         )

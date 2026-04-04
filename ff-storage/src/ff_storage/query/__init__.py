@@ -65,6 +65,7 @@ from .aggregations import AggregateExpression, GroupByClause
 from .builder import Query
 from .expressions import AND, OR, CompositeExpression, F, FieldProxy, FilterExpression
 from .functions import func
+from .mongo_compiler import compile_filter, compile_filters
 from .ordering import OrderByClause
 from .sql_utils import ColumnRef, ParameterTracker
 from .subquery import Subquery
@@ -91,4 +92,7 @@ __all__ = [
     # SQL Utilities
     "ColumnRef",
     "ParameterTracker",
+    # MongoDB Compiler
+    "compile_filter",
+    "compile_filters",
 ]

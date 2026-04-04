@@ -498,6 +498,56 @@ class PostgresSQLParser(SQLParserBase):
 
         return columns
 
+    def _parse_column_with_opclass(self, col_spec: str) -> tuple[str, str | None]:
+        """
+        Parse column specification that may include operator class.
+
+        GIN and other specialized indexes may have operator classes specified
+        after the column name, e.g., '"description" gin_trgm_ops'.
+
+        Args:
+            col_spec: Column string like '"description" gin_trgm_ops' or '"name"'
+
+        Returns:
+            Tuple of (column_name, opclass or None)
+
+        Examples:
+            '"description" gin_trgm_ops' → ('description', 'gin_trgm_ops')
+            '"name"' → ('name', None)
+            'description gin_trgm_ops' → ('description', 'gin_trgm_ops')
+        """
+        col_spec = col_spec.strip()
+
+        # Known operator classes to detect (common PostgreSQL opclasses)
+        known_opclasses = {
+            # GIN operator classes
+            "gin_trgm_ops",  # pg_trgm extension for LIKE/ILIKE
+            "jsonb_ops",  # JSONB containment (@>, <@)
+            "jsonb_path_ops",  # Optimized JSONB @>
+            "array_ops",  # Array containment
+            # GiST operator classes
+            "gist_trgm_ops",  # pg_trgm for similarity
+            # btree pattern operator classes
+            "text_ops",
+            "varchar_ops",
+            "text_pattern_ops",
+            "varchar_pattern_ops",
+            "bpchar_pattern_ops",
+            # Numeric
+            "int4_ops",
+            "int8_ops",
+            "numeric_ops",
+        }
+
+        # Check if ends with known opclass
+        for opclass in known_opclasses:
+            if col_spec.lower().endswith(f" {opclass}"):
+                col_name = col_spec[: -len(opclass) - 1].strip()
+                return self._strip_quotes(col_name), opclass
+
+        # No opclass found
+        return self._strip_quotes(col_spec), None
+
     def parse_indexes_from_sql(self, sql: str) -> List[IndexDefinition]:
         """Extract index definitions from SQL (CREATE INDEX statements)."""
         indexes = []
@@ -525,12 +575,15 @@ class PostgresSQLParser(SQLParserBase):
             else:
                 table_name = self._strip_quotes(full_table_name)
 
-            # Parse column list (may contain quoted columns)
+            # Parse column list (may contain quoted columns and operator classes)
             columns = []
+            opclass = None
             for col in columns_str.split(","):
-                col = col.strip()
-                # Remove quotes if present
-                columns.append(self._strip_quotes(col))
+                col_name, col_opclass = self._parse_column_with_opclass(col)
+                columns.append(col_name)
+                # Use first opclass found (all columns should have same opclass for GIN)
+                if col_opclass and opclass is None:
+                    opclass = col_opclass
 
             indexes.append(
                 IndexDefinition(
@@ -540,6 +593,7 @@ class PostgresSQLParser(SQLParserBase):
                     unique=is_unique,
                     index_type=index_type.lower(),
                     where_clause=where_clause,
+                    opclass=opclass,
                 )
             )
 

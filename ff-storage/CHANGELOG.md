@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.9.1] - 2026-01-13
+
+### Fixed
+
+- **[QUERY BUILDER]** Fixed JSONB column deserialization in Query executor
+  - Query builder now correctly deserializes JSONB columns from JSON strings back to Python objects before Pydantic validation
+  - Previously, queries with JSONB fields would fail with `Input should be a valid dictionary [type=dict_type, input_value='{}', input_type=str]`
+  - Created shared `jsonb_utils` module (`deserialize_jsonb_fields`, `serialize_jsonb_fields`) for consistent JSONB handling across Query builder and temporal strategies
+
+- **[SCHEMA SYNC]** Fixed GIN index SQL parser to extract operator classes correctly
+  - SQL parser now correctly extracts operator class from column specifications like `"description" gin_trgm_ops`
+  - Previously, parser would treat `"column opclass"` as a single column name, causing schema sync to drop and recreate indexes on every sync
+  - Supports all common operator classes: `gin_trgm_ops`, `jsonb_ops`, `jsonb_path_ops`, `array_ops`, `gist_trgm_ops`, etc.
+
+### Added
+
+- **[PYDANTIC SUPPORT]** New shared JSONB utilities in `ff_storage.pydantic_support`
+  - `deserialize_jsonb_fields(model_class, data)` - Parse JSON strings to Python objects for JSONB fields
+  - `serialize_jsonb_fields(model_class, data)` - Convert Python objects to JSON strings for JSONB fields
+
 ## [4.9.0] - 2026-01-13
 
 ### Added
