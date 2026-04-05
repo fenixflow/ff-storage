@@ -48,6 +48,7 @@ dev = [
 
 [project.scripts]
 fenix = "ff_cli.main:run"
+nias = "ff_cli.main:run"
 
 [project.urls]
 repository = "https://gitlab.com/fenixflow/fenix-packages"

@@ -1,0 +1,10 @@
+name: mongo-express
+image: mongo-express:1
+ports:
+  - "8081:8081"
+environment:
+  ME_CONFIG_MONGODB_URL: "mongodb://mongo.${FENIX_DOMAIN:-fenix.orb.local}:27017/"
+  ME_CONFIG_BASICAUTH: "false"
+depends_on:
+  - mongo
+restart: unless-stopped

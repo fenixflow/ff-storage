@@ -1,0 +1,30 @@
+name: agents
+build:
+  context: "${FENIX_WORKSPACE:-~/PycharmProjects/fenixflow}/fenix-agents"
+  dockerfile: Dockerfile
+ports:
+  - "8069:8069"
+environment:
+  API_PORT: "8069"
+  DATABASE_POSTGRES_HOST: "postgres.${FENIX_DOMAIN:-fenix.orb.local}"
+  DATABASE_POSTGRES_PORT: "5432"
+  DATABASE_POSTGRES_DB: "fenix_agents"
+  DATABASE_POSTGRES_USER: "${FENIX_DB_USER:-fenix}"
+  DATABASE_POSTGRES_PASSWORD: "${FENIX_DB_PASSWORD:-fenix_dev}"
+  DATABASE_DB_SCHEMA: "ixr_docs"
+  LLM_PROVIDER: "${LLM_PROVIDER:-openai}"
+  LLM_OPENAI_API_KEY: "${OPENAI_API_KEY:-}"
+  FENIX_AUTH_ENABLED: "false"
+  IXR_USE_MANAGED_IDENTITY: "false"
+  IXR_AZURE_CONNECTION_STRING: "DefaultEndpointsProtocol=http;AccountName=fenixstorage;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;BlobEndpoint=http://azurite.${FENIX_DOMAIN:-fenix.orb.local}:10000/fenixstorage;"
+  IXR_AZURE_CONTAINER_NAME: "ixr-documents"
+depends_on:
+  - postgres
+  - azurite
+healthcheck:
+  test: ["CMD", "curl", "-sf", "http://localhost:8069/health"]
+  interval: 15s
+  timeout: 5s
+  retries: 5
+  start_period: 30s
+restart: unless-stopped

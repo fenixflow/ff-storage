@@ -121,6 +121,21 @@ BRANDS = {
         orbstack_domain_suffix="fenix.orb.local",
         help_header="Unified command-line interface for the Fenix ecosystem",
     ),
+    "nias": BrandConfig(
+        cli_name="nias",
+        cli_display_name="NIAS CLI",
+        cli_description="Digital twin orchestration for NIAS",
+        icon="🚑",
+        version_prefix="NIAS CLI",
+        company_name="NIAS",
+        config_dir_name=".nias",
+        plugin_entry_point="fenix.plugins",
+        docker_network="nias-network",
+        container_prefix="nias",
+        docker_project="nias",
+        orbstack_domain_suffix="nias.orb.local",
+        help_header="Digital twin orchestration for NIAS ambulance service",
+    ),
 }
 
 

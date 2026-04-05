@@ -1,0 +1,13 @@
+name: flow-mcp
+build:
+  context: "${FENIX_WORKSPACE:-~/PycharmProjects/fenixflow}/fenix-flow"
+  dockerfile: Dockerfile.api
+ports:
+  - "8100:8100"
+command: ["python", "-m", "ff_flow.cli.app", "mcp", "serve", "--host", "0.0.0.0", "--port", "8100"]
+environment:
+  FF_MONGO__URI: "mongodb://mongo.${FENIX_DOMAIN:-fenix.orb.local}:27017"
+  FF_MONGO__DATABASE: "${FF_DATABASE:-fenixflow}"
+depends_on:
+  - mongo
+restart: unless-stopped

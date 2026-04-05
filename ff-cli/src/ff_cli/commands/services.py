@@ -1,5 +1,6 @@
 """Service management commands for the branded CLI."""
 
+import subprocess
 from pathlib import Path
 
 import typer
@@ -8,6 +9,7 @@ from rich.table import Table
 from ..branding import get_brand
 from ..services import ServiceManager
 from ..utils.common import console
+from ..utils.docker import DockerManager
 
 brand = get_brand()
 
@@ -257,4 +259,148 @@ def cleanup():
         manager.cleanup()
     except Exception as e:
         console.print(f"[red]Failed to cleanup: {e}[/red]")
+        raise typer.Exit(1) from e
+
+
+@app.command()
+def prune():
+    """Remove containers with brand labels that don't match any known service definition."""
+    try:
+        manager = ServiceManager()
+        docker = DockerManager()
+        brand = get_brand()
+
+        known_services = set(manager.list_services().keys())
+        brand_containers = docker.get_all_brand_status()
+
+        if not brand_containers:
+            console.print("[yellow]No brand containers found[/yellow]")
+            return
+
+        orphans: list[dict] = []
+        for container in brand_containers:
+            labels = container.get("labels", {})
+            service_name = labels.get("com.docker.compose.service", "")
+            container_name = container.get("name", "")
+
+            # Derive service name from container name if label is missing
+            if not service_name and container_name:
+                prefix = f"{brand.container_prefix}-"
+                if container_name.startswith(prefix):
+                    service_name = container_name[len(prefix) :]
+
+            if service_name not in known_services:
+                orphans.append(container)
+
+        if not orphans:
+            console.print("[green]No orphaned containers found[/green]")
+            return
+
+        console.print(f"[cyan]Found {len(orphans)} orphaned container(s)[/cyan]")
+        removed = 0
+        for container in orphans:
+            name = container.get("name", "unknown")
+            console.print(f"  Removing [yellow]{name}[/yellow]...")
+            if docker.remove_container(name, force=True):
+                removed += 1
+                console.print(f"  [green]Removed {name}[/green]")
+            else:
+                console.print(f"  [red]Failed to remove {name}[/red]")
+
+        console.print(f"[green]Pruned {removed}/{len(orphans)} orphaned containers[/green]")
+    except Exception as e:
+        console.print(f"[red]Failed to prune: {e}[/red]")
+        raise typer.Exit(1) from e
+
+
+@app.command()
+def reset(
+    service: str = typer.Argument(..., help="Service name to reset"),
+    nuke: bool = typer.Option(False, "--nuke", help="Also remove associated volumes"),
+):
+    """Stop a service container, remove its image, and re-pull it."""
+    try:
+        manager = ServiceManager()
+        docker = DockerManager()
+        brand = get_brand()
+
+        definition = manager.get_service_definition(service)
+        if not definition:
+            console.print(f"[red]Service {service} not found[/red]")
+            raise typer.Exit(1)
+
+        container_name = f"{brand.container_prefix}-{service}"
+        image = definition.image
+
+        # Stop the container if it exists
+        if docker.container_exists(container_name):
+            console.print(f"[cyan]Stopping {container_name}...[/cyan]")
+            docker.stop_container(container_name)
+            docker.remove_container(container_name, force=True)
+            console.print(f"[green]Removed container {container_name}[/green]")
+
+        # Remove associated volumes if --nuke
+        if nuke and definition.volumes:
+            for volume_spec in definition.volumes:
+                if ":" in volume_spec:
+                    volume_name = volume_spec.split(":")[0]
+                    if not volume_name.startswith("/"):
+                        console.print(f"[cyan]Removing volume {volume_name}...[/cyan]")
+                        result = subprocess.run(
+                            ["docker", "volume", "rm", "-f", volume_name],
+                            capture_output=True,
+                            text=True,
+                        )
+                        if result.returncode == 0:
+                            console.print(f"[green]Removed volume {volume_name}[/green]")
+                        else:
+                            console.print(f"[yellow]Could not remove volume {volume_name}[/yellow]")
+
+        # Remove the image
+        console.print(f"[cyan]Removing image {image}...[/cyan]")
+        result = subprocess.run(
+            ["docker", "rmi", "-f", image],
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode == 0:
+            console.print(f"[green]Removed image {image}[/green]")
+        else:
+            console.print(
+                f"[yellow]Could not remove image {image} (may not exist locally)[/yellow]"
+            )
+
+        # Re-pull the image
+        if docker.pull_image(image):
+            console.print(f"[green]Successfully reset {service}[/green]")
+        else:
+            console.print(f"[red]Failed to pull image {image}[/red]")
+            raise typer.Exit(1)
+    except typer.Exit:
+        raise
+    except Exception as e:
+        console.print(f"[red]Failed to reset {service}: {e}[/red]")
+        raise typer.Exit(1) from e
+
+
+@app.command()
+def remove(
+    service: str = typer.Argument(..., help="Service name to remove"),
+):
+    """Delete the user service definition YAML file."""
+    try:
+        manager = ServiceManager()
+        user_file = manager.user_services_path / f"{service}.yaml"
+
+        if not user_file.exists():
+            console.print(f"[red]No user service definition found for {service}[/red]")
+            console.print(f"[dim]Expected at: {user_file}[/dim]")
+            raise typer.Exit(1)
+
+        user_file.unlink()
+        console.print(f"[green]Removed service definition: {user_file}[/green]")
+    except typer.Exit:
+        raise
+    except Exception as e:
+        console.print(f"[red]Failed to remove {service}: {e}[/red]")
         raise typer.Exit(1) from e

@@ -1,0 +1,16 @@
+name: frontend
+build:
+  context: "${FENIX_WORKSPACE:-~/PycharmProjects/fenixflow}/fenix-frontend"
+  dockerfile: Dockerfile
+ports:
+  - "3011:3011"
+environment:
+  VITE_CHAT_API: "http://chat.${FENIX_DOMAIN:-fenix.orb.local}:8011/api/v1"
+  VITE_CHAT_WS: "ws://chat.${FENIX_DOMAIN:-fenix.orb.local}:8011"
+  VITE_AGENTS_API: "http://agents.${FENIX_DOMAIN:-fenix.orb.local}:8069"
+  VITE_FF_FLOW_API: "http://flow-api.${FENIX_DOMAIN:-fenix.orb.local}:8200"
+depends_on:
+  - chat
+  - agents
+  - flow-api
+restart: unless-stopped

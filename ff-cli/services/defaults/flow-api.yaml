@@ -1,0 +1,20 @@
+name: flow-api
+build:
+  context: "${FENIX_WORKSPACE:-~/PycharmProjects/fenixflow}/fenix-flow"
+  dockerfile: Dockerfile.api
+ports:
+  - "8200:8200"
+environment:
+  FF_MONGO__URI: "mongodb://mongo.${FENIX_DOMAIN:-fenix.orb.local}:27017"
+  FF_MONGO__DATABASE: "${FF_DATABASE:-fenixflow}"
+  FF_LOG_LEVEL: "INFO"
+  FF_LOG_FORMAT: "console"
+depends_on:
+  - mongo
+healthcheck:
+  test: ["CMD", "curl", "-sf", "http://localhost:8200/health"]
+  interval: 15s
+  timeout: 5s
+  retries: 5
+  start_period: 15s
+restart: unless-stopped

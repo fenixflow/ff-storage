@@ -1,0 +1,12 @@
+name: bridge
+build:
+  context: "${FENIX_WORKSPACE:-~/PycharmProjects/fenixflow}/fenix-bridge"
+  dockerfile: Dockerfile
+ports:
+  - "5050:5000"
+environment:
+  DISCORD_BOT_TOKEN: "${DISCORD_BOT_TOKEN:-}"
+  DISCORD_USER_ID: "${DISCORD_USER_ID:-}"
+volumes:
+  - fenix-bridge-data:/app/data
+restart: unless-stopped

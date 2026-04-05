@@ -1,0 +1,18 @@
+name: azurite
+image: mcr.microsoft.com/azure-storage/azurite:latest
+ports:
+  - "10000:10000"
+  - "10001:10001"
+  - "10002:10002"
+command: azurite --blobHost 0.0.0.0 --queueHost 0.0.0.0 --tableHost 0.0.0.0 --location /data --debug /data/debug.log
+environment:
+  AZURITE_ACCOUNTS: "fenixstorage:Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw=="
+volumes:
+  - fenix-azurite-data:/data
+healthcheck:
+  test: ["CMD", "nc", "-z", "localhost", "10000"]
+  interval: 10s
+  timeout: 5s
+  retries: 5
+  start_period: 10s
+restart: unless-stopped

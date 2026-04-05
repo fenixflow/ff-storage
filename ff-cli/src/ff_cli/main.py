@@ -8,11 +8,15 @@ import typer
 from ff_cli import __version__
 from ff_cli.branding import get_brand
 from ff_cli.commands import branding as branding_cmd
+from ff_cli.commands import builds as builds_cmd
+from ff_cli.commands import dev as dev_cmd
 from ff_cli.commands import doctor as doctor_cmd
 from ff_cli.commands import plugins as plugins_cmd
 from ff_cli.commands import scripts as scripts_cmd
 from ff_cli.commands import services as services_cmd
+from ff_cli.commands import setup as setup_cmd
 from ff_cli.commands import status as status_cmd
+from ff_cli.commands import tf as tf_cmd
 from ff_cli.plugin_manager import PluginManager
 from ff_cli.utils.common import console
 
@@ -80,6 +84,26 @@ app.add_typer(
     branding_cmd.app,
     name="branding",
     help=f"{brand.icon} Configure CLI branding",
+)
+app.add_typer(
+    dev_cmd.app,
+    name="dev",
+    help=f"{brand.icon} Developer utilities",
+)
+app.add_typer(
+    setup_cmd.app,
+    name="setup",
+    help=f"{brand.icon} Bootstrap environment for new joiners",
+)
+app.add_typer(
+    builds_cmd.app,
+    name="builds",
+    help=f"{brand.icon} Manage Docker image builds",
+)
+app.add_typer(
+    tf_cmd.app,
+    name="tf",
+    help=f"{brand.icon} Terraform operations",
 )
 
 # Add top-level status command
