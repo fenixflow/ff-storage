@@ -25,7 +25,7 @@ class ServiceDefinition(BaseModel):
     """Service definition from YAML file."""
 
     name: str
-    image: str
+    image: str | None = None
     ports: list[str] | None = None
     environment: dict[str, str] | None = None
     volumes: list[str] | None = None
@@ -76,13 +76,23 @@ class ServiceDefinition(BaseModel):
                 expanded[key] = value
         return expanded
 
+    @model_validator(mode="after")
+    def set_image_from_build(self):
+        """Auto-generate image name from build config when image is not set."""
+        if not self.image and self.build:
+            brand = get_brand()
+            self.image = f"{brand.cli_name}/{self.name}:latest"
+        elif not self.image and not self.build:
+            raise ValueError(f"Service '{self.name}' must have either 'image' or 'build' set")
+        return self
+
 
 class ServiceConfig(BaseModel):
     """Complete service configuration with smart defaults."""
 
     name: str
     container_name: str | None = None
-    image: str
+    image: str | None = None
     ports: list[str] | None = None
     environment: dict[str, str] | None = None
     volumes: list[str] | None = None
