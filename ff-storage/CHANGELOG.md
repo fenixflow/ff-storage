@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [5.0.0] - 2026-04-05
+
+### Added
+
+- **[MONGODB]** First-class MongoDB support as optional dependency (`pip install ff-storage[mongo]`)
+  - `MongoPool`: Async connection pool using motor with Cosmos DB compatibility mode
+  - `MongoRepository`: Full CRUD with soft delete, multi-tenancy, F expression queries, atomic `find_one_and_update`, copy_on_change audit trail
+  - `mongo_compiler`: Compiles FilterExpression/CompositeExpression to MongoDB query documents (all operators: =, !=, >, <, IN, NOT IN, BETWEEN, LIKE→regex, ILIKE, IS NULL, AND/OR)
+  - `MongoAdapter`: Integrates with `detect_adapter()` for pool type detection
+  - `__mongo_indexes__` ClassVar on PydanticModel for declarative compound index definitions
+  - `check_mongo_health()` convenience function
+  - MongoDB exceptions: `MongoError`, `MongoConnectionError`, `MongoDuplicateKeyError`
+  - UUID stored as-is in `_id` (not ObjectId) via `UuidRepresentation.STANDARD`
+  - Cosmos DB compatibility: `retryWrites=False`, appropriate TLS, 429 throttling handling
+
+### Changed
+
+- **[BREAKING]** Major version bump due to new public API surface (MongoPool, MongoRepository, mongo_compiler)
+- PydanticModel base class now includes `__mongo_indexes__: ClassVar[list] = []`
+
 ## [4.9.1] - 2026-01-13
 
 ### Fixed
