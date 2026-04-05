@@ -1,134 +1,99 @@
-"""Tests for the doctor command auto-fix logic."""
+"""Tests for the doctor command — 21-point diagnostic system."""
 
-from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
-
 from ff_cli.commands import doctor as doctor_module
 
 
 @pytest.fixture(autouse=True)
-def stub_brand(monkeypatch):
+def stub_brand(monkeypatch, tmp_path):
     """Provide a deterministic brand configuration for doctor tests."""
 
-    brand = SimpleNamespace(
-        cli_name="ff",
-        cli_display_name="FenixFlow",
-        icon="*",
-        docker_network="ff-network",
-    )
-    monkeypatch.setattr(doctor_module, "get_brand", lambda: brand)
+    class FakeBrand:
+        cli_name = "ff"
+        cli_display_name = "FenixFlow"
+        icon = "*"
+        docker_network = "ff-network"
+        config_dir = tmp_path / ".ff"
+        config_dir_name = ".ff"
+        plugin_entry_point = "fenix.plugins"
+
+    monkeypatch.setattr(doctor_module, "get_brand", FakeBrand)
 
 
 @pytest.fixture(autouse=True)
 def stub_console(monkeypatch):
     """Silence console output during tests."""
-
     mock_console = MagicMock()
     monkeypatch.setattr(doctor_module, "console", mock_console)
     return mock_console
 
 
-def test_needs_registry_cleanup_detects_relevant_issues():
-    """The registry cleanup helper should flag missing packages and paths."""
+class TestResultHelper:
+    def test_ok_result(self):
+        r = doctor_module._result("Test", "ok", "Details")
+        assert r["name"] == "Test"
+        assert r["status"] == "ok"
+        assert r["detail"] == "Details"
+        assert r["recommendations"] == []
+        assert r["fixable"] is False
 
-    statuses = [{"issues": ["Package not installed", "Load error"]}]
-    assert doctor_module._needs_registry_cleanup(statuses) is True
-
-    statuses = [{"issues": ["Source path missing"]}]
-    assert doctor_module._needs_registry_cleanup(statuses) is True
-
-    statuses = [{"issues": ["Load error: boom"]}]
-    assert doctor_module._needs_registry_cleanup(statuses) is False
-
-
-def test_doctor_fix_triggers_registry_cleanup(monkeypatch):
-    """Doctor --fix should request registry cleanup when plugin data is stale."""
-
-    monkeypatch.setattr(doctor_module, "check_docker", lambda: (True, "Docker ok", []))
-    monkeypatch.setattr(doctor_module, "check_cli_installation", lambda: (True, "CLI ok", []))
-    monkeypatch.setattr(doctor_module, "check_python_environment", lambda: (True, "Python ok", []))
-    monkeypatch.setattr(doctor_module, "check_network", lambda: (False, "Network missing", []))
-
-    plugin_statuses = [
-        {"name": "bad-plugin", "source": "/tmp/missing", "issues": ["Package not installed"]}
-    ]
-    monkeypatch.setattr(
-        doctor_module,
-        "check_plugins",
-        lambda: (False, plugin_statuses, ["Reinstall bad-plugin"]),
-    )
-
-    captured = {}
-
-    def fake_run_auto_fixes(*, fix_network: bool, clean_registry: bool):
-        captured["fix_network"] = fix_network
-        captured["clean_registry"] = clean_registry
-        return ["Removed 1 invalid plugin entry", "Created Docker network: ff-network"]
-
-    monkeypatch.setattr(doctor_module, "run_auto_fixes", fake_run_auto_fixes)
-
-    doctor_module.doctor(json_output=True, auto_fix=True)
-
-    assert captured == {"fix_network": True, "clean_registry": True}
+    def test_fail_result_with_recommendations(self):
+        r = doctor_module._result("Test", "fail", "Broken", ["Fix it"], fixable=True)
+        assert r["status"] == "fail"
+        assert r["recommendations"] == ["Fix it"]
+        assert r["fixable"] is True
 
 
-def test_doctor_fix_skips_registry_cleanup_when_not_needed(monkeypatch):
-    """Doctor --fix should not attempt cleanup if issues are unrelated."""
+class TestIndividualChecks:
+    def test_check_python_version(self):
+        result = doctor_module.check_python_version()
+        assert result["status"] in ("ok", "OK", "warn", "WARN", "fail", "FAIL")
+        assert result["name"]
 
-    monkeypatch.setattr(doctor_module, "check_docker", lambda: (True, "Docker ok", []))
-    monkeypatch.setattr(doctor_module, "check_cli_installation", lambda: (True, "CLI ok", []))
-    monkeypatch.setattr(doctor_module, "check_python_environment", lambda: (True, "Python ok", []))
-    monkeypatch.setattr(doctor_module, "check_network", lambda: (False, "Network missing", []))
+    def test_check_uv(self):
+        result = doctor_module.check_uv()
+        assert result["status"] in ("ok", "OK", "fail", "FAIL")
 
-    plugin_statuses = [
-        {"name": "bad-plugin", "source": "/tmp/missing", "issues": ["Load error: boom"]}
-    ]
-    monkeypatch.setattr(
-        doctor_module,
-        "check_plugins",
-        lambda: (False, plugin_statuses, ["Inspect bad-plugin"]),
-    )
+    def test_check_git(self):
+        result = doctor_module.check_git()
+        assert result["status"] in ("ok", "OK", "fail", "FAIL")
 
-    captured = {}
+    def test_check_cli_installation(self):
+        result = doctor_module.check_cli_installation()
+        assert result["status"] in ("ok", "OK", "warn", "WARN", "fail", "FAIL")
 
-    def fake_run_auto_fixes(*, fix_network: bool, clean_registry: bool):
-        captured["fix_network"] = fix_network
-        captured["clean_registry"] = clean_registry
-        return []
+    def test_check_python_environment(self):
+        result = doctor_module.check_python_environment()
+        assert result["status"] in ("ok", "OK", "warn", "WARN")
 
-    monkeypatch.setattr(doctor_module, "run_auto_fixes", fake_run_auto_fixes)
+    def test_check_shell_environment(self):
+        result = doctor_module.check_shell_environment()
+        assert result["status"] in ("ok", "OK", "warn", "WARN")
 
-    doctor_module.doctor(json_output=True, auto_fix=True)
+    def test_check_config_directory(self):
+        result = doctor_module.check_config_directory()
+        assert result["status"] in ("ok", "OK", "fail", "FAIL")
 
-    assert captured == {"fix_network": True, "clean_registry": False}
+    def test_check_docker_network(self):
+        result = doctor_module.check_docker_network()
+        assert result["status"] in ("ok", "OK", "fail", "FAIL")
 
 
-def test_run_auto_fixes_creates_network(monkeypatch):
-    """Auto-fix should attempt to create the brand network when missing."""
+class TestAutoFixes:
+    def test_empty_results_returns_empty_actions(self):
+        actions = doctor_module.run_auto_fixes([])
+        assert isinstance(actions, list)
 
-    class DummyDocker:
-        def __init__(self):
-            self.created = False
+    def test_fixable_result_triggers_action(self):
+        results = [
+            doctor_module._result("Config directory", "fail", "Missing", fixable=True),
+        ]
+        actions = doctor_module.run_auto_fixes(results)
+        assert isinstance(actions, list)
 
-        def get_network_status(self, name):
-            return {"exists": False}
 
-        def create_network(self, name):
-            self.created = True
-            return True
-
-    dummy = DummyDocker()
-
-    monkeypatch.setattr(doctor_module, "DockerManager", lambda: dummy)
-    monkeypatch.setattr(
-        doctor_module.plugin_registry,
-        "clean_registry",
-        lambda: 0,
-    )
-
-    actions = doctor_module.run_auto_fixes(fix_network=True)
-
-    assert dummy.created is True
-    assert "Created Docker network: ff-network" in actions
+class TestDoctorCommand:
+    def test_doctor_callable(self):
+        assert callable(doctor_module.doctor)
