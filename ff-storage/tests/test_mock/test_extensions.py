@@ -185,8 +185,9 @@ class TestDomainSpecificExtension:
 
             FIELD_OVERRIDES = {
                 "ixr_number": lambda f, m: f"IXR{f.random_int(1, 999999):06d}-R0",
-                "umr": lambda f,
-                m: f"{f.random_element(['AON','MAR'])}{f.year()}{f.random_int(10000, 99999)}",
+                "umr": lambda f, m: (
+                    f"{f.random_element(['AON', 'MAR'])}{f.year()}{f.random_int(10000, 99999)}"
+                ),
             }
 
         registry = ValueGeneratorRegistry(seed=42)

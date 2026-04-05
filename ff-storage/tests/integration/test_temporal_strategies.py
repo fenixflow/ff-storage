@@ -451,9 +451,9 @@ class TestCopyOnChangeStrategy:
         )
 
         # CRITICAL: updated_at should be NEWER than original
-        assert (
-            updated.updated_at > original_updated_at
-        ), f"updated_at should have changed: {updated.updated_at} should be > {original_updated_at}"
+        assert updated.updated_at > original_updated_at, (
+            f"updated_at should have changed: {updated.updated_at} should be > {original_updated_at}"
+        )
 
         # Also verify by fetching fresh from DB
         fetched = await repo.get(product.id)
@@ -999,9 +999,9 @@ class TestTemporalTableIndexBug:
                 for c in changes
                 if c.change_type.name in ["DROP_INDEX", "DROP_COLUMN", "DROP_TABLE"]
             ]
-            assert (
-                len(destructive_changes) == 0
-            ), f"Unexpected destructive changes: {destructive_changes}"
+            assert len(destructive_changes) == 0, (
+                f"Unexpected destructive changes: {destructive_changes}"
+            )
 
         finally:
             # Clean up
@@ -1046,14 +1046,14 @@ class TestTemporalTableIndexBug:
 
             # Verify primary key index is NOT returned
             index_names = [idx.name for idx in indexes]
-            assert (
-                "test_pkey_table_pkey" not in index_names
-            ), "Primary key index should not be included in introspection"
+            assert "test_pkey_table_pkey" not in index_names, (
+                "Primary key index should not be included in introspection"
+            )
 
             # Verify regular index IS returned
-            assert (
-                "idx_test_pkey_name" in index_names
-            ), "Regular index should be included in introspection"
+            assert "idx_test_pkey_name" in index_names, (
+                "Regular index should be included in introspection"
+            )
 
         finally:
             db.execute("DROP TABLE IF EXISTS test_pkey_table CASCADE")

@@ -268,12 +268,12 @@ class TestSchemaSyncIdempotency:
         parsed_index = parsed_indexes[0]
 
         # Critical assertions for schema sync idempotency
-        assert (
-            parsed_index.columns == model_index.columns
-        ), f"Column mismatch: {parsed_index.columns} != {model_index.columns}"
-        assert (
-            parsed_index.opclass == model_index.opclass
-        ), f"Opclass mismatch: {parsed_index.opclass} != {model_index.opclass}"
-        assert (
-            parsed_index.index_type == model_index.index_type
-        ), f"Index type mismatch: {parsed_index.index_type} != {model_index.index_type}"
+        assert parsed_index.columns == model_index.columns, (
+            f"Column mismatch: {parsed_index.columns} != {model_index.columns}"
+        )
+        assert parsed_index.opclass == model_index.opclass, (
+            f"Opclass mismatch: {parsed_index.opclass} != {model_index.opclass}"
+        )
+        assert parsed_index.index_type == model_index.index_type, (
+            f"Index type mismatch: {parsed_index.index_type} != {model_index.index_type}"
+        )

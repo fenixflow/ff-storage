@@ -25,8 +25,7 @@ except ImportError:
 def _require_motor():
     if not HAS_MOTOR:
         raise ImportError(
-            "motor is required for MongoDB support. "
-            "Install it with: pip install ff-storage[mongo]"
+            "motor is required for MongoDB support. Install it with: pip install ff-storage[mongo]"
         )
 
 

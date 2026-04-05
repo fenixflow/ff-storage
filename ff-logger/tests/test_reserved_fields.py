@@ -1,6 +1,7 @@
 """Test reserved field sanitization, especially 'name' field."""
 
 import pytest
+
 from ff_logger import ConsoleLogger
 from ff_logger.utils import LOGGING_INTERNAL_FIELDS, RESERVED_FIELDS
 

@@ -3,6 +3,7 @@
 from unittest.mock import MagicMock
 
 import pytest
+
 from ff_cli.commands import doctor as doctor_module
 
 

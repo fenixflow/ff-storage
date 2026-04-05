@@ -20,7 +20,7 @@ repos:
 
   # Python linting with Ruff
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.3.4
+    rev: v0.15.9
     hooks:
       - id: ruff
         args: ["--fix", "--exit-non-zero-on-fix"]
@@ -47,11 +47,10 @@ repos:
     hooks:
       - id: pytest
         name: pytest
-        entry: bash -c 'unset VIRTUAL_ENV && (cd ff-storage && uv run pytest tests/ -q || true) && (cd ff-logger && uv run pytest tests/ -q || true) && (cd ff-cli && uv run pytest tests/ -q || true) && (cd ff-parsers && uv run pytest tests/ -q || true)'
+        entry: bash -c 'unset VIRTUAL_ENV && (cd ff-storage && uv run pytest tests/unit/ -x -q) && (cd ff-cli && uv run pytest tests/ -x -q)'
         language: system
         files: '\.(py)$'
         pass_filenames: false
-        # Tests are allowed to fail for now but should be fixed to save CI/CD minutes
 
 # Configuration for specific tools
 default_language_version:

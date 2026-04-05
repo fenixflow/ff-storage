@@ -715,9 +715,11 @@ class SchemaNormalizer:
                 # This is a function call - preserve structure, just normalize case
                 return re.sub(
                     r"([a-zA-Z_][a-zA-Z0-9_]*)",
-                    lambda m: m.group(1).upper()
-                    if m.group(1).upper() in FUNCTIONS | KEYWORDS
-                    else m.group(1).lower(),
+                    lambda m: (
+                        m.group(1).upper()
+                        if m.group(1).upper() in FUNCTIONS | KEYWORDS
+                        else m.group(1).lower()
+                    ),
                     condition,
                 )
 
